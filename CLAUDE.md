@@ -30,19 +30,114 @@ from `BeHooked/Webapp` or `behooked_studio_backend`.
 ## Commands
 
 ```bash
-uv sync                      # install
+uv sync
+```
+
+### Prototype — one video end to end (Phase 0 path)
+
+```bash
+uv run python spikes/prototype.py --plate spikes/in/plate.png --photo spikes/in/mechanic.jpg --script spikes/in/script_spoken.txt --out spikes/out/run1 --name "Raju Shetty" --workshop "Shetty Motors" --address "Andheri, Mumbai" --phone "9898989898"
+```
+
+One step only (`image` | `audio` | `video` | `composite`):
+
+```bash
+uv run python spikes/prototype.py --out spikes/out/run1 --only audio --script spikes/in/script_spoken.txt
+```
+
+Steps are resumable via `spikes/out/<run>/_state.json`. To force a completed
+step to re-run, delete its key from that file. Never re-run the video step
+casually — it is ~$0.04 per second of output.
+
+### Pipeline
+
+```bash
 uv run castrol intake --from 2026-09-01 --to 2026-09-01
+```
+
+```bash
 uv run castrol work --stage audio
+```
+
+```bash
 uv run castrol poll
+```
+
+```bash
 uv run castrol report
+```
+
+### Checks
+
+```bash
 uv run pytest
+```
+
+```bash
 uv run ruff check .
 ```
 
-Migrations are forward-only numbered SQL in `supabase/migrations/`, applied in
-order. There are no down migrations.
+### Balances — check before any run that spends
+
+```bash
+curl -sS https://api.apimart.ai/v1/user/balance -H "Authorization: Bearer $APIMART_API_KEY"
+```
+
+```bash
+curl -sS https://api.kie.ai/api/v1/chat/credit -H "Authorization: Bearer $KIE_API_KEY"
+```
+
+apimart reports USD directly (1 apimart credit = $0.10). kie reports its own
+credits at roughly 166 per USD — inferred from a refusal, not confirmed.
+
+### Client export
+
+```bash
+curl -sS "https://capi.letschbang.com/api/submissions/export/vendor?from=2026-09-02&to=2026-09-03" -H "apikey: $CLIENT_EXPORT_API_KEY"
+```
+
+Returns **CSV**, not JSON. Rate limit 100 / 900s.
+
+### Migrations
+
+Forward-only numbered SQL in `supabase/migrations/`, applied in order. There
+are no down migrations. Apply through the Supabase MCP or the SQL editor.
+
+### AWS
+
+One-time admin setup only — see `infra/README.md`. The pipeline's IAM user
+(`castrol-local`) can read and write objects but cannot delete them or change
+bucket configuration, which is deliberate: retention belongs to lifecycle
+rules, not application code.
 
 ---
+
+## Inputs per video
+
+| Input | Source | Used for |
+|---|---|---|
+| Plate (uniform + background) | frozen, chosen by export `outfit` + `background` | the scene |
+| Mechanic photo | export `image_url` | face/build swapped onto the plate |
+| Name | export `user_name` | **spoken** + card |
+| Workshop name | export `workshop_name` | **spoken** + card |
+| Location | export `address` | **spoken** + card |
+| Phone | export `whatsapp_number` | **card only**, never spoken |
+
+Only name, workshop and location vary inside the script. `whatsapp_number` is
+the delivery key and the card number; `mechanic_phone_number` is unreliable and
+is not used.
+
+---
+
+## Cost
+
+```
+cost = $0.014 + seconds x $0.040886        (25s ~ $1.04)
+```
+
+The video step is **96.5%** of it and bills per output second, so runtime is
+the only lever worth pulling. `ai-avatar-pro` doubles the total. kie ceils to
+whole seconds, so 24.8s bills as 25s.
 
 ## Invariants
 
