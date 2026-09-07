@@ -291,8 +291,28 @@ def step_image(plate_url: str, photo_url: str, out: pathlib.Path) -> str:
 # ------------------------------------------------------ [2] audio (Cartesia) --
 
 
+# Pronunciation overrides applied to the SPOKEN text only. The card still
+# renders the brand exactly as supplied, so nothing the viewer sees changes.
+#
+# All-caps tokens are read as initialisms: "MAGNATEC" came back spelled out
+# letter by letter. Writing it as a word fixes it. In the real pipeline this
+# becomes the pronunciation-override table prep/normalise.py owns.
+SPOKEN_OVERRIDES = {
+    "MAGNATEC": "Magnatec",
+}
+
+
+def normalise_for_tts(text: str) -> str:
+    for src, dst in SPOKEN_OVERRIDES.items():
+        text = text.replace(src, dst)
+    return text
+
+
 def step_audio(script_text: str, out_dir: pathlib.Path) -> tuple[pathlib.Path, float]:
     base = ENV.get("TTS_BASE_URL") or "https://api.cartesia.ai"
+    spoken = normalise_for_tts(script_text)
+    if spoken != script_text:
+        say("audio", "normalised all-caps tokens so they are read as words")
     raw = out_dir / "audio_raw.wav"
     with httpx.Client(timeout=180.0) as c:
         r = c.post(
@@ -304,7 +324,7 @@ def step_audio(script_text: str, out_dir: pathlib.Path) -> tuple[pathlib.Path, f
             },
             json={
                 "model_id": ENV.get("TTS_MODEL_ID", "sonic-3.5"),
-                "transcript": script_text,
+                "transcript": spoken,
                 "voice": {"mode": "id", "id": need("TTS_VOICE_ID")},
                 "output_format": {
                     "container": "wav",
