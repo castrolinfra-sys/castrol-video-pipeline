@@ -96,6 +96,61 @@ personal data — face photos joinable to phone numbers.
 
 ---
 
+The rest come from [`docs/TALKING_HEAD_PIPELINE_REFERENCE.md`](docs/TALKING_HEAD_PIPELINE_REFERENCE.md),
+which is prod-measured evidence from the existing BeHooked backend. Each one
+below is a failure someone already paid for.
+
+**11. Ship MP3 to the avatar model, never WAV.**
+`"Audio size is too large"` is a byte limit, not a duration limit. Every
+observed failure was a WAV — a 37s WAV failed while a 53s WAV succeeded.
+`pcm_f32le` @44.1kHz is ~176 KB/s, so 40s is ~7 MB against ~640 KB as MP3.
+Stage A transcodes before handing off.
+
+**12. Probe audio duration with ffmpeg. Never trust a supplied duration.**
+No TTS provider returns duration. The avatar model bills *per output second*,
+so the probe sits in the charge path. Fail **closed** to the cap, never to
+zero — and note `kling-avatar-v2`'s `fallback_duration` is **5 seconds**, so a
+missed probe bills 5s for a 35s video and no cap notices.
+
+**13. Neither gateway supports an idempotency key on submit.**
+Not kie, not apimart — the field does not exist. A network-level retry of a
+submit creates a second provider job and a second charge. Dedupe *before* the
+HTTP call; never blind-retry a submit that may have landed. Reconcile instead.
+
+**14. Check the body `code`, not the HTTP status.**
+Both gateways return HTTP 200 with `code != 200` on error. Also: kie's
+`resultJson` is a JSON *string* — parse before indexing. apimart's video
+result is `result.videos[0].url[0]` — `url` is a list.
+
+**15. Copy provider result URLs to our storage immediately.**
+Treat a provider URL as valid for the duration of the handler and no longer.
+Mirror constraint on the input side: presigned URLs expire in 1 hour, so a job
+that sits queued longer submits a dead URL. Presign at submit time, not at
+enqueue time.
+
+**16. Hand providers a URL that returns bytes on the first GET.**
+Public or presigned, from a source path — never a CDN transform path, which
+202s on a cold-cache miss and the provider's fetcher bails. Images must be
+within [300, 6000] px on **both** axes; normalise to a *sibling* key, never
+overwrite the original.
+
+**17. Never feed a generated image back in as an identity reference.**
+It compounds its own drift. Always re-reference the source photo. Cap
+references at ~4.
+
+**18. Content safety is the dominant image failure** — 11 of 20 observed on
+this exact model. Swapping a real person into a branded plate is precisely the
+trigger. Needs a softened-prompt retry path and a visible terminal state.
+
+**19. Log which provider was tried and why it lost.**
+A fallback chain that swallows the reason is a cost leak nobody can see: a
+dead kie lane 422'd for *months*, was classified retryable, silently fell
+through to a lane costing 3×, and left no trace in the database. Validate
+against the exact endpoint's schema — sibling endpoints on the same gateway
+accept different fields.
+
+---
+
 ## Conventions
 
 - Python 3.12+, `uv`, `src/` layout. Matches `behooked_studio_backend`.
@@ -118,9 +173,20 @@ personal data — face photos joinable to phone numbers.
 
 ## Current phase
 
-**Phase 0.** Foundation scaffolded; spikes 0.1–0.6 not yet run.
+**Phase 1.1–1.4 landed** (config, logging, budget, intake, prep, orchestrator
+with stub stages). Schema and budget applied to Supabase.
 
-The blocking unknown is spike 0.1: the finalised script is ~80 words (30–40s
-spoken) against an originally assumed 18–25s. If the video model's max input
-duration is below that, **the script changes, not the pipeline.** Little else is
-worth building until that is answered.
+**Spike 0.1 is answered — do not rewrite the script.** `kling-avatar-v2` has
+completed in prod at 39s via kie and 60s via fal; the ~80-word script at 30–40s
+is comfortably inside proven range. The original 18–25s assumption was too
+conservative by about half. Budget **8–20 minutes** of wall clock per render,
+not two.
+
+**The live blocker is now stage A (voice).** "apimart or kie" ∩ "clone from the
+client's reference" ∩ "Hindi male" is an empty set today. The `tts` row in
+`vendor_limits` is seeded **disabled** so nothing can spend against an
+unresolved lane. This needs a decision before stage A can be built — see the
+open questions at the end of the reference doc.
+
+**Stage C2 (repair) is also disabled**: no lane on apimart or kie, and no
+lipsync quality signal exists anywhere to trigger it.

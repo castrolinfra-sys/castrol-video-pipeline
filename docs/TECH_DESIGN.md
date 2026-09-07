@@ -238,14 +238,51 @@ a 4-minute poll is a worker not doing the other 200 jobs.
 ## 8. Vendor budget
 
 Every outbound paid call goes through `common/budget.py`, which calls
-`reserve_vendor_call(vendor, credits)` and refuses the call on `false`.
+`reserve_vendor_call(vendor, cost_usd, seconds)` and refuses the call on
+`false`.
 
-Budgets are keyed per logical stage (`apimart_tts`, `apimart_image`,
-`apimart_video`, `apimart_lipsync`) rather than per provider account, so one
-stage looping cannot consume the whole day's spend.
+**Cap dollars, not calls.** One 35s video costs ~$1.51, and the avatar step is
+**93–96% of it** — priced per output second, not per call:
+
+| Step | Model / lane | Cost | Share |
+|---|---|---:|---:|
+| Image edit | `gpt-image-2-max`, apimart, 2K | $0.012 | 0.8% |
+| TTS | ~550 chars, billed as 1k | $0.100 | 6.6% |
+| Avatar | `kling-avatar-v2` standard, kie, 35s | **$1.400** | **92.6%** |
+| | `pro` variant instead | $2.912 total | avatar = 96% |
+
+A call-count cap bounds volume but bounds *spend* only within ~3× (script
+length) × ~2× (standard vs pro). So `vendor_limits` carries both, and
+`daily_cost_cap_usd` is the one that matters. Capping the image and TTS steps
+is rounding error — those caps exist purely as runaway guards.
+
+`require_cost_estimate` is set on every per-second vendor: a reservation of
+zero is **refused**. This closes a specific trap — `kling-avatar-v2`'s
+`fallback_duration` is 5 seconds, so a failed duration probe would bill 5s for
+a 35s video and no cap would ever notice.
+
+Budgets are keyed per logical stage (`apimart_image`, `kie_video`, `tts`,
+`repair`) rather than per provider account, so one looping stage cannot consume
+the whole day's spend. `tts` and `repair` are seeded **disabled** — see §19.
 
 Denied calls fail the stage with `BUDGET_EXHAUSTED` and are **not** retried
 within the same day. This is a hard stop, not a throttle.
+
+### Reserving is not the same as not double-charging
+
+**Neither gateway supports an idempotency key on submit.** No such field exists
+on kie or apimart. A network-level retry of a submit creates a second provider
+job and a second charge, and the budget function cannot see it — it reserved
+once. Dedupe before the HTTP call, and on an ambiguous submit *reconcile*
+rather than resubmit.
+
+The same reasoning bounds `STAGE_CLAIM_TIMEOUT_S`: if the reaper requeues a row
+whose provider call is still running, the retry pays twice. It must exceed the
+longest a worker can legitimately hold a claim. Only `is_async = False` stages
+hold one — async stages submit, store `vendor_task_id`, and release to
+`running`, which the reaper does not touch. **The image stage is currently
+`is_async = False` and should become async when the real stage lands**, since
+apimart is poll-only with a 2700s ceiling and an observed 644s worst case.
 
 ---
 
@@ -297,9 +334,21 @@ dimensions, and the vendor metadata to record. Stages do not write to `jobs`;
 the orchestrator does. Stages do not decide retries; the orchestrator does.
 
 ### A — audio
-TTS over the filled script with the fixed voice reference. Records duration —
-stage C's max input duration is the constraint the whole script hangs off
-(open issue #1).
+TTS over the filled script with the fixed voice reference.
+
+Three things this stage owns beyond the provider call, all mandatory:
+
+1. **Clone the voice once and persist the id.** Never clone per render — that
+   pays clone latency on every job and makes A/B-ing the client's two reference
+   clips impossible.
+2. **Transcode to MP3.** The avatar model's `"Audio size is too large"` is a
+   byte limit, not a duration limit; every observed failure was a WAV. This is
+   not optional if the TTS emits `pcm_f32le`, which is ~176 KB/s.
+3. **Probe the duration with ffmpeg and record it.** No TTS provider returns a
+   duration, and stage C bills per output second — so this probe is a billing
+   input, not a convenience. Fail closed to the cap, never to zero.
+
+**Provider unresolved.** See §19.1.
 
 ### B — image
 Person replacement on the frozen plate. Prompt is structured
@@ -313,10 +362,30 @@ per person. They cannot be composited. That is why the logo check is
 load-bearing rather than nice-to-have.
 
 ### C — video
-Async submit, `vendor_task_id` stored, poller reconciles. The bottleneck.
+`kling-avatar-v2` on kie. Async submit, `vendor_task_id` stored, poller
+reconciles. The bottleneck, and 93–96% of the money.
+
+Latency is measured, not guessed: ~256s at 16s of audio, ~607s at 30s,
+**~1191s (~20 min) at 39s**. Budget 8–20 minutes for a 30–40s render and size
+every timeout above it.
+
+kie's response shape has two traps worth restating: HTTP 200 with `code != 200`
+is an error, and `resultJson` is a JSON *string* that must be parsed before
+indexing `resultUrls[0]`. Copy the result to our storage inside the handler —
+the provider URL's TTL is unmeasured and unrelied-upon.
 
 ### C2 — repair
-Conditional lipsync pass. Disabled until spike 0.1 sets a threshold.
+**Not buildable as designed, and disabled.** Two independent reasons:
+
+- there is no repair lane on apimart or kie — the nearest tool,
+  `sync-lipsync-v2`, is fal-only
+- there is no lipsync quality score anywhere to trigger it. The threshold this
+  stage was specified around does not exist
+
+The options are: run a repair pass unconditionally (roughly doubles video cost
+and adds ~12 min), gate on human review, or build a scorer from nothing. That
+is a product decision, not an implementation detail. The stage stays wired and
+disabled until it is made.
 
 ### D — composite
 `ffmpeg` overlay of the rendered card, full duration, fixed geometry. Fully
@@ -542,11 +611,35 @@ tracks, not blockers for 1.1–1.4.
 
 Blocking, in order:
 
-1. **Script runtime vs model max input duration.** ~80 words lands at 30–40s,
-   well above the 18–25s originally assumed. If the model caps below that, the
-   *script* changes, not the pipeline. Answered by spike 0.1. Nothing else is
-   worth building until this is known.
-2. **Timestamp format.** `03-09-2026 14:35` — confirm dd-MM-yyyy with the
+1. **TTS provider for stage A — the live blocker.** "apimart or kie" ∩ "clone
+   from the client's reference clip" ∩ "Hindi male" is an empty set today: the
+   only ElevenLabs TTS on kie has zero successful generations ever and exposes
+   no cloning parameter at all, and the only clone-with-Hindi path with
+   evidence behind it runs on a direct API with no gateway lane. Options:
+   allow one direct-API exception for this stage; audit the gateways' live
+   catalogues for a cloning endpoint not yet configured; or drop cloning and
+   use a preset — noting no male-Hindi preset is known to exist either. The
+   `tts` vendor row is seeded disabled until this is settled.
+
+   Two sub-questions that shape it: what are the client's two reference clips
+   *for* — cloning, or picking between presets? And does the voice have to be
+   male, given a clone from the client's own male reference sidesteps the
+   preset gap entirely?
+
+2. ~~**Script runtime vs model max input duration.**~~ **Answered.**
+   `kling-avatar-v2` has completed at 39s via kie and 60s via fal; the v1
+   sibling has reached 113s. The ~80-word script at 30–40s is comfortably
+   inside proven range and **does not need rewriting**. The real ceiling is
+   *bytes, not seconds* — see invariant 11.
+
+3. **Geometry / scale drift under a fixed-pixel card.** Still open, and there
+   is no prior art to lean on: nothing in the existing backend holds a subject
+   at a fixed pixel scale across an image edit — every path there is "generate
+   a good-looking frame", never "preserve a pixel-locked region". Needs the
+   plate dimensions and the card's pixel rect before it can even be reasoned
+   about, and then a real spike.
+
+4. **Timestamp format.** `03-09-2026 14:35` — confirm dd-MM-yyyy with the
    client before the first real pull.
 3. **Export API auth.** Header scheme still pending from the client.
 4. **`outfit` / `background` enum values.** `Castrol T-shirt` and `SUV`
