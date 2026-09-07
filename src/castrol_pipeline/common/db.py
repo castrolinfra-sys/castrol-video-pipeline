@@ -7,6 +7,7 @@ way the reaper expects, and prepared-statement caching breaks against it.
 
 from __future__ import annotations
 
+import atexit
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -34,6 +35,10 @@ def get_pool() -> ConnectionPool:
             kwargs={"row_factory": dict_row, "autocommit": False},
             open=True,
         )
+        # Without this every CLI invocation ends in psycopg's "couldn't stop
+        # thread within 5.0 seconds" warnings, which train the reader to ignore
+        # the tail of the output — where the real errors are.
+        atexit.register(close_pool)
     return _pool
 
 
@@ -144,8 +149,22 @@ def find_succeeded_run(
     )
 
 
-def mark_running(run_id: str, *, vendor: str, vendor_task_id: str, model_id: str) -> None:
-    """Async submit: record the task id and release the worker."""
+def mark_running(
+    run_id: str,
+    *,
+    vendor: str,
+    vendor_task_id: str,
+    model_id: str,
+    cost_usd: Any = None,
+    billed_seconds: Any = None,
+    billed_units: Any = None,
+) -> None:
+    """Async submit: record the task id, the spend, and release the worker.
+
+    Cost lands HERE, not on completion. The submit is what incurred it, and a
+    task that never completes still cost money — recording it only on success
+    would make exactly the failures worth counting invisible.
+    """
     execute(
         """
         UPDATE stage_runs
@@ -153,22 +172,48 @@ def mark_running(run_id: str, *, vendor: str, vendor_task_id: str, model_id: str
                vendor = %(vendor)s,
                vendor_task_id = %(task)s,
                model_id = %(model)s,
+               cost_usd = %(cost)s,
+               billed_seconds = %(seconds)s,
+               billed_units = %(units)s,
                started_at = coalesce(started_at, now())
          WHERE id = %(id)s;
         """,
-        {"id": run_id, "vendor": vendor, "task": vendor_task_id, "model": model_id},
+        {
+            "id": run_id,
+            "vendor": vendor,
+            "task": vendor_task_id,
+            "model": model_id,
+            "cost": cost_usd,
+            "seconds": billed_seconds,
+            "units": billed_units,
+        },
     )
 
 
 def mark_succeeded(
-    run_id: str, *, output_key: str | None, params: dict[str, Any] | None = None
+    run_id: str,
+    *,
+    output_key: str | None,
+    params: dict[str, Any] | None = None,
+    cost_usd: Any = None,
+    billed_seconds: Any = None,
+    billed_units: Any = None,
 ) -> None:
+    """Finish a run.
+
+    Cost columns use COALESCE so a poller completing an async run cannot erase
+    the figure the submit already recorded — the poll itself costs nothing, and
+    passing None there must mean "unchanged", not "free".
+    """
     execute(
         """
         UPDATE stage_runs
            SET status = 'succeeded',
                output_key = %(key)s,
                params = coalesce(%(params)s::jsonb, params),
+               cost_usd = coalesce(%(cost)s, cost_usd),
+               billed_seconds = coalesce(%(seconds)s, billed_seconds),
+               billed_units = coalesce(%(units)s, billed_units),
                finished_at = now(),
                error_code = NULL,
                error_message = NULL
@@ -178,6 +223,9 @@ def mark_succeeded(
             "id": run_id,
             "key": output_key,
             "params": psycopg.types.json.Jsonb(params) if params else None,
+            "cost": cost_usd,
+            "seconds": billed_seconds,
+            "units": billed_units,
         },
     )
 

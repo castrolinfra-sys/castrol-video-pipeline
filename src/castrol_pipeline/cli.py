@@ -53,6 +53,130 @@ def intake(
     typer.echo(json.dumps(counters.as_dict(), indent=2))
 
 
+@app.command("seed-job")
+def seed_job_cmd(
+    photo: Annotated[str, typer.Option(help="Mechanic photo (local file)")],
+    name: Annotated[str, typer.Option(help="Mechanic name — spoken and on the card")],
+    workshop: Annotated[str, typer.Option(help="Workshop name — spoken and on the card")],
+    address: Annotated[str, typer.Option(help="Full address, as printed on the card")],
+    phone: Annotated[str, typer.Option(help="Indian mobile — card only, never spoken")],
+    plate: Annotated[
+        str | None, typer.Option(help="Plate image to upload and activate")
+    ] = None,
+    plate_id: Annotated[
+        str | None, typer.Option("--plate-id", help="Use an already-registered plate")
+    ] = None,
+    spoken_place: Annotated[
+        str | None,
+        typer.Option(
+            "--spoken-place",
+            help="What the voice says. Defaults to the last segment of --address, "
+                 "so landmarks are not read aloud.",
+        ),
+    ] = None,
+    uniform: Annotated[str, typer.Option(help="uniform_id for the plate")] = "polo",
+    background: Annotated[
+        str, typer.Option(help="background_id for the plate")
+    ] = "bg1_white_suv",
+) -> None:
+    """Create one job by hand from local files. Idempotent on (photo, phone).
+
+    The manual-entry path — a single mechanic, a plate test, a client sample —
+    without the export API in the way. It creates the rows and lands the photo;
+    it does not run anything. Follow it with `drain`.
+    """
+    _boot()
+    from pathlib import Path
+
+    from .seed import seed_job
+
+    out = seed_job(
+        photo=Path(photo),
+        plate=Path(plate) if plate else None,
+        plate_id=plate_id,
+        name=name,
+        workshop=workshop,
+        address=address,
+        phone=phone,
+        spoken_place=spoken_place,
+        uniform_id=uniform,
+        background_id=background,
+    )
+    typer.echo(json.dumps(out, indent=2))
+
+
+@app.command()
+def show(job_id: Annotated[str, typer.Argument(help="Job UUID")]) -> None:
+    """Everything known about one job: runs, cost, assets, checks."""
+    _boot()
+    from .seed import describe
+
+    typer.echo(describe(job_id))
+
+
+@app.command()
+def events(
+    job_id: Annotated[str, typer.Argument(help="Job UUID")],
+    limit: Annotated[int, typer.Option(help="Max events")] = 200,
+) -> None:
+    """The durable timeline for one job, newest first."""
+    _boot()
+    from .common.events import job_timeline
+
+    rows = job_timeline(job_id, limit)
+    for row in reversed(rows):
+        stamp = row["created_at"].strftime("%H:%M:%S")
+        stage = row["stage"] or "-"
+        extra = json.dumps(row["fields"], default=str) if row["fields"] else ""
+        typer.echo(f"{stamp}  {row['level']:<7} {stage:<10} {row['event']:<24} {extra}")
+
+
+@app.command()
+def costs(
+    since: Annotated[str | None, typer.Option(help="YYYY-MM-DD")] = None,
+    limit: Annotated[int, typer.Option(help="Max jobs listed")] = 50,
+) -> None:
+    """Per-generation spend, and today's usage against the caps."""
+    _boot()
+    from .common import db
+
+    jobs = db.fetch_all(
+        """
+        SELECT job_id, status, cost_usd, video_seconds, paid_calls, failed_runs,
+               created_at
+          FROM job_costs
+         WHERE (%(since)s::date IS NULL OR created_at >= %(since)s::date)
+         ORDER BY created_at DESC
+         LIMIT %(limit)s;
+        """,
+        {"since": since, "limit": limit},
+    )
+    usage = db.fetch_all(
+        """
+        SELECT u.vendor, u.usage_date, u.calls, u.cost_usd, u.seconds,
+               l.daily_cost_cap_usd, l.daily_call_cap
+          FROM vendor_usage u
+          JOIN vendor_limits l ON l.vendor = u.vendor
+         WHERE u.usage_date = (now() at time zone 'Asia/Kolkata')::date
+         ORDER BY u.vendor;
+        """
+    )
+    total = sum(float(j["cost_usd"] or 0) for j in jobs)
+    typer.echo(
+        json.dumps(
+            {
+                "jobs": [dict(j) for j in jobs],
+                "job_count": len(jobs),
+                "total_usd": round(total, 4),
+                "mean_usd": round(total / len(jobs), 4) if jobs else None,
+                "today_by_vendor": [dict(u) for u in usage],
+            },
+            indent=2,
+            default=str,
+        )
+    )
+
+
 @app.command()
 def work(
     stage: Annotated[str, typer.Option("--stage", help="Stage to drain")],

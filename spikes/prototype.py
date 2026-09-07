@@ -32,11 +32,28 @@ import argparse
 import json
 import mimetypes
 import pathlib
-import subprocess
 import sys
 import time
 
 import httpx
+
+# The card geometry and the ffmpeg settings were tuned against real client
+# review, so they live in the package and this spike borrows them. Two copies
+# would drift on the first revision, and the spike is what the client sees.
+from castrol_pipeline.stages.media import (
+    composite as _composite,
+)
+from castrol_pipeline.stages.media import (
+    normalise_for_apimart as _normalise_for_apimart,
+)
+from castrol_pipeline.stages.media import (
+    probe_dimensions,
+    probe_duration_seconds,
+    render_card,
+)
+from castrol_pipeline.stages.media import (
+    to_mp3 as _to_mp3,
+)
 
 # --------------------------------------------------------------- config ----
 
@@ -91,53 +108,15 @@ class State:
 
 
 def ffprobe_duration(path: pathlib.Path) -> float:
-    """Probe duration. Nothing upstream returns it and the avatar step bills
-    per output second, so this is the only truth about how long the audio is.
-    """
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-        capture_output=True, text=True,
-    )
-    if out.returncode != 0 or not out.stdout.strip():
-        die(f"ffprobe failed on {path}: {out.stderr.strip()}")
-    return float(out.stdout.strip())
+    return probe_duration_seconds(path)
 
 
 def to_mp3(src: pathlib.Path, dst: pathlib.Path) -> pathlib.Path:
-    """Transcode to MP3.
-
-    NOT optional. The avatar model's "Audio size is too large" is a BYTE limit,
-    not a duration limit - a 37s WAV has failed while a 53s WAV succeeded.
-    Cartesia's pcm_f32le is ~176 KB/s, so 40s is ~7 MB against ~640 KB as MP3.
-    """
-    if src.suffix.lower() == ".mp3":
-        return src
-    subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
-         "-codec:a", "libmp3lame", "-b:a", "128k", str(dst)],
-        check=True,
-    )
-    return dst
+    return _to_mp3(src, dst)
 
 
 def normalise_for_apimart(src: pathlib.Path, dst: pathlib.Path) -> pathlib.Path:
-    """apimart rejects images outside [300, 6000] px on EITHER axis."""
-    from PIL import Image
-
-    with Image.open(src) as im:
-        im = im.convert("RGB")
-        w, h = im.size
-        scale = 1.0
-        if min(w, h) < 300:
-            scale = 300 / min(w, h)
-        elif max(w, h) > 6000:
-            scale = 6000 / max(w, h)
-        if scale != 1.0:
-            im = im.resize((round(w * scale), round(h * scale)), Image.LANCZOS)
-            say("image", f"normalised {w}x{h} -> {im.size[0]}x{im.size[1]} for apimart")
-        im.save(dst, "PNG")
-    return dst
+    return _normalise_for_apimart(src, dst)
 
 
 def sniff_is_image(b: bytes) -> bool:
@@ -394,145 +373,9 @@ def step_video(image_url: str, audio_url: str, out: pathlib.Path) -> str:
 # ------------------------------------------------------ [4] card + composite --
 
 
-def render_card(fields: dict, frame_w: int, frame_h: int,
-                path: pathlib.Path) -> pathlib.Path:
-    """Deterministic Pillow render. No generative model ever touches this text.
-
-    Colour and width are measured from the client's reference mockup
-    (spikes/in/reference_plate_with_card.jpg); the vertical position is set
-    from client review of the first real videos. Expressed as fractions of the
-    frame so it scales to whatever the plate resolution turns out to be:
-
-        panel   x 18.56% .. 81.44%   (62.9% wide, centred)
-                y 70.00% .. 87.03%   (17.0% tall)
-        accent  red bar directly beneath, ~0.77% of frame height
-        colours panel #014D26 (Castrol green), accent #D22419, text white
-
-    The reference mockup measured 80.95% for the top edge, but that plate was
-    framed waist-up. Once apimart reframes to 9:16 the subject sits higher and
-    the card lands over the knees, so 70% is the reviewed position.
-
-    Returns a FULL-FRAME transparent PNG, so the composite is a plain
-    overlay at 0,0 and the position cannot drift.
-    """
-    from PIL import Image, ImageDraw, ImageFont
-
-    PANEL_X0, PANEL_X1 = 0.1856, 0.8144
-    PANEL_Y0 = 0.7000
-    PANEL_Y1 = PANEL_Y0 + 0.1703   # keep the measured panel height
-    ACCENT_H = 0.0077
-    GREEN, RED, WHITE = (1, 77, 38, 255), (210, 36, 25, 255), (255, 255, 255, 255)
-
-    img = Image.new("RGBA", (frame_w, frame_h), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-
-    x0, x1 = round(frame_w * PANEL_X0), round(frame_w * PANEL_X1)
-    y0 = round(frame_h * PANEL_Y0)
-    pw = x1 - x0
-    ph = round(frame_h * (PANEL_Y1 - PANEL_Y0))   # nominal, for type sizing
-
-    def font(px: int, bold: bool):
-        names = (("segoeuib.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf") if bold
-                 else ("segoeui.ttf", "arial.ttf", "DejaVuSans.ttf"))
-        for n in names:
-            try:
-                return ImageFont.truetype(n, px)
-            except OSError:
-                continue
-        return ImageFont.load_default()
-
-    def font_for(text, size, bold, limit):
-        f = font(size, bold)
-        while d.textlength(text, font=f) > limit and size > 8:
-            size -= 1
-            f = font(size, bold)
-        return f
-
-    inner = pw * 0.92
-    body = round(ph * 0.150)
-
-    # A long address wraps onto a second line rather than shrinking away.
-    # Shrinking made a 54-char address render at ~60% the size of the line
-    # above it, which is unreadable on a phone. Split on the comma nearest
-    # the middle so both halves are of similar length.
-    addr = fields["address"]
-    addr_lines = [addr]
-    if d.textlength(addr, font=font(body, False)) > inner:
-        f_body = font(body, False)
-        cuts = [i for i, ch in enumerate(addr) if ch == ","]
-        if cuts:
-            # Balance by RENDERED WIDTH, not character index - the widest line
-            # is what forces the shrink, so minimising it is the actual goal.
-            def widest(i):
-                a, b_ = addr[:i + 1].strip(), addr[i + 1:].strip()
-                return max(d.textlength(a, font=f_body), d.textlength(b_, font=f_body))
-            c = min(cuts, key=widest)
-            addr_lines = [addr[:c + 1].strip(), addr[c + 1:].strip()]
-
-    # Name is the hero line; everything else is one smaller regular size.
-    # A wrapped address is ONE field, so both its lines share one size - the
-    # largest at which every line fits. Sizing them independently left the
-    # short first line large and the long second line small, which reads as a
-    # rendering fault rather than a layout.
-    addr_size = body
-    while addr_size > 8 and any(
-        d.textlength(a, font=font(addr_size, False)) > inner for a in addr_lines
-    ):
-        addr_size -= 1
-
-    spec = [(fields["name"], round(ph * 0.235), True)]
-    spec.append((fields["workshop"], body, False))
-    spec += [(a, addr_size, False) for a in addr_lines]
-    spec.append((f"Mo. {fields['phone']}", body, False))
-
-    rendered = []
-    for text, size, bold in spec:
-        f = font_for(text, size, bold, inner)
-        asc, desc = f.getmetrics()
-        rendered.append((text, f, asc + desc))
-
-    # Draw the panel only once the content height is known: a wrapped address
-    # adds a line, and a fixed panel would push the last line onto the accent
-    # bar. Top edge stays pinned at PANEL_Y0 so the card never moves up.
-    gap = round(ph * 0.02)
-    pad = round(ph * 0.10)
-    total = sum(h for _, _, h in rendered) + gap * (len(rendered) - 1)
-    panel_h = max(ph, total + 2 * pad)
-    y1 = y0 + panel_h
-    d.rectangle([x0, y0, x1, y1], fill=GREEN)
-    d.rectangle([x0, y1, x1, y1 + max(2, round(frame_h * ACCENT_H))], fill=RED)
-
-    y = y0 + (panel_h - total) // 2     # vertically centre the block in the panel
-    cx = (x0 + x1) / 2
-    for text, f, h in rendered:
-        d.text((cx, y), text, font=f, fill=WHITE, anchor="ma")   # centre-aligned
-        y += h + gap
-
-    img.save(path, "PNG")
-    return path
-
-
 def step_composite(video: pathlib.Path, card: pathlib.Path,
                    out: pathlib.Path) -> pathlib.Path:
-    """ffmpeg overlay, full duration, fixed geometry. Deterministic.
-
-    The card is already frame-sized, so this is a straight 0,0 overlay - there
-    is no offset to get wrong.
-    """
-    # -crf 16 / veryslow: the overlay is a static graphic over an already-
-    # compressed source, so the re-encode must be visually lossless or it
-    # throws away quality we paid the avatar model for. ffmpeg's defaults
-    # (crf 23) cut the bitrate ~4x here, which is very visible on the card
-    # edges and on skin gradients.
-    subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video), "-i", str(card),
-         "-filter_complex", "[0:v][1:v]overlay=0:0",
-         "-c:v", "libx264", "-crf", "16", "-preset", "veryslow",
-         "-pix_fmt", "yuv420p", "-movflags", "+faststart",
-         "-c:a", "copy", str(out)],
-        check=True,
-    )
-    return out
+    return _composite(video, card, out)
 
 
 # ----------------------------------------------------------------- main ----
@@ -605,12 +448,7 @@ def main() -> int:
 
     # [4] card + composite
     video_in = pathlib.Path(st.get("video_path"))
-    probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(video_in)],
-        capture_output=True, text=True,
-    ).stdout.strip()
-    fw, fh = (int(v) for v in probe.split("x")[:2])
+    fw, fh = probe_dimensions(video_in)
     card = render_card(
         {"name": args.name, "workshop": args.workshop,
          "address": args.address, "phone": args.phone},

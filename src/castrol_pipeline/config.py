@@ -69,14 +69,28 @@ class Settings(BaseSettings):
     export_timezone: str = "Asia/Kolkata"
 
     # ----------------------------------------------------------- ai provider --
+    # Stage B (image) goes through apimart, stage C (video) through kie, and
+    # stage A (audio) direct to Cartesia — the one deliberate exception,
+    # because the apimart+kie intersection has no voice-cloning Hindi lane.
     apimart_api_key: str | None = None
     apimart_base_url: str | None = None
+    image_edit_resolution: str = "2K"
 
-    tts_model_id: str | None = None
+    kie_api_key: str | None = None
+    kie_base_url: str | None = None
+
+    cartesia_api_key: str | None = None
+    tts_base_url: str | None = None
+    cartesia_version: str = "2026-05-11"
+
+    tts_model_id: str = "sonic-3.6"
     tts_voice_id: str | None = None
-    image_edit_model_id: str | None = None
-    video_model_id: str | None = None
+    image_edit_model_id: str = "gpt-image-2"
+    video_model_id: str = "kling/ai-avatar-standard"
     lipsync_repair_model_id: str | None = None
+
+    #: Doubles the cost of the only expensive step. Off until reviewed.
+    video_use_pro: bool = False
 
     # -------------------------------------------------------------- pipeline --
     script_version: str = "v1"
@@ -96,6 +110,17 @@ class Settings(BaseSettings):
     # Stub mode swaps every vendor-calling stage for a deterministic fake.
     # This is what makes the orchestrator provable without spending money.
     use_stub_stages: bool = False
+
+    # The deliver stage POSTs a real URL to the client's real webhook, which is
+    # the one irreversible action in the pipeline. It stays OFF and logs what it
+    # would have sent until the client confirms the contract — an accidental
+    # POST during prototyping reaches mechanics over WhatsApp.
+    delivery_enabled: bool = False
+
+    #: Seconds an in-flight vendor task may run before the poller fails it.
+    #: kie has been seen at 20 minutes; 90 is a ceiling, not an expectation.
+    #: Without it a lost task sits `running` forever and never reports.
+    vendor_task_timeout_s: int = 5400
 
     def require(self, name: str) -> str:
         """Return a setting, or fail loudly naming the env var to set."""

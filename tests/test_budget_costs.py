@@ -30,14 +30,32 @@ class TestVideoCost:
 
 
 class TestTtsCost:
-    def test_short_script_bills_one_kilochar(self):
-        assert tts_cost_usd(550) == Decimal("0.10")
+    """Cartesia bills 1 credit per CHARACTER, 100K credits per $5.
 
-    def test_minimum_one(self):
-        assert tts_cost_usd(0) == Decimal("0.10")
-        assert tts_cost_usd(1) == Decimal("0.10")
+    Per character, with no block rounding. An earlier model here ceiled to
+    $0.10 per 1000 chars — that figure came from another stack's internal
+    credit conversion and overstated TTS by 2x on a real ~450 char script.
+    """
 
-    def test_ceils(self):
-        assert tts_cost_usd(1000) == Decimal("0.10")
-        assert tts_cost_usd(1001) == Decimal("0.20")
-        assert tts_cost_usd(1200) == Decimal("0.20")
+    def test_per_character(self):
+        assert tts_cost_usd(1000) == Decimal("0.05")
+        assert tts_cost_usd(500) == Decimal("0.025")
+
+    def test_does_not_round_to_a_block(self):
+        # 1001 chars costs one character more than 1000, not twice as much.
+        assert tts_cost_usd(1001) > tts_cost_usd(1000)
+        assert tts_cost_usd(1001) < tts_cost_usd(1000) * 2
+
+    def test_empty_is_free(self):
+        assert tts_cost_usd(0) == Decimal("0")
+
+    def test_matches_the_measured_per_second_rate(self):
+        # The README quotes audio at $0.000886/s of runtime, derived from a
+        # 443-char script that produced 25.0s. Keep the two in step.
+        assert tts_cost_usd(443) / Decimal("25.0") == Decimal("0.000886")
+
+    def test_is_a_rounding_error_next_to_video(self):
+        # A ~450 char script against 25s of avatar: TTS must stay ~2%, not the
+        # ~7% the old model implied. If this flips, the cost docs are wrong.
+        share = tts_cost_usd(450) / (tts_cost_usd(450) + video_cost_usd(25))
+        assert share < Decimal("0.03")

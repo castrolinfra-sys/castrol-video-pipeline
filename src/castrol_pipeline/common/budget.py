@@ -34,10 +34,16 @@ VENDOR_VIDEO = "kie_video"  # kling-avatar-v2 — billed PER OUTPUT SECOND
 #: Provider rates in USD, used to turn a stage's known inputs into the
 #: reservation. Rates are checked into code rather than config because getting
 #: one wrong under-reserves silently; a change should be a reviewed diff.
-USD_PER_IMAGE_2K = Decimal("0.012")
-USD_PER_VIDEO_SECOND_STANDARD = Decimal("0.04")
-USD_PER_VIDEO_SECOND_PRO = Decimal("0.08")
-USD_PER_TTS_KILOCHAR = Decimal("0.10")
+#: Confirmed against the provider dashboards on 07 Sep 2026.
+USD_PER_IMAGE_2K = Decimal("0.014")             # apimart gpt-image-2 @ 2K
+USD_PER_VIDEO_SECOND_STANDARD = Decimal("0.04")  # kie kling/ai-avatar-standard
+USD_PER_VIDEO_SECOND_PRO = Decimal("0.08")       # kling/ai-avatar-pro
+
+#: Cartesia bills 1 credit per CHARACTER, 100K credits per $5. Per character,
+#: not per block: there is no kilochar rounding to apply. An earlier $0.10 per
+#: 1000 chars figure came from another stack's internal credit conversion and
+#: overstated TTS by 2x.
+USD_PER_TTS_CHAR = Decimal("0.00005")
 
 
 def reserve(
@@ -107,6 +113,13 @@ def video_cost_usd(duration_seconds: float, pro: bool = False) -> Decimal:
 
 
 def tts_cost_usd(char_count: int) -> Decimal:
-    """Estimated TTS cost. Billing ceils per 1000 chars, minimum 1."""
-    kilochars = max(1, math.ceil(char_count / 1000))
-    return USD_PER_TTS_KILOCHAR * kilochars
+    """Estimated TTS cost. Per character, no block rounding.
+
+    Count the characters actually SENT to the provider — the spoken text after
+    pronunciation overrides, not the display text. They differ.
+    """
+    return USD_PER_TTS_CHAR * Decimal(max(0, char_count))
+
+
+def image_cost_usd(images: int = 1) -> Decimal:
+    return USD_PER_IMAGE_2K * Decimal(max(1, images))

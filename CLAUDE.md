@@ -52,7 +52,19 @@ casually — it is ~$0.04 per second of output.
 ### Pipeline
 
 ```bash
-uv run castrol intake --from 2026-09-01 --to 2026-09-01
+uv run castrol doctor
+```
+
+One video by hand — creates the rows and lands the photo in S3, runs nothing.
+Idempotent on (photo, phone). `--address` is what the CARD prints; what the
+voice SAYS defaults to the last segment of it, override with `--spoken-place`.
+
+```bash
+uv run castrol seed-job --photo spikes/in/mechanic2.jpg --plate spikes/in/plate_bg2.png --name "Amit Kumar" --workshop "Ganesh Car Service" --address "Beturkar Pada, Opposite New National Hospital, Andheri" --phone 9773128990 --uniform polo --background bg2_dark_sedan
+```
+
+```bash
+uv run castrol drain
 ```
 
 ```bash
@@ -61,6 +73,28 @@ uv run castrol work --stage audio
 
 ```bash
 uv run castrol poll
+```
+
+```bash
+uv run castrol schedule
+```
+
+```bash
+uv run castrol intake --from 2026-09-01 --to 2026-09-01
+```
+
+### Inspecting a run
+
+```bash
+uv run castrol show <job-id>
+```
+
+```bash
+uv run castrol events <job-id>
+```
+
+```bash
+uv run castrol costs
 ```
 
 ```bash
@@ -101,7 +135,12 @@ Returns **CSV**, not JSON. Rate limit 100 / 900s.
 ### Migrations
 
 Forward-only numbered SQL in `supabase/migrations/`, applied in order. There
-are no down migrations. Apply through the Supabase MCP or the SQL editor.
+are no down migrations. The Supabase MCP server for this project is READ-ONLY,
+so use the apply script — one file per invocation, in a single transaction:
+
+```bash
+uv run python scripts/apply_migration.py supabase/migrations/0004_runtime_observability.sql
+```
 
 ### AWS
 
@@ -244,6 +283,59 @@ through to a lane costing 3×, and left no trace in the database. Validate
 against the exact endpoint's schema — sibling endpoints on the same gateway
 accept different fields.
 
+**20. A key carries its `S3_PREFIX` from the moment it is built.**
+Nothing downstream adds or strips one. The CloudFront distribution has NO
+Origin Path, so the full key including `castrol/` must appear in the URL — a
+doubled or missing prefix is a 403 that reads exactly like a permissions
+failure. `assets.s3_key` is the same string you can paste into `aws s3 cp`.
+
+**21. Presign against the bucket's own regional endpoint.**
+boto3's default resolves the global host `<bucket>.s3.amazonaws.com`, and a
+SigV4 signature made against that does not validate for a bucket in another
+region: the presigned URL 403s while the SDK's own calls succeed. Pin both
+`region_name` and `endpoint_url`. Signatures are also METHOD-bound — a HEAD
+against a URL signed for GET is a correct 403, not a broken URL.
+
+**22. Delivered links are CDN URLs, never presigned.**
+SigV4 caps expiry at 7 days; the client link must live 6 months. A delivered
+link dies because the 180-day lifecycle rule DELETES the object. Publishing
+copies rather than moves: `jobs/` artefacts never expire, because expiring the
+client's link must not destroy the evidence.
+
+**23. Both paid remote stages are async — submit and release.**
+Not only for throughput. A submitted run sits in `running`, and the stuck-claim
+reaper only touches `claimed`. A synchronous paid stage that outlived
+`STAGE_CLAIM_TIMEOUT_S` would be reaped and re-run while the first call was
+still in flight, and billed twice.
+
+**24. Record cost at SUBMIT, per attempt.**
+The submit is what spent the money; a task that never completes still cost
+money, so recording only on success hides exactly the failures worth counting.
+Cost lives on `stage_runs`, never aggregated onto the job — a job that retried
+the video step really did pay twice.
+
+**25. Recording an event must never fail a stage.**
+`common/events.py` swallows every write error. The stage above it may have just
+spent a dollar; turning a logging outage into a stage failure turns it into a
+double charge on the retry. Note the failure handler logs `failed_event=`, not
+`event=` — structlog reserves that keyword and the collision raised a
+`TypeError` out of the very handler meant to swallow.
+
+**26. Never write a presigned URL or a credential into `job_events`.**
+A presigned URL is a bearer credential for one object; the events table is read
+by the admin panel and quoted in support threads. `_scrub()` keeps the path and
+drops the signature.
+
+**27. The card is rendered by Pillow, after generation, and is free.**
+No generative model ever touches the text. A card revision is an ffmpeg
+re-encode of media we already have — which is why three rounds of client review
+on the lower-third cost nothing. `stages/media.py` is the ONE implementation;
+`spikes/prototype.py` imports it.
+
+**28. `DELIVERY_ENABLED` gates the only irreversible action.**
+The client relays the POST to a real mechanic over WhatsApp. While false the
+stage logs exactly what it would have sent. Turning it on is a deliberate act.
+
 ---
 
 ## Conventions
@@ -268,8 +360,19 @@ accept different fields.
 
 ## Current phase
 
-**Phase 1.1–1.4 landed** (config, logging, budget, intake, prep, orchestrator
-with stub stages). Schema and budget applied to Supabase.
+**The pipeline runs end to end under the orchestrator** against real Supabase,
+real S3 and the real CDN. All eight stages are implemented in
+`stages/real.py`; `USE_STUB_STAGES=true` still swaps in deterministic fakes to
+exercise the DAG without spending. Migrations 0001–0004 are applied.
+
+Verified on a real job: seed → prep → composite → checks → publish → deliver,
+with the delivered CDN URL returning 200. The three paid stages are the same
+calls the prototype proved, now under budget reservation and cost recording.
+
+**Intake is still written against the pre-CSV export schema** — the real export
+returns CSV, has no `image_face_count`, and carries two phone fields
+(`whatsapp_number` is the real one). Use `castrol seed-job` until it is
+reworked.
 
 **Spike 0.1 is answered — do not rewrite the script.** `kling-avatar-v2` has
 completed in prod at 39s via kie and 60s via fal; the ~80-word script at 30–40s

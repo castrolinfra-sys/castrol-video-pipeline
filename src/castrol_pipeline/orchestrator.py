@@ -15,12 +15,14 @@ from __future__ import annotations
 import os
 import socket
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Any
 
 from psycopg.types.json import Jsonb
 
 from .common import db
 from .common.errors import PipelineError, StageErrorCode
+from .common.events import record_event
 from .common.logging import get_logger, job_context
 from .config import get_settings
 from .stages.base import (
@@ -42,17 +44,19 @@ def worker_identity() -> str:
 def get_stage_registry() -> dict[PipelineStage, Any]:
     """Which implementations are in play.
 
-    Stub mode is what makes the orchestrator provable without spending money.
-    Real stages land here in build order 1.5.
+    Stub mode is what makes the orchestrator provable without spending money,
+    and it stays: the DAG, retries and idempotency are still exercised without
+    a provider account. USE_STUB_STAGES is the only difference between a dry
+    run and a real one.
     """
-    from .stages.stubs import STUB_STAGES
-
     if get_settings().use_stub_stages:
+        from .stages.stubs import STUB_STAGES
+
         return STUB_STAGES
-    raise NotImplementedError(
-        "Real stages are not implemented yet (build order 1.5). "
-        "Set USE_STUB_STAGES=true to drive the pipeline with stubs."
-    )
+
+    from .stages.real import REAL_STAGES
+
+    return REAL_STAGES
 
 
 # --------------------------------------------------------------- retry policy --
@@ -194,14 +198,19 @@ def schedule_ready(job_id: str) -> list[PipelineStage]:
 def _persist_result(ctx: JobContext, run: dict[str, Any], result: StageResult) -> None:
     payload = {k: v for k, v in asdict(result).items() if v is not None}
     payload.pop("asset_kind", None)
+    # Decimals do not survive JSON. Cost lives in its own typed columns; this
+    # copy is only for the params blob, so stringifying it loses nothing.
+    for money in ("cost_usd", "billed_seconds", "billed_units"):
+        if money in payload:
+            payload[money] = str(payload[money])
 
     if result.asset_kind and result.output_key and result.sha256:
         db.execute(
             """
             INSERT INTO assets (job_id, kind, s3_key, sha256, bytes,
-                                duration_ms, width, height, meta)
+                                duration_ms, width, height, cdn_url, meta)
             VALUES (%(job_id)s, %(kind)s, %(key)s, %(sha)s, %(bytes)s,
-                    %(dur)s, %(w)s, %(h)s, %(meta)s)
+                    %(dur)s, %(w)s, %(h)s, %(cdn)s, %(meta)s)
             ON CONFLICT (s3_key) DO NOTHING;
             """,
             {
@@ -213,6 +222,7 @@ def _persist_result(ctx: JobContext, run: dict[str, Any], result: StageResult) -
                 "dur": result.duration_ms,
                 "w": result.width,
                 "h": result.height,
+                "cdn": result.cdn_url,
                 "meta": Jsonb(result.meta or {}),
             },
         )
@@ -237,11 +247,18 @@ def _persist_result(ctx: JobContext, run: dict[str, Any], result: StageResult) -
         str(run["id"]),
         output_key=result.output_key,
         params={"result": payload, "vendor_params": result.params or {}},
+        cost_usd=result.cost_usd,
+        billed_seconds=result.billed_seconds,
+        billed_units=result.billed_units,
     )
 
 
 def _record_delivery(ctx: JobContext, result: StageResult) -> None:
-    cdn = (result.meta or {}).get("stub_cdn_url") or (result.meta or {}).get("cdn_url")
+    cdn = (
+        result.cdn_url
+        or (result.meta or {}).get("stub_cdn_url")
+        or (result.meta or {}).get("cdn_url")
+    )
     if not cdn:
         return
     db.execute(
@@ -339,6 +356,9 @@ def execute_one(stage: PipelineStage, worker: str | None = None) -> bool:
                     vendor=outcome.vendor,
                     vendor_task_id=outcome.vendor_task_id,
                     model_id=outcome.model_id,
+                    cost_usd=outcome.cost_usd,
+                    billed_seconds=outcome.billed_seconds,
+                    billed_units=outcome.billed_units,
                 )
                 log.info("stage.submitted", vendor_task_id=outcome.vendor_task_id)
                 return True
@@ -357,8 +377,12 @@ def execute_one(stage: PipelineStage, worker: str | None = None) -> bool:
                 error_message=str(exc)[:2000],
                 retry_in_seconds=delay,
             )
-            log.error(
+            record_event(
                 "stage.failed",
+                job_id=job_id,
+                stage=str(stage),
+                stage_run_id=run_id,
+                level="error",
                 error_code=str(code),
                 attempts=run["attempts"],
                 retry_in_seconds=delay,
@@ -379,6 +403,42 @@ def drain_stage(stage: PipelineStage, *, limit: int = 1000) -> int:
 
 
 # ------------------------------------------------------------------ poller --
+
+
+def _fail_if_overdue(run: dict[str, Any], stage: PipelineStage) -> None:
+    """Fail an in-flight run that has outlived the vendor timeout.
+
+    Terminal, not retried. The submit already spent the money; retrying an
+    overdue task pays for it a second time on the chance the first one was
+    merely slow, which is the wrong trade on a step that costs a dollar.
+    """
+    started = run.get("started_at")
+    if started is None:
+        return
+    age = (datetime.now(UTC) - started).total_seconds()
+    limit = get_settings().vendor_task_timeout_s
+    if age <= limit:
+        return
+
+    db.mark_failed(
+        str(run["id"]),
+        error_code=str(StageErrorCode.VENDOR_TIMEOUT),
+        error_message=(
+            f"{run.get('vendor')} task {run.get('vendor_task_id')} was still "
+            f"in flight after {age / 60:.0f} min (limit {limit / 60:.0f} min). "
+            "The submit was already billed."
+        ),
+        retry_in_seconds=None,
+    )
+    record_event(
+        "vendor.task_timeout",
+        job_id=str(run["job_id"]),
+        stage=str(stage),
+        stage_run_id=str(run["id"]),
+        level="error",
+        vendor_task_id=str(run.get("vendor_task_id")),
+        minutes=round(age / 60, 1),
+    )
 
 
 def poll_once(*, limit: int = 100) -> int:
@@ -407,7 +467,12 @@ def poll_once(*, limit: int = 100) -> int:
                 ctx = load_context(job_id)
                 result = impl.poll(str(run["vendor_task_id"]), ctx)
                 if result is None:
-                    continue  # still in flight
+                    # Still in flight — unless it has been in flight too long.
+                    # The poller is stateless per pass, so without this a task
+                    # the vendor silently dropped stays `running` forever: the
+                    # job never fails, never completes, and never reports.
+                    _fail_if_overdue(run, stage)
+                    continue
                 _persist_result(ctx, run, result)
                 completed += 1
                 log.info("stage.polled_complete", output_key=result.output_key)
@@ -420,7 +485,15 @@ def poll_once(*, limit: int = 100) -> int:
                     error_message=str(exc)[:2000],
                     retry_in_seconds=delay,
                 )
-                log.error("stage.poll_failed", error_code=str(code), error=str(exc)[:500])
+                record_event(
+                    "stage.poll_failed",
+                    job_id=job_id,
+                    stage=str(stage),
+                    stage_run_id=str(run["id"]),
+                    level="error",
+                    error_code=str(code),
+                    error=str(exc)[:500],
+                )
             finally:
                 schedule_ready(job_id)
                 advance_job(job_id)

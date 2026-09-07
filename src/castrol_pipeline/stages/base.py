@@ -13,6 +13,7 @@ would change its output, and run.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
@@ -132,15 +133,40 @@ class StageResult:
     params: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
 
+    #: Public URL, set only by `publish` and only for the delivered video.
+    #: Working artefacts stay private and leave this None.
+    cdn_url: str | None = None
+
+    #: What this attempt cost. Set by whichever call reserved budget — for an
+    #: async stage that is the SUBMIT, so the figure travels on the
+    #: AsyncSubmission and the poller does not re-count it.
+    cost_usd: Decimal | None = None
+    billed_seconds: Decimal | None = None
+    billed_units: Decimal | None = None
+
 
 @dataclass(frozen=True)
 class AsyncSubmission:
-    """Stage C submits and releases. The poller reconciles."""
+    """Stages B and C submit and release. The poller reconciles.
+
+    Both paid remote stages are async, which is not only about worker
+    throughput: a submitted run sits in `running`, and the stuck-claim reaper
+    only touches `claimed`. A synchronous paid stage that outlives
+    STAGE_CLAIM_TIMEOUT_S would be reaped and re-run while the first call was
+    still in flight, and billed twice.
+    """
 
     vendor: str
     vendor_task_id: str
     model_id: str
     params: dict[str, Any] = field(default_factory=dict)
+
+    #: Reserved at submit time, recorded on the run immediately. Spend is
+    #: incurred by the submit, so it must be visible before the poll — a task
+    #: that never completes still cost money.
+    cost_usd: Decimal | None = None
+    billed_seconds: Decimal | None = None
+    billed_units: Decimal | None = None
 
 
 @runtime_checkable
