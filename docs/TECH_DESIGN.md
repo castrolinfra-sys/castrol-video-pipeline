@@ -95,7 +95,6 @@ src/castrol_pipeline/
     audio.py           A
     image.py           B
     video.py           C   (async submit)
-    repair.py          C2  (conditional)
     composite.py       D   (ffmpeg, deterministic)
     card.py            Pillow card renderer
     checks.py          machine validation
@@ -142,7 +141,7 @@ be called at all.
 
 ```
 prep → audio ─┐
-              ├→ video → [repair?] → composite → checks → publish → deliver
+              ├→ video → composite → checks → publish → deliver
       image ──┘
 ```
 
@@ -158,9 +157,10 @@ convenience for the panel and is never used for routing.
 did not complete every stage. A failed job sits in Postgres and appears in the
 panel. Nothing is sent to the client — the webhook has no failure channel.
 
-**`repair` is conditional.** It runs only when the lipsync check on the stage C
-output scores below threshold. Threshold is set after spike 0.1; until then
-`repair` is wired but disabled.
+**There is no repair pass.** A second lipsync pass was considered and dropped:
+quality is solved in the main flow, not by re-running it. If stage C output is
+unacceptable, the fix is the stage C inputs — audio, plate, prompt — not a
+patch stage.
 
 ---
 
@@ -177,7 +177,6 @@ only redoes the stages whose inputs actually moved.
 | audio | script text + `TTS_VOICE_ID` + `TTS_MODEL_ID` |
 | image | plate sha256 + source photo sha256 + prompt version + `IMAGE_EDIT_MODEL_ID` |
 | video | image_edit sha256 + audio sha256 + `VIDEO_MODEL_ID` + params |
-| repair | video_raw sha256 + audio sha256 + `LIPSYNC_REPAIR_MODEL_ID` |
 | composite | video-in sha256 + canonical(card payload) + card template version |
 | publish | video_final sha256 |
 | deliver | cdn_url + `phone_e164` |
@@ -262,8 +261,8 @@ zero is **refused**. This closes a specific trap — `kling-avatar-v2`'s
 a 35s video and no cap would ever notice.
 
 Budgets are keyed per logical stage (`apimart_image`, `kie_video`, `tts`,
-`repair`) rather than per provider account, so one looping stage cannot consume
-the whole day's spend. `tts` and `repair` are seeded **disabled** — see §19.
+`tts`) rather than per provider account, so one looping stage cannot consume
+the whole day's spend.
 
 Denied calls fail the stage with `BUDGET_EXHAUSTED` and are **not** retried
 within the same day. This is a hard stop, not a throttle.
@@ -295,7 +294,6 @@ s3://<bucket>/castrol/
   jobs/<job_id>/audio.wav
   jobs/<job_id>/image_edit.png
   jobs/<job_id>/video_raw.mp4
-  jobs/<job_id>/video_repair.mp4
   jobs/<job_id>/card.png
   jobs/<job_id>/video_final.mp4
   deliver/<uuid4>/video.mp4                the only key the client ever sees
@@ -334,21 +332,43 @@ dimensions, and the vendor metadata to record. Stages do not write to `jobs`;
 the orchestrator does. Stages do not decide retries; the orchestrator does.
 
 ### A — audio
-TTS over the filled script with the fixed voice reference.
+**Cartesia, direct API.** The one deliberate exception to "apimart + kie only",
+taken because that intersection has no voice-cloning Hindi lane at all. Hindi
+and Gujarati are both prod-verified on Cartesia with a cloned voice.
 
-Three things this stage owns beyond the provider call, all mandatory:
+The voice is **created by hand in the Cartesia dashboard** and referenced by
+id. There is no cloning call in the pipeline — no `/voices/clone`, no
+per-render clone latency, no voice lifecycle to manage. `TTS_VOICE_ID` is
+config, pinned like a model id.
 
-1. **Clone the voice once and persist the id.** Never clone per render — that
-   pays clone latency on every job and makes A/B-ing the client's two reference
-   clips impossible.
-2. **Transcode to MP3.** The avatar model's `"Audio size is too large"` is a
-   byte limit, not a duration limit; every observed failure was a WAV. This is
-   not optional if the TTS emits `pcm_f32le`, which is ~176 KB/s.
-3. **Probe the duration with ffmpeg and record it.** No TTS provider returns a
-   duration, and stage C bills per output second — so this probe is a billing
+```
+POST https://api.cartesia.ai/tts/bytes
+Authorization: Bearer $TTS_API_KEY
+Cartesia-Version: 2026-05-11
+{ "model_id": "sonic-3.5",
+  "transcript": "<filled script>",
+  "voice": { "mode": "id", "id": "<dashboard voice id>" },
+  "output_format": { ... } }
+→ raw audio bytes. Synchronous. No task id, no polling, no duration.
+```
+
+Two things this stage owns beyond the call, both mandatory:
+
+1. **Emit MP3.** The avatar model's `"Audio size is too large"` is a byte
+   limit, not a duration limit, and every observed failure was a WAV.
+   Cartesia's default `pcm_f32le` @44.1kHz is ~176 KB/s — 40s is ~7 MB against
+   ~640 KB as MP3. Request an MP3 container if Cartesia will emit one;
+   otherwise transcode before handing off. Either way stage C never sees a WAV.
+2. **Probe the duration with ffmpeg and record it.** Cartesia returns no
+   duration, and stage C bills per output second — this probe is a billing
    input, not a convenience. Fail closed to the cap, never to zero.
 
-**Provider unresolved.** See §19.1.
+Billing ceils per 1000 characters with a minimum of 1, so a ~550-character
+script bills as a full 1k either way. Roughly $0.10 per video, ~7% of cost.
+
+**Language note:** `language_code` was null on every verified Hindi run, and
+the clone call's `language` field does not appear to gate synthesis language.
+Do not assume it needs setting; test before adding it.
 
 ### B — image
 Person replacement on the frozen plate. Prompt is structured
@@ -373,19 +393,6 @@ kie's response shape has two traps worth restating: HTTP 200 with `code != 200`
 is an error, and `resultJson` is a JSON *string* that must be parsed before
 indexing `resultUrls[0]`. Copy the result to our storage inside the handler —
 the provider URL's TTL is unmeasured and unrelied-upon.
-
-### C2 — repair
-**Not buildable as designed, and disabled.** Two independent reasons:
-
-- there is no repair lane on apimart or kie — the nearest tool,
-  `sync-lipsync-v2`, is fal-only
-- there is no lipsync quality score anywhere to trigger it. The threshold this
-  stage was specified around does not exist
-
-The options are: run a repair pass unconditionally (roughly doubles video cost
-and adds ~12 min), gate on human review, or build a scorer from nothing. That
-is a product decision, not an implementation detail. The stage stays wired and
-disabled until it is made.
 
 ### D — composite
 `ffmpeg` overlay of the rendered card, full duration, fixed geometry. Fully
@@ -611,20 +618,11 @@ tracks, not blockers for 1.1–1.4.
 
 Blocking, in order:
 
-1. **TTS provider for stage A — the live blocker.** "apimart or kie" ∩ "clone
-   from the client's reference clip" ∩ "Hindi male" is an empty set today: the
-   only ElevenLabs TTS on kie has zero successful generations ever and exposes
-   no cloning parameter at all, and the only clone-with-Hindi path with
-   evidence behind it runs on a direct API with no gateway lane. Options:
-   allow one direct-API exception for this stage; audit the gateways' live
-   catalogues for a cloning endpoint not yet configured; or drop cloning and
-   use a preset — noting no male-Hindi preset is known to exist either. The
-   `tts` vendor row is seeded disabled until this is settled.
-
-   Two sub-questions that shape it: what are the client's two reference clips
-   *for* — cloning, or picking between presets? And does the voice have to be
-   male, given a clone from the client's own male reference sidesteps the
-   preset gap entirely?
+1. ~~**TTS provider for stage A.**~~ **Decided: Cartesia, direct API**, with
+   the voice created by hand in the Cartesia dashboard and referenced by id.
+   This is a deliberate exception to "apimart + kie only" — that intersection
+   has no voice-cloning Hindi lane. No cloning call ships in the pipeline. See
+   §10 stage A.
 
 2. ~~**Script runtime vs model max input duration.**~~ **Answered.**
    `kling-avatar-v2` has completed at 39s via kie and 60s via fal; the v1

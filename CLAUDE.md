@@ -182,11 +182,13 @@ is comfortably inside proven range. The original 18–25s assumption was too
 conservative by about half. Budget **8–20 minutes** of wall clock per render,
 not two.
 
-**The live blocker is now stage A (voice).** "apimart or kie" ∩ "clone from the
-client's reference" ∩ "Hindi male" is an empty set today. The `tts` row in
-`vendor_limits` is seeded **disabled** so nothing can spend against an
-unresolved lane. This needs a decision before stage A can be built — see the
-open questions at the end of the reference doc.
+**Stage A is Cartesia, direct API** — the one deliberate exception to
+"apimart + kie only", because that intersection has no voice-cloning Hindi
+lane. The voice is created by hand in the Cartesia dashboard and referenced by
+id: **there is no cloning call in the pipeline.**
 
-**Stage C2 (repair) is also disabled**: no lane on apimart or kie, and no
-lipsync quality signal exists anywhere to trigger it.
+**There is no repair pass.** A second lipsync pass was considered and dropped
+— quality is solved in the main flow. If stage C output is unacceptable the
+fix is its inputs, not a patch stage. Do not reintroduce it.
+
+**The open unknown is geometry drift** — spike 0.3. See below.
