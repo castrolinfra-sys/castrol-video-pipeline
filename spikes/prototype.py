@@ -288,7 +288,7 @@ def step_audio(script_text: str, out_dir: pathlib.Path) -> tuple[pathlib.Path, f
         r = c.post(
             f"{base}/tts/bytes",
             headers={
-                "Authorization": f"Bearer {need('TTS_API_KEY')}",
+                "Authorization": f"Bearer {need('CARTESIA_API_KEY')}",
                 "Cartesia-Version": ENV.get("CARTESIA_VERSION", "2026-05-11"),
                 "Content-Type": "application/json",
             },
