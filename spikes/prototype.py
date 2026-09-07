@@ -475,9 +475,16 @@ def step_composite(video: pathlib.Path, card: pathlib.Path,
     The card is already frame-sized, so this is a straight 0,0 overlay - there
     is no offset to get wrong.
     """
+    # -crf 16 / veryslow: the overlay is a static graphic over an already-
+    # compressed source, so the re-encode must be visually lossless or it
+    # throws away quality we paid the avatar model for. ffmpeg's defaults
+    # (crf 23) cut the bitrate ~4x here, which is very visible on the card
+    # edges and on skin gradients.
     subprocess.run(
         ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video), "-i", str(card),
          "-filter_complex", "[0:v][1:v]overlay=0:0",
+         "-c:v", "libx264", "-crf", "16", "-preset", "veryslow",
+         "-pix_fmt", "yuv420p", "-movflags", "+faststart",
          "-c:a", "copy", str(out)],
         check=True,
     )
