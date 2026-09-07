@@ -36,3 +36,4 @@ Thumbs.db
 # keep the spike io dirs on clone
 !spikes/in/.gitkeep
 !spikes/out/.gitkeep
+spikes/out/

@@ -182,10 +182,20 @@ def publish(path: pathlib.Path) -> str:
             "        somewhere already public."
         )
     import boto3
+    from botocore.config import Config
 
+    region = ENV.get("AWS_REGION", "ap-south-1")
+    # The endpoint and the signature region MUST match the bucket's region.
+    # boto3's default resolves to the global host `<bucket>.s3.amazonaws.com`,
+    # and a SigV4 signature made against that does not validate for a bucket
+    # in another region - the presigned URL 403s while the SDK's own calls
+    # work fine, which reads as an IAM problem and is not one.
     s3 = boto3.client(
         "s3",
-        region_name=ENV.get("AWS_REGION", "ap-south-1"),
+        region_name=region,
+        endpoint_url=f"https://s3.{region}.amazonaws.com",
+        config=Config(signature_version="s3v4",
+                      s3={"addressing_style": "virtual"}),
         aws_access_key_id=need("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key=need("AWS_SECRET_ACCESS_KEY"),
     )
@@ -364,50 +374,90 @@ def step_video(image_url: str, audio_url: str, out: pathlib.Path) -> str:
 # ------------------------------------------------------ [4] card + composite --
 
 
-def render_card(fields: dict, width: int, path: pathlib.Path) -> pathlib.Path:
-    """Deterministic Pillow render. No generative model ever touches this text."""
+def render_card(fields: dict, frame_w: int, frame_h: int,
+                path: pathlib.Path) -> pathlib.Path:
+    """Deterministic Pillow render. No generative model ever touches this text.
+
+    Geometry and colour are measured from the client's own reference mockup
+    (spikes/in/reference_plate_with_card.jpg), expressed as fractions of the
+    frame so it scales to whatever the plate resolution turns out to be:
+
+        panel   x 18.56% .. 81.44%   (62.9% wide, centred)
+                y 80.95% .. 97.98%   (17.0% tall)
+        accent  11px red bar directly beneath, ~0.77% of frame height
+        colours panel #014D26 (Castrol green), accent #D22419, text white
+
+    Returns a FULL-FRAME transparent PNG, so the composite is a plain
+    overlay at 0,0 and the position cannot drift.
+    """
     from PIL import Image, ImageDraw, ImageFont
 
-    w, h = width, int(width * 0.30)
-    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.rounded_rectangle([0, 0, w, h], radius=int(h * 0.10), fill=(0, 0, 0, 175))
+    PANEL_X0, PANEL_X1 = 0.1856, 0.8144
+    PANEL_Y0, PANEL_Y1 = 0.8095, 0.9798
+    ACCENT_H = 0.0077
+    GREEN, RED, WHITE = (1, 77, 38, 255), (210, 36, 25, 255), (255, 255, 255, 255)
 
-    def font(px: int):
-        for name in ("segoeuib.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf"):
+    img = Image.new("RGBA", (frame_w, frame_h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+
+    x0, x1 = round(frame_w * PANEL_X0), round(frame_w * PANEL_X1)
+    y0, y1 = round(frame_h * PANEL_Y0), round(frame_h * PANEL_Y1)
+    pw, ph = x1 - x0, y1 - y0
+    d.rectangle([x0, y0, x1, y1], fill=GREEN)
+    d.rectangle([x0, y1, x1, y1 + max(2, round(frame_h * ACCENT_H))], fill=RED)
+
+    def font(px: int, bold: bool):
+        names = (("segoeuib.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf") if bold
+                 else ("segoeui.ttf", "arial.ttf", "DejaVuSans.ttf"))
+        for n in names:
             try:
-                return ImageFont.truetype(name, px)
+                return ImageFont.truetype(n, px)
             except OSError:
                 continue
         return ImageFont.load_default()
 
+    # Name is the hero line; the other three are one smaller regular size.
     lines = [
-        (fields["name"], int(h * 0.26), (255, 255, 255, 255)),
-        (fields["workshop"], int(h * 0.20), (255, 210, 0, 255)),
-        (fields["address"], int(h * 0.16), (235, 235, 235, 255)),
-        (f"Mo. {fields['phone']}", int(h * 0.16), (235, 235, 235, 255)),
+        (fields["name"], round(ph * 0.235), True),
+        (fields["workshop"], round(ph * 0.150), False),
+        (fields["address"], round(ph * 0.150), False),
+        (f"Mo. {fields['phone']}", round(ph * 0.150), False),
     ]
-    y, pad = int(h * 0.10), int(w * 0.04)
-    for text, size, colour in lines:
-        f = font(size)
-        # Shrink to fit rather than wrap or overflow. Intake length rules are
-        # what should keep this from ever firing.
-        while d.textlength(text, font=f) > w - 2 * pad and size > 10:
-            size -= 2
-            f = font(size)
-        d.text((pad, y), text, font=f, fill=colour)
-        y += int(size * 1.35)
+
+    inner = pw * 0.92
+    rendered = []
+    for text, size, bold in lines:
+        f = font(size, bold)
+        # Shrink to fit. Never wrap, never overflow - intake length limits are
+        # what should stop this ever firing.
+        while d.textlength(text, font=f) > inner and size > 8:
+            size -= 1
+            f = font(size, bold)
+        asc, desc = f.getmetrics()
+        rendered.append((text, f, asc + desc))
+
+    gap = round(ph * 0.02)
+    total = sum(h for _, _, h in rendered) + gap * (len(rendered) - 1)
+    y = y0 + (ph - total) // 2          # vertically centre the block in the panel
+    cx = (x0 + x1) / 2
+    for text, f, h in rendered:
+        d.text((cx, y), text, font=f, fill=WHITE, anchor="ma")   # centre-aligned
+        y += h + gap
 
     img.save(path, "PNG")
     return path
 
 
 def step_composite(video: pathlib.Path, card: pathlib.Path,
-                   out: pathlib.Path, y_frac: float) -> pathlib.Path:
-    """ffmpeg overlay, full duration, fixed geometry. Deterministic."""
+                   out: pathlib.Path) -> pathlib.Path:
+    """ffmpeg overlay, full duration, fixed geometry. Deterministic.
+
+    The card is already frame-sized, so this is a straight 0,0 overlay - there
+    is no offset to get wrong.
+    """
     subprocess.run(
         ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video), "-i", str(card),
-         "-filter_complex", f"[0:v][1:v]overlay=x=(W-w)/2:y=H*{y_frac}",
+         "-filter_complex", "[0:v][1:v]overlay=0:0",
          "-c:a", "copy", str(out)],
         check=True,
     )
@@ -427,11 +477,12 @@ def main() -> int:
     ap.add_argument("--workshop", default="Shetty Motors")
     ap.add_argument("--address", default="Andheri, Mumbai")
     ap.add_argument("--phone", default="9898989898")
-    ap.add_argument("--card-y", type=float, default=0.70,
-                    help="card top as a fraction of frame height")
     ap.add_argument("--plate-url", help="skip hosting; plate is already public")
     ap.add_argument("--photo-url", help="skip hosting; photo is already public")
     ap.add_argument("--audio-url", help="skip hosting; mp3 is already public")
+    ap.add_argument("--image-url",
+                    help="skip step 1; drive the avatar from this image directly. "
+                         "Useful before the plates exist.")
     ap.add_argument("--only", choices=["image", "audio", "video", "composite"],
                     help="run one step and stop")
     args = ap.parse_args()
@@ -443,6 +494,14 @@ def main() -> int:
     only = args.only
 
     # [1] image
+    if args.image_url:
+        st.set("image_url", args.image_url)
+    elif not args.image_url and args.photo and not (args.plate or st.get("image_url")):
+        # No plate yet: drive the avatar straight from the source photo so the
+        # audio -> video -> card path can be proven before the plates land.
+        st.set("image_url", publish(
+            normalise_for_apimart(pathlib.Path(args.photo), out / "photo_norm.png")))
+        say("image", "no --plate given; using the source photo as the avatar image")
     if only in (None, "image") and not st.get("image_url"):
         if not (args.plate and args.photo):
             die("--plate and --photo are required for the image step")
@@ -474,17 +533,19 @@ def main() -> int:
         return 0
 
     # [4] card + composite
-    from PIL import Image
-
-    with Image.open(out / "image_edit.png") as im:
-        frame_w = im.size[0]
+    video_in = pathlib.Path(st.get("video_path"))
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(video_in)],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    fw, fh = (int(v) for v in probe.split("x")[:2])
     card = render_card(
         {"name": args.name, "workshop": args.workshop,
          "address": args.address, "phone": args.phone},
-        int(frame_w * 0.84), out / "card.png",
+        fw, fh, out / "card.png",
     )
-    final = step_composite(pathlib.Path(st.get("video_path")), card,
-                           out / "final.mp4", args.card_y)
+    final = step_composite(video_in, card, out / "final.mp4")
     say("done", f"{final}  ({final.stat().st_size // 1024}KB)")
     return 0
 
