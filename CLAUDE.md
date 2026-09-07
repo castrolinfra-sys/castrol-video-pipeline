@@ -103,8 +103,16 @@ personal data — face photos joinable to phone numbers.
 - Stages implement the `Stage` protocol in `stages/base.py`. Stages do not
   write to `jobs` and do not decide retries — the orchestrator does both.
 - `spikes/` is throwaway. It never imports `src/`, and `src/` never imports it.
-- RLS is deny-all with no policies. Only the service role key is used, and only
-  server-side.
+- RLS is deny-all with no policies.
+- **Supabase keys are the new style only** — `sb_secret_…` / `sb_publishable_…`,
+  never the legacy `anon` / `service_role` JWTs. Those are deprecated by end of
+  2026 and were never issued to this project (created after 01 Nov 2025), so if
+  something asks for a `service_role` key, that code is wrong. The `service_role`
+  *Postgres role* is a different thing and is still what a secret key authorizes
+  as — the RLS comments in the migrations are correct as written.
+- The pipeline uses **no Supabase API key at all**; it connects to Postgres
+  directly via `SUPABASE_DB_URL`. Keys are an admin-panel concern only, and the
+  secret key stays server-side.
 
 ---
 

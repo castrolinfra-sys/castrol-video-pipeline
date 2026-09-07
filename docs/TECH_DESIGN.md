@@ -496,8 +496,15 @@ Face photos joinable to phone numbers is personal data under DPDP. Practically:
 
 - S3 private, no public-read, ever
 - delivery links unguessable and lifecycle-expired at 180 days
-- service role key server-side only; RLS deny-all so a leaked anon key reads
-  nothing
+- Supabase **secret key** (`sb_secret_…`) server-side only; RLS deny-all so a
+  leaked publishable key reads nothing. We use the new API keys, not the legacy
+  `anon` / `service_role` JWTs — those are deprecated by end of 2026 and are not
+  issued to projects created after 01 Nov 2025, so this project never had them.
+  The `service_role` *Postgres role* is unaffected and still what a secret key
+  authorizes as
+- the pipeline processes use no API key at all — they connect to Postgres
+  directly, so the only Supabase credential outside the admin panel is
+  `SUPABASE_DB_URL`
 - no personal data in log lines beyond `job_id` and `phone_e164`
 - spike inputs and outputs are gitignored — real mechanic photos never enter git
 
