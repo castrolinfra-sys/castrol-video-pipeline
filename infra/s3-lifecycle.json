@@ -1,0 +1,29 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-delivered-videos-180d",
+      "Filter": { "Prefix": "castrol/deliver/" },
+      "Status": "Enabled",
+      "Expiration": { "Days": 180 },
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 1 }
+    },
+    {
+      "ID": "expire-prototype-scratch-7d",
+      "Filter": { "Prefix": "castrol/prototype/" },
+      "Status": "Enabled",
+      "Expiration": { "Days": 7 }
+    },
+    {
+      "ID": "expire-share-links-14d",
+      "Filter": { "Prefix": "castrol/share/" },
+      "Status": "Enabled",
+      "Expiration": { "Days": 14 }
+    },
+    {
+      "ID": "abort-incomplete-multipart-7d",
+      "Filter": { "Prefix": "" },
+      "Status": "Enabled",
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 7 }
+    }
+  ]
+}

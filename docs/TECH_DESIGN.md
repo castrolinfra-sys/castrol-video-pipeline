@@ -305,11 +305,38 @@ s3://<bucket>/castrol/
 - the 180-day lifecycle rule targets `deliver/` alone, so expiring a delivered
   link never destroys the working artefacts we would need to diagnose it
 
-**The bucket is private.** Links are served through the CDN. We do not use
-presigned URLs: SigV4 caps expiry at 7 days, and a URL signed with EC2
-instance-role credentials dies with the session token — typically within the
-hour — regardless of the expiry requested. Six-month links are achieved by
-*unguessable key + private bucket + CDN + lifecycle rule*, not by cryptography.
+**The bucket is private.** Nothing is public-read. Two different URL kinds do
+two different jobs, and they are not interchangeable:
+
+| Use | URL kind | Lifetime |
+|---|---|---|
+| provider inputs (plate, photo, MP3) | **presigned** | 6 h |
+| delivered video | **CDN** | until the object is deleted |
+
+*Provider inputs stay presigned.* Those objects are mechanic face photos
+joinable to phone numbers, and the short lifetime is the point — a CDN URL for
+a source photo is a permanent public link to someone's face, created as a side
+effect of making their video. Providers fetch each object exactly once, so edge
+caching buys nothing to trade against that. The only real risk is signing too
+*short*: a job can sit queued ~45 min, hence 6 h rather than the 1 h that has
+bitten this stack before.
+
+*Delivered videos use the CDN,* because presigning cannot express six months —
+SigV4 caps at 7 days, and a URL signed with EC2 instance-role credentials dies
+with the session token, typically within the hour, regardless of the expiry
+requested. A delivered link stops working because the **object is deleted on
+schedule** (`infra/s3-lifecycle.json`, 180 days on `castrol/deliver/`), not
+because a signature lapsed. Security is the unguessable key, so the uuid must
+never be derived from a phone number or a `job_id`.
+
+CloudFront is live and verified. The distribution has **no Origin Path**, so
+the full S3 key including the `castrol/` prefix must appear in the URL:
+`https://<cdn>/castrol/deliver/<uuid4>/video.mp4` returns 200,
+`https://<cdn>/deliver/<uuid4>/video.mp4` returns 403.
+
+`castrol/jobs/` is deliberately never expired. Those working artefacts are what
+diagnoses a complaint about a video that shipped five months ago; expiring the
+delivered copy must not destroy the evidence.
 
 ---
 
