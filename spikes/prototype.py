@@ -470,9 +470,19 @@ def render_card(fields: dict, frame_w: int, frame_h: int,
             addr_lines = [addr[:c + 1].strip(), addr[c + 1:].strip()]
 
     # Name is the hero line; everything else is one smaller regular size.
+    # A wrapped address is ONE field, so both its lines share one size - the
+    # largest at which every line fits. Sizing them independently left the
+    # short first line large and the long second line small, which reads as a
+    # rendering fault rather than a layout.
+    addr_size = body
+    while addr_size > 8 and any(
+        d.textlength(a, font=font(addr_size, False)) > inner for a in addr_lines
+    ):
+        addr_size -= 1
+
     spec = [(fields["name"], round(ph * 0.235), True)]
     spec.append((fields["workshop"], body, False))
-    spec += [(a, body, False) for a in addr_lines]
+    spec += [(a, addr_size, False) for a in addr_lines]
     spec.append((f"Mo. {fields['phone']}", body, False))
 
     rendered = []
