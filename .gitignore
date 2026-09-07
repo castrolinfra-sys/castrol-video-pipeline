@@ -1,0 +1,38 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# spike + run output (real mechanic photos and generated video land here;
+# none of it belongs in git)
+spikes/out/
+spikes/in/
+out/
+tmp/
+logs/
+*.mp4
+*.wav
+*.mov
+
+# node (admin panel)
+node_modules/
+.next/
+.vercel/
+
+# os
+.DS_Store
+Thumbs.db
+
+# keep the spike io dirs on clone
+!spikes/in/.gitkeep
+!spikes/out/.gitkeep
