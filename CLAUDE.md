@@ -131,6 +131,42 @@ uv run pytest
 uv run ruff check .
 ```
 
+### Docker / CI
+
+→ [`Dockerfile`](Dockerfile), [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+Every push and PR runs `ruff` + `pytest`; a push to `main` or a `v*` tag also
+builds and pushes the worker image, gated on those passing. The suite needs no
+`.env` — every `Settings` field is defaulted or optional — so CI holds no
+pipeline credentials at all.
+
+**Docker Hub is reached by access token, never by an OAuth account link.** The
+Docker Hub account is not linked to any BeHooked GitHub identity and must not
+be; a token in GitHub secrets is what bridges them. Set in the repo's
+Settings → Secrets and variables → Actions:
+
+| | Name | Value |
+|---|---|---|
+| secret | `DOCKERHUB_USERNAME` | Docker Hub account name, not an email |
+| secret | `DOCKERHUB_TOKEN` | access token, Read & Write scope |
+| variable | `DOCKERHUB_IMAGE` | full repo, e.g. `acct/castrol-video-pipeline` |
+
+Tags: `latest` and `main-<sha>` on `main`, semver on `v*`. **Deploys pin the
+sha tag** — a worker that spends per run should not track a mutable tag.
+
+The image carries no credentials. Supply them at run time:
+
+```bash
+docker run --rm --env-file .env acct/castrol-video-pipeline:main-abc1234 work --stage audio
+```
+
+Two container-only hazards, both covered by the workflow's smoke test:
+`ffprobe` must exist or the video stage misbills (invariant 12), and
+`fonts-dejavu-core` must be installed or `render_card` silently falls back to
+Pillow's bitmap default. Note the card renders in **DejaVu** here and in Segoe
+UI on Windows — the metrics differ, so verify a card out of the container
+before trusting a layout that was approved off a local render.
+
 ### Balances — check before any run that spends
 
 → rates are pinned in [`common/budget.py`](src/castrol_pipeline/common/budget.py);

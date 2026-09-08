@@ -1,0 +1,118 @@
+name: CI
+
+# Docker Hub is reached with an access token held in GitHub secrets — there is
+# no OAuth link between the two accounts, and there must not be. This project
+# runs on a dedicated set of logins (see CLAUDE.md, "Accounts"), and the
+# Docker Hub account is not the one linked to any BeHooked GitHub identity.
+#
+# Required repository settings (Settings → Secrets and variables → Actions):
+#   secret   DOCKERHUB_USERNAME   the Docker Hub account name, not an email
+#   secret   DOCKERHUB_TOKEN      a Docker Hub access token with Read & Write
+#   variable DOCKERHUB_IMAGE      the full repository, e.g. acct/castrol-video-pipeline
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+    # Docs and the Phase 2 Vercel panel do not change what the worker image
+    # contains. Deliberately not applied to `push`: a path filter there could
+    # silently skip a release tag.
+    paths-ignore:
+      - "docs/**"
+      - "panel/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ruff + pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.14"
+          enable-cache: true
+
+      # No .env and no services: every field on Settings is either defaulted or
+      # Optional, and the suite is pure — no Postgres, no ffmpeg, no vendor.
+      # If that stops being true, this job starts failing loudly rather than
+      # quietly testing against a developer's real credentials.
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run pytest -q
+
+  docker:
+    name: build + push image
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check image name is configured
+        run: |
+          if [ -z "${{ vars.DOCKERHUB_IMAGE }}" ]; then
+            echo "::error::Repository variable DOCKERHUB_IMAGE is not set." \
+                 "Set it to the Docker Hub repository, e.g. acct/castrol-video-pipeline," \
+                 "under Settings → Secrets and variables → Actions → Variables."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ vars.DOCKERHUB_IMAGE }}
+          # `latest` moves; `main-<sha>` does not. Deploys should pin the sha
+          # tag — a worker that spends money per run is not something to leave
+          # tracking a mutable tag.
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=main-,format=short,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Attestations would add an "unknown/unknown" platform row next to
+          # every tag in the Docker Hub UI. Nothing here consumes them.
+          provenance: false
+
+      # Smoke test the artefact we just published, not a local rebuild of it.
+      # Both of these have failed before in this codebase's history: a missing
+      # ffprobe misbills the video stage, and a bad editable install makes the
+      # entrypoint vanish while the build still succeeds.
+      - name: Smoke test the pushed image
+        env:
+          IMAGE: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint ffprobe "$IMAGE" -version | head -1
+          docker run --rm --entrypoint python "$IMAGE" -c \
+            "from PIL import ImageFont; ImageFont.truetype('DejaVuSans-Bold.ttf', 48); print('fonts ok')"
+          docker run --rm "$IMAGE" --help > /dev/null
+          echo "smoke test passed for $IMAGE"
