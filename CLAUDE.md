@@ -121,6 +121,22 @@ uv run castrol costs
 uv run castrol report
 ```
 
+### Admin panel
+
+→ [`panel/`](panel/). Next.js, deployed on Vercel with Root Directory `panel`.
+Reads the pipeline's tables directly; the one thing it writes is `job_reports`.
+
+```bash
+cd panel && npm install && npm run dev
+```
+
+Needs `panel/.env.local` (see `panel/.env.local.example`) — its own file, not
+the pipeline's `.env`. **RLS is deny-all with no policies, so a signed-in
+user's own token reads nothing**: every query runs server-side with the secret
+key, and `ADMIN_ALLOWED_EMAILS` is therefore the only access control in the
+product. Auth is Supabase magic-link; the gate uses `getUser()`, never
+`getSession()`, because a session cookie is forgeable by the browser.
+
 ### Checks
 
 ```bash
@@ -240,6 +256,10 @@ rules, not application code.
 | Schema, budget function, RLS | [`supabase/migrations/`](supabase/migrations/) |
 | Lifecycle rules, bucket posture | [`infra/`](infra/) |
 | The standalone one-video script | [`spikes/prototype.py`](spikes/prototype.py) |
+| Admin panel (Next.js, Vercel) | [`panel/`](panel/) |
+| The panel's only DB handle — secret key, bypasses RLS | [`panel/lib/db.ts`](panel/lib/db.ts) |
+| Who may open the panel | [`panel/middleware.ts`](panel/middleware.ts) |
+| The panel's only write | [`panel/app/actions.ts`](panel/app/actions.ts) |
 
 Full annotated map with per-file descriptions: [`README.md`](README.md#where-things-live)
 and [`docs/TECH_DESIGN.md` §3](docs/TECH_DESIGN.md).
@@ -255,11 +275,21 @@ and [`docs/TECH_DESIGN.md` §3](docs/TECH_DESIGN.md).
 | Name | export `user_name` | **spoken** + card |
 | Workshop name | export `workshop_name` | **spoken** + card |
 | Location | export `address` | **spoken** + card |
-| Phone | export `whatsapp_number` | **card only**, never spoken |
+| Delivery phone | export `whatsapp_number` | **delivery key only**, never spoken, never printed |
+| Card phone | export `mechanic_phone_number` | **card only**, never spoken |
 
-Only name, workshop and location vary inside the script. `whatsapp_number` is
-the delivery key and the card number; `mechanic_phone_number` is unreliable and
-is not used.
+Only name, workshop and location vary inside the script. The two phone fields
+are two different numbers doing two different jobs, confirmed by the client
+2026-09-08: `whatsapp_number` is what we POST back as `phone` and is the join
+key the client relays on; `mechanic_phone_number` is the contact number printed
+in the card's green panel. Neither is ever spoken.
+
+They are NOT interchangeable and must not be collapsed back into one column.
+`submissions.phone_e164` is the delivery key (`whatsapp_number`), and the card
+number needs its own column — today `stages/real.py` renders the card from
+`phone_e164`, so until that is split the card prints the delivery number.
+`mechanic_id` would be the natural primary key but is not reliable enough to
+use as one; the export's own `id` is.
 
 ---
 
@@ -522,10 +552,34 @@ Verified on a real job: seed → prep → composite → checks → publish → d
 with the delivered CDN URL returning 200. The three paid stages are the same
 calls the prototype proved, now under budget reservation and cost recording.
 
-**Intake is still written against the pre-CSV export schema** — the real export
-returns CSV, has no `image_face_count`, and carries two phone fields
-(`whatsapp_number` is the real one). Use `castrol seed-job` until it is
-reworked.
+**Intake is still written against the pre-CSV export schema.** Confirmed
+against a real pull on 2026-09-08 — see the 18 real column names below. Use
+`castrol seed-job` until it is reworked. What is actually wrong:
+
+- `intake/export_client.py` parses **JSON** (`json.loads`), not CSV.
+- The body is served with a **UTF-8 BOM**. Decode `utf-8-sig` or the first
+  column, `id`, silently becomes `﻿id` and vanishes while the other 17
+  parse fine.
+- `intake/validate.py` and `intake/runner.py` read `mechanic_phone_number` as
+  *the* phone, including for `submission_hash`. That is the CARD number; the
+  delivery key and dedupe anchor is `whatsapp_number`.
+- `prep/plates.py` maps backgrounds `suv`/`sedan`/`hatchback`, which the export
+  never sends — it sends `Background 1|2|3` and `Castrol T-shirt|Castrol
+  Uniform`. Unmapped rejects rather than defaults, so every real row would
+  reject with `UNKNOWN_BACKGROUND`.
+- `EXPORT_TIMESTAMP_FORMAT` is pinned to `%d-%m-%Y %H:%M`; the feed sends ISO
+  8601 (`2026-09-07T10:13:49.681Z`) in camelCase `createdAt`/`updatedAt`.
+- No `image_face_count`. There IS an `id` — the client's own submission uuid,
+  and the only unique identifier in the feed.
+
+Real header, in order:
+
+```
+id, whatsapp_number, user_name, workshop_name, address, gender,
+mechanic_id_verified, mechanic_id, mechanic_phone_number, background,
+outfit, image_url, image_mime_type, image_validation_status,
+image_rekognition_status, status, createdAt, updatedAt
+```
 
 **Spike 0.1 is answered — do not rewrite the script.** `kling-avatar-v2` has
 completed in prod at 39s via kie and 60s via fal; the ~80-word script at 30–40s
