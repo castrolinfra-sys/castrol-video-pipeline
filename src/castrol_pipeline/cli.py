@@ -1,4 +1,17 @@
-"""CLI entrypoints: intake, work, poll, report — plus drain and doctor."""
+"""CLI entrypoints. Every `castrol <cmd>` in the docs lands in this file.
+
+    doctor      config + database reachable
+    seed-job    create one job by hand from local files   -> seed.py
+    intake      pull an export window                     -> intake/runner.py
+    schedule    enqueue ready stages                      -> orchestrator.py
+    work        drain one stage                           -> orchestrator.py
+    poll        reconcile in-flight vendor tasks          -> orchestrator.py
+    drain       sweep every stage until nothing moves     -> orchestrator.py
+    show        one job: runs, cost, assets, checks       -> seed.py:describe
+    events      one job's durable timeline                -> common/events.py
+    costs       per-generation spend + today's caps       -> job_costs view
+    report      the morning number for a batch
+"""
 
 from __future__ import annotations
 
@@ -119,7 +132,11 @@ def events(
     job_id: Annotated[str, typer.Argument(help="Job UUID")],
     limit: Annotated[int, typer.Option(help="Max events")] = 200,
 ) -> None:
-    """The durable timeline for one job, newest first."""
+    """The durable timeline for one job, oldest first.
+
+    Queried newest-first (that is the index), then reversed for display —
+    a run reads forwards.
+    """
     _boot()
     from .common.events import job_timeline
 

@@ -70,49 +70,86 @@ add a way for queue state and DB state to disagree.
 
 ## 3. Repo layout
 
+Every path below is real. If you are looking for where something happens, this
+table is the index.
+
 ```
 src/castrol_pipeline/
-  cli.py               typer entrypoints: intake, work, poll, report
-  config.py            pydantic-settings; every vendor key and endpoint from env
+  cli.py               typer entrypoints — every `castrol <cmd>` lands here
+  config.py            pydantic-settings; every key, endpoint and pinned id from env
+  orchestrator.py      readiness, claiming, retries, job state, the poller
+  seed.py              create one job by hand from local files (`castrol seed-job`)
   common/
-    db.py              psycopg pool, claim helpers, transaction scope
-    logging.py         structlog; job_id bound on every line
-    hashing.py         canonical json + sha256 for input_hash
-    s3.py              put/get, sha256-on-write, key builders
-    budget.py          reserve_vendor_call wrapper — the only path to a vendor
-    errors.py          stage error taxonomy
+    db.py              psycopg pool, claim/release helpers, transaction scope
+    logging.py         structlog to stdout; job_id bound on every line
+    events.py          DURABLE log -> job_events, and the credential scrubber
+    hashing.py         canonical json + sha256; the only place that serialises for hashing
+    s3.py              key builders, put/get/copy, presign, cdn_url
+    budget.py          reserve_vendor_call wrapper — the only path to a paid vendor
+    errors.py          reject codes + stage error taxonomy
   intake/
     export_client.py   date-range pull, pinned timestamp format
-    validate.py        §9 rules, reject codes, no repair
+    validate.py        validation rules, reject codes, no repair
     media.py           verbatim-URL fetch, magic-byte check, S3 landing
     dedupe.py          media_key / submission_hash
   prep/
-    script.py          template fill
-    normalise.py       address, numerals, pronunciation overrides
-    plates.py          background+outfit → plate_id
+    script.py          the script template, fill, spoken overrides
+    normalise.py       phone, address, numerals, speech expansion
+    plates.py          export background+outfit -> plate ids
   stages/
-    base.py            Stage protocol: input_hash, run, is_async
-    audio.py           A
-    image.py           B
-    video.py           C   (async submit)
-    composite.py       D   (ffmpeg, deterministic)
-    card.py            Pillow card renderer
-    checks.py          machine validation
-  publish/
-    store.py           S3 write + CDN url
-    webhook.py         delivery POST + retry
-supabase/migrations/   numbered SQL, forward-only
-spikes/                throwaway; not imported by src
+    base.py            Stage protocol, the DAG, JobContext, StageResult
+    real.py            ALL EIGHT real stages + REAL_STAGES registry
+    stubs.py           deterministic fakes (USE_STUB_STAGES=true), no spend
+    vendors.py         apimart / kie / Cartesia HTTP clients, submit + poll
+    media.py           ffprobe, mp3, the Pillow card, the ffmpeg composite
+scripts/
+  apply_migration.py   the write path for migrations (the MCP server is read-only)
+supabase/migrations/   numbered SQL, forward-only, no down migrations
+infra/                 AWS setup you run by hand (lifecycle rules, bucket posture)
+spikes/                throwaway; imports src, is never imported BY src
+tests/                 pytest; no network, no database
 ```
 
-Rule: `spikes/` never imports `src/`, and `src/` never imports `spikes/`.
-Spikes are allowed to be ugly and are deleted when Phase 1 starts.
+There is no `stages/audio.py`, `image.py`, `video.py` or `card.py`, and no
+`publish/` package. An earlier draft of this document specified one file per
+stage. In practice the eight stages are ~100 lines each and share the same
+helpers, so they live together in [`stages/real.py`](../src/castrol_pipeline/stages/real.py)
+and the shared work is split by KIND rather than by stage:
+[`vendors.py`](../src/castrol_pipeline/stages/vendors.py) is everything that
+talks to a provider, [`media.py`](../src/castrol_pipeline/stages/media.py) is
+everything local and free.
+
+### Which file handles which stage
+
+| Stage | Implementation | Talks to | Costs |
+|---|---|---|---|
+| `prep` | `stages/real.py` → `PrepStage`, using `prep/script.py` | — | free |
+| `audio` (A) | `stages/real.py` → `AudioStage`, via `stages/vendors.py:cartesia_tts` | Cartesia | $0.00005/char |
+| `image` (B) | `stages/real.py` → `ImageStage`, via `vendors.py:apimart_submit/_poll` | apimart | $0.014 |
+| `video` (C) | `stages/real.py` → `VideoStage`, via `vendors.py:kie_submit/_poll` | kie | $0.04/s |
+| `composite` (D) | `stages/real.py` → `CompositeStage`, using `stages/media.py` | — | free |
+| `checks` | `stages/real.py` → `ChecksStage` | — | free |
+| `publish` | `stages/real.py` → `PublishStage`, using `common/s3.py` | S3 + CDN | free |
+| `deliver` | `stages/real.py` → `DeliverStage` | client webhook | free |
+
+Rule: **`src/` never imports `spikes/`.** The reverse is allowed and is now
+used deliberately — [`spikes/prototype.py`](../spikes/prototype.py) imports
+[`stages/media.py`](../src/castrol_pipeline/stages/media.py) so the card and the
+ffmpeg settings have ONE implementation. The card geometry was tuned against
+real client review; a second copy in the spike would have drifted on the first
+revision, and the spike is what the client sees.
+
+Spikes are otherwise allowed to be ugly.
 
 ---
 
 ## 4. Data model
 
-Defined in [`supabase/migrations/0001_init.sql`](../supabase/migrations/0001_init.sql).
+Defined in [`0001_init.sql`](../supabase/migrations/0001_init.sql), extended by
+[`0002`](../supabase/migrations/0002_budget_and_seed.sql) (USD budget caps),
+[`0003`](../supabase/migrations/0003_cartesia_tts_no_repair.sql) (Cartesia, no repair
+pass) and [`0004`](../supabase/migrations/0004_runtime_observability.sql) (per-attempt
+cost, `assets.cdn_url`, `job_events`, the `job_costs` view).
 Notes on the decisions that are not obvious from the DDL:
 
 **`job_id` (uuid) is the primary key of the system.** `mechanic_id` from the
@@ -138,6 +175,8 @@ be called at all.
 ---
 
 ## 5. Job lifecycle
+
+**Implemented in** [`orchestrator.py`](../src/castrol_pipeline/orchestrator.py) — `ready_stages`, `schedule_ready`, `execute_one`, `advance_job`. State lives in `stage_runs`; `jobs.current_stage` is display only and is never used for routing.
 
 ```
 prep → audio ─┐
@@ -166,6 +205,8 @@ patch stage.
 
 ## 6. Idempotency
 
+**Implemented in** [`common/hashing.py`](../src/castrol_pipeline/common/hashing.py) (the hash builders — the only module allowed to serialise for hashing) and [`common/db.py`](../src/castrol_pipeline/common/db.py) (`find_succeeded_run`, `enqueue_stage_run`). The partial unique indexes that enforce it are in [`0001_init.sql`](../supabase/migrations/0001_init.sql).
+
 Every stage declares an `input_hash` over exactly the things that would change
 its output. A stage with a `succeeded` row at the same hash is skipped. A
 failure at C therefore never re-runs A and B, and a re-run after a code change
@@ -190,6 +231,8 @@ Canonical JSON means sorted keys, no whitespace, UTF-8. Implemented once in
 ---
 
 ## 7. Concurrency
+
+**Implemented in** [`common/db.py`](../src/castrol_pipeline/common/db.py) — `_CLAIM_SQL` (`FOR UPDATE SKIP LOCKED`), `reap_stuck_claims` — and [`orchestrator.py`](../src/castrol_pipeline/orchestrator.py) (`drain_stage`, `poll_once`, `_fail_if_overdue`).
 
 Per-stage queues with independent semaphores, so a stall in `video` does not
 starve `audio`.
@@ -235,6 +278,8 @@ a 4-minute poll is a worker not doing the other 200 jobs.
 ---
 
 ## 8. Vendor budget
+
+**Implemented in** [`common/budget.py`](../src/castrol_pipeline/common/budget.py) (the wrapper and the rate constants) over `reserve_vendor_call()`, defined in [`0002_budget_and_seed.sql`](../supabase/migrations/0002_budget_and_seed.sql) and amended by [`0003`](../supabase/migrations/0003_cartesia_tts_no_repair.sql) and [`0004`](../supabase/migrations/0004_runtime_observability.sql). Per-attempt spend is recorded on `stage_runs` and summed by the `job_costs` view.
 
 Every outbound paid call goes through `common/budget.py`, which calls
 `reserve_vendor_call(vendor, cost_usd, seconds)` and refuses the call on
@@ -286,6 +331,8 @@ apimart is poll-only with a 2700s ceiling and an observed 644s worst case.
 ---
 
 ## 9. S3 layout
+
+**Implemented in** [`common/s3.py`](../src/castrol_pipeline/common/s3.py) — key builders, both backends, presigning, `cdn_url`. Lifecycle rules are [`infra/s3-lifecycle.json`](../infra/s3-lifecycle.json), applied by hand per [`infra/README.md`](../infra/README.md). Key rules are pinned by [`tests/test_storage_keys.py`](../tests/test_storage_keys.py).
 
 ```
 s3://<bucket>/castrol/
@@ -341,6 +388,8 @@ delivered copy must not destroy the evidence.
 ---
 
 ## 10. Stage contracts
+
+**Defined in** [`stages/base.py`](../src/castrol_pipeline/stages/base.py) (protocol, DAG, `JobContext`, `StageResult`). **Implemented in** [`stages/real.py`](../src/castrol_pipeline/stages/real.py); the no-spend doubles are [`stages/stubs.py`](../src/castrol_pipeline/stages/stubs.py).
 
 Every stage implements one protocol so a vendor swap is a config change:
 
@@ -430,6 +479,12 @@ single design decision that removes text rendering risk from the pipeline.
 
 ## 11. Client interface
 
+**Inbound** is [`intake/export_client.py`](../src/castrol_pipeline/intake/export_client.py) and [`intake/runner.py`](../src/castrol_pipeline/intake/runner.py); the photo fetch is [`intake/media.py`](../src/castrol_pipeline/intake/media.py). **Outbound** is `DeliverStage` in [`stages/real.py`](../src/castrol_pipeline/stages/real.py), gated by `DELIVERY_ENABLED`.
+
+> Intake is still written against the pre-CSV export schema. Until it is
+> reworked, create jobs with `castrol seed-job` —
+> [`seed.py`](../src/castrol_pipeline/seed.py).
+
 ### Inbound — export pull
 
 ```
@@ -487,6 +542,8 @@ else. That is a decision, not an oversight.
 
 ## 12. Validation and error taxonomy
 
+**Implemented in** [`intake/validate.py`](../src/castrol_pipeline/intake/validate.py) (reject codes) and [`common/errors.py`](../src/castrol_pipeline/common/errors.py) (stage errors). The retry decision belongs to [`orchestrator.py`](../src/castrol_pipeline/orchestrator.py) `retry_delay_for` — never to a stage.
+
 Rejection happens at intake, with a stable code. Rows are **never repaired
 in-pipeline** — a repaired row is a row whose output nobody can explain.
 
@@ -518,6 +575,8 @@ Stage-time errors are separate and retryable: `VENDOR_TIMEOUT`,
 
 ## 13. Card renderer
 
+**Implemented in** [`stages/media.py`](../src/castrol_pipeline/stages/media.py) — `render_card`, `card_payload`, `composite`. This is the ONE implementation; [`spikes/prototype.py`](../spikes/prototype.py) imports it rather than keeping a copy.
+
 Deterministic Pillow render, transparent PNG, burned in by ffmpeg after video
 generation.
 
@@ -541,6 +600,8 @@ signal the intake limits are wrong.
 
 ## 14. Checks
 
+**Implemented in** [`stages/real.py`](../src/castrol_pipeline/stages/real.py) → `ChecksStage`. Results are written to the `checks` table by `orchestrator._persist_result` regardless of outcome.
+
 Run on the final mp4, written to `checks` regardless of outcome. Logged, not
 blocking, this release.
 
@@ -559,6 +620,8 @@ blocking, this release.
 
 ## 15. Observability
 
+**Implemented in** [`common/logging.py`](../src/castrol_pipeline/common/logging.py) (structlog to stdout) and [`common/events.py`](../src/castrol_pipeline/common/events.py) (durable `job_events`, plus the credential scrubber). The table and the `job_costs` view are in [`0004_runtime_observability.sql`](../supabase/migrations/0004_runtime_observability.sql). Read them with `castrol events` / `castrol costs` / `castrol show`, all in [`cli.py`](../src/castrol_pipeline/cli.py).
+
 `structlog`, JSON to stdout, `job_id` bound on every line inside a job context.
 Every vendor call logs vendor, model id, task id, latency and outcome.
 
@@ -572,6 +635,8 @@ No alerting this release, by decision.
 ---
 
 ## 16. Environments and deployment
+
+**Implemented in** [`config.py`](../src/castrol_pipeline/config.py); every variable is documented in [`.env.example`](../.env.example).
 
 | Piece | Where |
 |---|---|
@@ -594,6 +659,8 @@ rolling a schema back on a live batch is worse than fixing forward.
 ---
 
 ## 17. Security and data protection
+
+**Enforced in** the RLS statements at the end of each migration, [`common/events.py`](../src/castrol_pipeline/common/events.py) `_scrub()` (no credentials or presigned URLs in the audit trail), and [`.gitignore`](../.gitignore) (no mechanic photos in git).
 
 Face photos joinable to phone numbers is personal data under DPDP. Practically:
 

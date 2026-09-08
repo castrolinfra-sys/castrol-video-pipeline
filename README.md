@@ -51,6 +51,31 @@ mechanic. The phone number appears on the card but is never read aloud.
 
 A and B are independent and run ahead. C is the bottleneck and 96% of the cost.
 
+All eight stages live in
+[`stages/real.py`](src/castrol_pipeline/stages/real.py) as one class each. The
+work they share is split by kind, not by stage:
+[`vendors.py`](src/castrol_pipeline/stages/vendors.py) is everything that talks
+to a provider, [`media.py`](src/castrol_pipeline/stages/media.py) is everything
+local and free.
+
+| Stage | Class | Provider call | Local work | Cost |
+|---|---|---|---|---|
+| `prep` | `PrepStage` | — | [`prep/script.py`](src/castrol_pipeline/prep/script.py), [`prep/normalise.py`](src/castrol_pipeline/prep/normalise.py) | free |
+| `audio` **A** | `AudioStage` | [`vendors.py`](src/castrol_pipeline/stages/vendors.py) `cartesia_tts` | [`media.py`](src/castrol_pipeline/stages/media.py) `to_mp3`, `probe_duration_seconds` | $0.00005/char |
+| `image` **B** | `ImageStage` | [`vendors.py`](src/castrol_pipeline/stages/vendors.py) `apimart_submit` / `apimart_poll` | — | $0.014 |
+| `video` **C** | `VideoStage` | [`vendors.py`](src/castrol_pipeline/stages/vendors.py) `kie_submit` / `kie_poll` | — | $0.04/s |
+| `composite` **D** | `CompositeStage` | — | [`media.py`](src/castrol_pipeline/stages/media.py) `render_card`, `composite` | free |
+| `checks` | `ChecksStage` | — | — | free |
+| `publish` | `PublishStage` | — | [`common/s3.py`](src/castrol_pipeline/common/s3.py) `copy`, `cdn_url` | free |
+| `deliver` | `DeliverStage` | client webhook | — | free |
+
+The DAG, the `Stage` protocol and `StageResult` are in
+[`stages/base.py`](src/castrol_pipeline/stages/base.py). Claiming, retries, the
+poller and every write to `jobs` are in
+[`orchestrator.py`](src/castrol_pipeline/orchestrator.py) — stages do neither.
+[`stages/stubs.py`](src/castrol_pipeline/stages/stubs.py) holds no-spend doubles
+for the same protocol (`USE_STUB_STAGES=true`).
+
 Every stage is claimed with `FOR UPDATE SKIP LOCKED`, keyed by an `input_hash`
 covering model ids and prompt/template versions, and recorded in `stage_runs`.
 So a crash at video does not repay for audio and image, and changing a model id
@@ -99,8 +124,10 @@ uv sync
 cp .env.example .env
 ```
 
-Fill `.env` — every variable is documented there. Then apply the migrations in
-`supabase/migrations/` in order, against this project's own Supabase instance.
+Fill [`.env`](.env.example) — every variable is documented there. Then apply
+[`supabase/migrations/`](supabase/migrations/) in order, against this project's
+own Supabase instance, with
+[`scripts/apply_migration.py`](scripts/apply_migration.py).
 
 > This project uses a **dedicated set of accounts** — GitHub, AWS, Supabase,
 > Vercel, apimart, kie and Cartesia are all separate from other BeHooked
@@ -112,7 +139,7 @@ Fill `.env` — every variable is documented there. Then apply the migrations in
 
 ### Prototype — one video, end to end
 
-The Phase 0 path. No database, no orchestrator; it does by hand what the
+→ [`spikes/prototype.py`](spikes/prototype.py). The Phase 0 path. No database, no orchestrator; it does by hand what the
 pipeline will later do properly. Steps are resumable, so a crash during the
 20-minute video step does not repay for the image and audio.
 
@@ -139,6 +166,8 @@ Re-run a step that already succeeded by deleting its key from
 `spikes/out/<run>/_state.json`.
 
 ### Pipeline
+
+→ [`cli.py`](src/castrol_pipeline/cli.py) for every command below; `seed-job` is [`seed.py`](src/castrol_pipeline/seed.py) and the rest run through [`orchestrator.py`](src/castrol_pipeline/orchestrator.py).
 
 Check config and the database are actually usable before anything else:
 
@@ -188,6 +217,8 @@ uv run castrol schedule
 
 ### Inspecting a run
 
+→ [`cli.py`](src/castrol_pipeline/cli.py), reading `job_costs` and `job_events` from [`0004`](supabase/migrations/0004_runtime_observability.sql).
+
 Everything known about one job — stage runs, cost, assets, checks:
 
 ```bash
@@ -214,7 +245,7 @@ uv run castrol report
 
 ### Migrations
 
-Forward-only, numbered, one file per invocation, each in a single transaction.
+→ [`scripts/apply_migration.py`](scripts/apply_migration.py), against [`supabase/migrations/`](supabase/migrations/). Forward-only, numbered, one file per invocation, each in a single transaction.
 
 ```bash
 uv run python scripts/apply_migration.py supabase/migrations/0004_runtime_observability.sql
@@ -260,6 +291,77 @@ cannot change bucket configuration.
 
 ---
 
+## Where things live
+
+Every path is real. If you are hunting for where something happens, start here.
+
+### Entry points
+
+| File | Handles |
+|---|---|
+| [`src/castrol_pipeline/cli.py`](src/castrol_pipeline/cli.py) | every `castrol <cmd>` — `doctor`, `seed-job`, `drain`, `work`, `poll`, `schedule`, `intake`, `show`, `events`, `costs`, `report` |
+| [`src/castrol_pipeline/orchestrator.py`](src/castrol_pipeline/orchestrator.py) | readiness, claiming, retries, the poller, and **every write to `jobs`** |
+| [`src/castrol_pipeline/seed.py`](src/castrol_pipeline/seed.py) | `castrol seed-job` — create one job by hand, register and activate a plate |
+| [`src/castrol_pipeline/config.py`](src/castrol_pipeline/config.py) | every key, endpoint, pinned model id and feature flag, from env |
+| [`spikes/prototype.py`](spikes/prototype.py) | the standalone one-video script; no DB, no orchestrator |
+| [`scripts/apply_migration.py`](scripts/apply_migration.py) | applying a migration (the Supabase MCP server here is read-only) |
+
+### Stages
+
+| File | Handles |
+|---|---|
+| [`stages/base.py`](src/castrol_pipeline/stages/base.py) | the `Stage` protocol, the DAG, `JobContext`, `StageResult`, `AsyncSubmission` |
+| [`stages/real.py`](src/castrol_pipeline/stages/real.py) | all eight real stages, one class each, and the `REAL_STAGES` registry |
+| [`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) | **everything that talks to a provider** — apimart, kie, Cartesia; submit and poll |
+| [`stages/media.py`](src/castrol_pipeline/stages/media.py) | **everything local and free** — ffprobe, mp3, the Pillow card, the ffmpeg composite |
+| [`stages/stubs.py`](src/castrol_pipeline/stages/stubs.py) | no-spend doubles for the same protocol (`USE_STUB_STAGES=true`) |
+
+### Shared
+
+| File | Handles |
+|---|---|
+| [`common/budget.py`](src/castrol_pipeline/common/budget.py) | **the only path to a paid vendor** — `reserve()`, `vendor_call()`, and the rate constants |
+| [`common/s3.py`](src/castrol_pipeline/common/s3.py) | key builders, both backends, presigning, server-side copy, `cdn_url` |
+| [`common/db.py`](src/castrol_pipeline/common/db.py) | the pool, transaction scope, the `SKIP LOCKED` claim, `mark_*`, the reaper |
+| [`common/hashing.py`](src/castrol_pipeline/common/hashing.py) | canonical JSON and every `input_hash` builder — the only module that serialises for hashing |
+| [`common/events.py`](src/castrol_pipeline/common/events.py) | durable `job_events`, and the scrubber that keeps credentials out of them |
+| [`common/logging.py`](src/castrol_pipeline/common/logging.py) | structlog to stdout, `job_id` bound inside a job context |
+| [`common/errors.py`](src/castrol_pipeline/common/errors.py) | reject codes and the stage error taxonomy |
+
+### Content and data shaping
+
+| File | Handles |
+|---|---|
+| [`prep/script.py`](src/castrol_pipeline/prep/script.py) | **the script itself**, the three placeholders, and the spoken-pronunciation overrides |
+| [`prep/normalise.py`](src/castrol_pipeline/prep/normalise.py) | phone → E.164, address splitting, numerals and abbreviations for speech |
+| [`prep/plates.py`](src/castrol_pipeline/prep/plates.py) | export `outfit` + `background` → plate ids |
+| [`intake/`](src/castrol_pipeline/intake/) | the export pull, validation, dedupe, photo landing — **still on the pre-CSV schema** |
+
+### Schema and infrastructure
+
+| File | Handles |
+|---|---|
+| [`0001_init.sql`](supabase/migrations/0001_init.sql) | every table, the enums, the idempotency indexes, RLS deny-all |
+| [`0002_budget_and_seed.sql`](supabase/migrations/0002_budget_and_seed.sql) | USD budget caps, `reserve_vendor_call()`, the six plate rows |
+| [`0003_cartesia_tts_no_repair.sql`](supabase/migrations/0003_cartesia_tts_no_repair.sql) | Cartesia enabled; the repair pass deleted |
+| [`0004_runtime_observability.sql`](supabase/migrations/0004_runtime_observability.sql) | per-attempt cost, `assets.cdn_url`, `job_events`, the `job_costs` view |
+| [`infra/s3-lifecycle.json`](infra/s3-lifecycle.json) | what expires and when — the 180-day delivery rule |
+| [`infra/README.md`](infra/README.md) | the AWS commands you run by hand, and why the IAM user cannot |
+| [`.env.example`](.env.example) | every variable, documented |
+
+### Tests
+
+| File | Pins |
+|---|---|
+| [`tests/test_storage_keys.py`](tests/test_storage_keys.py) | the prefix and CDN-URL rules — the 403 that reads like a permissions failure |
+| [`tests/test_events.py`](tests/test_events.py) | credentials never reach the audit trail; logging never fails a stage |
+| [`tests/test_budget_costs.py`](tests/test_budget_costs.py) | cost rounding, on the step that bills per second |
+| [`tests/test_hashing.py`](tests/test_hashing.py) | what does and does not force a regeneration |
+| [`tests/test_orchestrator_policy.py`](tests/test_orchestrator_policy.py) | retry and terminality decisions |
+| [`tests/test_prep.py`](tests/test_prep.py), [`tests/test_intake.py`](tests/test_intake.py) | normalisation and validation rules |
+
+---
+
 ## Cost
 
 Measured, at 25s of runtime:
@@ -297,10 +399,11 @@ keeps, and the two disagreeing means a paid call happened outside the guard.
 |---|---|
 | [`docs/TECH_DESIGN.md`](docs/TECH_DESIGN.md) | how it is built — modules, state machine, invariants |
 | [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) | scope, client decisions, risks |
-| [`docs/TALKING_HEAD_PIPELINE_REFERENCE.md`](docs/TALKING_HEAD_PIPELINE_REFERENCE.md) | prod-measured evidence from the existing BeHooked backend |
-| [`docs/CARTESIA_API_DOCS.md`](docs/CARTESIA_API_DOCS.md) | Cartesia reference |
-| [`infra/README.md`](infra/README.md) | AWS setup commands |
-| [`CLAUDE.md`](CLAUDE.md) | working rules and invariants |
+| [`docs/TALKING_HEAD_PIPELINE_REFERENCE.md`](docs/TALKING_HEAD_PIPELINE_REFERENCE.md) | prod-measured evidence from the existing BeHooked backend — the source of most invariants |
+| [`docs/CARTESIA_API_DOCS.md`](docs/CARTESIA_API_DOCS.md) | Cartesia reference — implemented in [`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) |
+| [`infra/README.md`](infra/README.md) | AWS setup commands you run by hand |
+| [`spikes/README.md`](spikes/README.md) | the Phase 0 spike list and what each one killed |
+| [`CLAUDE.md`](CLAUDE.md) | working rules and the 28 invariants, each naming the file that enforces it |
 
 ---
 

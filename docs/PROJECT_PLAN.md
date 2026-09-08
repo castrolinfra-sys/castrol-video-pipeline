@@ -40,6 +40,8 @@ A vertical promo video per mechanic. Fixed Hindi script with three inserted vari
 
 ## 3. Architecture
 
+**Implemented in** [`orchestrator.py`](../src/castrol_pipeline/orchestrator.py) and [`stages/`](../src/castrol_pipeline/stages/). Repo layout with a file-by-file index: [`TECH_DESIGN.md` §3](TECH_DESIGN.md).
+
 ```
    Client export API  (daily pull, from/to date range)
             │
@@ -77,6 +79,8 @@ Infrastructure unchanged: AWS S3, Supabase Postgres, AWS EC2, GitHub, Cloudflare
 ---
 
 ## 4. Assets
+
+**Plate selection** is [`prep/plates.py`](../src/castrol_pipeline/prep/plates.py); the plate rows are seeded by [`0002_budget_and_seed.sql`](../supabase/migrations/0002_budget_and_seed.sql) and activated by [`seed.py:register_plate`](../src/castrol_pipeline/seed.py). S3 layout is [`common/s3.py`](../src/castrol_pipeline/common/s3.py).
 
 ### Plate matrix — 6 combinations
 
@@ -151,6 +155,8 @@ Useful side effect of the cap: it covers the top of the head, so tightly-cropped
 
 ## 5. Pipeline stages
 
+**Implemented in** [`stages/real.py`](../src/castrol_pipeline/stages/real.py) — one class per stage. Provider calls live in [`stages/vendors.py`](../src/castrol_pipeline/stages/vendors.py), local work in [`stages/media.py`](../src/castrol_pipeline/stages/media.py). See the stage table in [`README.md`](../README.md#the-pipeline).
+
 | Stage | Input | Output | Notes |
 |---|---|---|---|
 | INTAKE | export API rows | validated job rows | reject non-compliant, do not repair |
@@ -170,6 +176,8 @@ Per-stage idempotency by content hash of inputs: a stage whose input hash is unc
 ---
 
 ## 6. Client interface contract
+
+**Inbound** [`intake/export_client.py`](../src/castrol_pipeline/intake/export_client.py); **outbound** `DeliverStage` in [`stages/real.py`](../src/castrol_pipeline/stages/real.py), gated by `DELIVERY_ENABLED`.
 
 ### Inbound — daily export pull
 
@@ -273,6 +281,8 @@ Consequence accepted: output quality tracks input quality directly and there is 
 
 ## 7. Identity and keys
 
+**Configured in** [`config.py`](../src/castrol_pipeline/config.py); documented in [`.env.example`](../.env.example). Account boundaries: [`CLAUDE.md`](../CLAUDE.md).
+
 `mechanic_id` is not usable as a key. Values are inconsistent in format (`MECH|8932442`, bare integers of varying length), and `has_mechanic_id` can read FALSE while `mechanic_id` is populated — the two fields do not agree.
 
 **Approach:**
@@ -286,6 +296,8 @@ Consequence accepted: output quality tracks input quality directly and there is 
 ---
 
 ## 8. Data model
+
+**Implemented in** [`supabase/migrations/`](../supabase/migrations/) — [`0001`](../supabase/migrations/0001_init.sql) tables and RLS, [`0002`](../supabase/migrations/0002_budget_and_seed.sql) budget, [`0003`](../supabase/migrations/0003_cartesia_tts_no_repair.sql) TTS lane, [`0004`](../supabase/migrations/0004_runtime_observability.sql) cost, events and `assets.cdn_url`.
 
 ```
 submissions   id, submission_hash, media_key, pulled_at, raw jsonb,
@@ -319,6 +331,8 @@ plates        id, uniform_id, background_id, s3_key,
 ---
 
 ## 9. Input validation
+
+**Implemented in** [`intake/validate.py`](../src/castrol_pipeline/intake/validate.py) and [`prep/normalise.py`](../src/castrol_pipeline/prep/normalise.py); reject codes in [`common/errors.py`](../src/castrol_pipeline/common/errors.py). Note intake is still on the pre-CSV export schema — use `castrol seed-job` ([`seed.py`](../src/castrol_pipeline/seed.py)) meanwhile.
 
 Applied at INTAKE. Non-compliant rows are rejected with a reason code and returned; they are not repaired in-pipeline.
 

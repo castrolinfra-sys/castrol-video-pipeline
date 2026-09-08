@@ -1,3 +1,12 @@
+
+> **Where this is used.** The HTTP call is `cartesia_tts()` in
+> [`stages/vendors.py`](../src/castrol_pipeline/stages/vendors.py); the stage that
+> calls it is `AudioStage` in [`stages/real.py`](../src/castrol_pipeline/stages/real.py).
+> Model id, voice id, version header and base URL are settings in
+> [`config.py`](../src/castrol_pipeline/config.py) (`TTS_*`, `CARTESIA_*` in
+> [`.env.example`](../.env.example)). Pricing is
+> `USD_PER_TTS_CHAR` in [`common/budget.py`](../src/castrol_pipeline/common/budget.py).
+
 > ## Documentation Index
 > Fetch the complete documentation index at: https://docs.cartesia.ai/llms.txt
 > Use this file to discover all available pages before exploring further.
@@ -14,7 +23,7 @@ Sonic 3.6 (`sonic-3.6`) is our fastest, most natural text-to-speech model, with 
 
 * **Human-like naturalness** — Sonic 3.6 is the most natural and human-sounding TTS model. It sounds more natural, more expressive, and better paced across every language. It varies its pacing and intonation to match the emotional context of the transcript, without SSML tags or explicit instructions: pause length adapts to the context of the sentence, and in-transcript disfluencies (e.g. "uhm", "hmm") produce a natural "thinking" pace.
 * **Native speaker quality** — Sonic 3.6 speaks 44 languages and pronounces words and phrases the way a local would.
-* **Hinglish support** — Sonic 3.6 has expanded support for Hindi transcripts written in Latin script, as well as improved pronunciation of Indian names and places. See our [dedicated guide](/build-with-cartesia/capability-guides/advanced-capabilities#romanized-hindi-and-indic-text) for more details.
+* **Hinglish support** — Sonic 3.6 has expanded support for Hindi transcripts written in Latin script, as well as improved pronunciation of Indian names and places. See our [dedicated guide](https://docs.cartesia.ai/build-with-cartesia/capability-guides/advanced-capabilities#romanized-hindi-and-indic-text) for more details.
 * **Two new languages** — Odia (`or`) and Urdu (`ur`), with instant voice cloning support. See [language support](#language-support).
 
 <Note>
@@ -53,7 +62,7 @@ Choosing voices that work best for your use case is key to getting the best perf
 * Gemma - `en-GB` Female (ID: `62ae83ad-4f6a-430b-af41-a9bede9286ca`)
 * Archie - `en-GB` Male (ID: `ef191366-f52f-447a-a398-ed8c0f2943a1`)
 
-For more information and recommendations, see [Choosing a Voice](/build-with-cartesia/capability-guides/choosing-a-voice), or take a look at the featured voices on our [Voice Library](https://play.cartesia.ai/voices).
+For more information and recommendations, see [Choosing a Voice](https://docs.cartesia.ai/build-with-cartesia/capability-guides/choosing-a-voice), or take a look at the featured voices on our [Voice Library](https://play.cartesia.ai/voices).
 
 ## Language support
 
@@ -141,11 +150,11 @@ Sonic 3.6 speaks 44 languages. Set the `language` field on your TTS request to o
 </table>
 
 <Note>
-  Odia and Urdu are new in Sonic 3.6. Curated voices for both are in the [Voice Library](https://play.cartesia.ai/voices), or [clone a voice](/build-with-cartesia/capability-guides/clone-voices) in either language.
+  Odia and Urdu are new in Sonic 3.6. Curated voices for both are in the [Voice Library](https://play.cartesia.ai/voices), or [clone a voice](https://docs.cartesia.ai/build-with-cartesia/capability-guides/clone-voices) in either language.
 </Note>
 
 <Note>
-  Sonic 3.6 now supports locale codes using the `locale` field in the API, so pass `en-GB` if you want 05/04/2026 to be read as "the fifth of April, twenty twenty-six.". For more information, see [Advanced Capabilities](/build-with-cartesia/capability-guides/advanced-capabilities#locale-codes).
+  Sonic 3.6 now supports locale codes using the `locale` field in the API, so pass `en-GB` if you want 05/04/2026 to be read as "the fifth of April, twenty twenty-six.". For more information, see [Advanced Capabilities](https://docs.cartesia.ai/build-with-cartesia/capability-guides/advanced-capabilities#locale-codes).
 </Note>
 
 ## Switching from Sonic 3.5?
@@ -154,7 +163,7 @@ Note that Sonic 3.6 is fully backwards compatible with Sonic 3.5.
 
 ## Older Models
 
-For information on `sonic-3`, `sonic-2`, `sonic-turbo`, and `sonic`, see our page on [Older TTS Models](/build-with-cartesia/tts-models/older-models).
+For information on `sonic-3`, `sonic-2`, `sonic-turbo`, and `sonic`, see our page on [Older TTS Models](https://docs.cartesia.ai/build-with-cartesia/tts-models/older-models).
 
 ## Where to go next
 

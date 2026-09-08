@@ -3,8 +3,12 @@
 Throwaway scripts. The only goal is to kill assumptions that would force a
 rebuild later. They are allowed to be ugly. They are deleted when Phase 1 starts.
 
-**Rules:** spikes never import `src/`, and `src/` never imports spikes. Real
-mechanic photos go in `spikes/in/` and outputs in `spikes/out/` — both are
+**Rules:** `src/` never imports spikes. The reverse is allowed and is now used
+deliberately — [`prototype.py`](prototype.py) imports
+[`stages/media.py`](../src/castrol_pipeline/stages/media.py) so the card and the
+ffmpeg settings have one implementation rather than two that drift.
+
+Real mechanic photos go in `spikes/in/` and outputs in `spikes/out/` — both are
 gitignored, because this is personal data.
 
 **Exit criteria for Phase 0:** one end-to-end video, hand-assembled, that a
@@ -37,6 +41,18 @@ built-in `apply_text_normalization` control, so if that lane is picked the
 numeral-expansion table may be redundant — test before building it.
 
 0.5 is free and needs no vendor — run it as soon as real export rows exist.
+
+## Files
+
+| File | What it does |
+|---|---|
+| [`prototype.py`](prototype.py) | the full one-video path — image, audio, video, card, composite; resumable via `spikes/out/<run>/_state.json` |
+| [`spike_05_sas_fetch.py`](spike_05_sas_fetch.py) | spike 0.5 — fetch Azure SAS URLs verbatim and check the bytes are an image |
+
+The pipeline equivalent of `prototype.py` is
+[`stages/real.py`](../src/castrol_pipeline/stages/real.py) driven by
+[`orchestrator.py`](../src/castrol_pipeline/orchestrator.py); use
+`castrol seed-job` + `castrol drain` for anything that needs a database row.
 
 ## 0.5 — SAS URL fetch
 

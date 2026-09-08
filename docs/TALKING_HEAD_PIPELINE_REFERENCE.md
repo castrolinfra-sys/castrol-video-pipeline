@@ -1,5 +1,19 @@
 # Talking-Head Pipeline — Integration Reference (apimart + kie)
 
+> **Where these lessons landed.** This document is prod-measured evidence from
+> the existing BeHooked backend and is the source of invariants 11-19 in
+> [`CLAUDE.md`](../CLAUDE.md), each of which names the file that enforces it.
+> The gateway quirks are implemented in
+> [`stages/vendors.py`](../src/castrol_pipeline/stages/vendors.py); the MP3 and
+> duration-probe rules in
+> [`stages/media.py`](../src/castrol_pipeline/stages/media.py); the budget model in
+> [`common/budget.py`](../src/castrol_pipeline/common/budget.py) and
+> [`0002_budget_and_seed.sql`](../supabase/migrations/0002_budget_and_seed.sql).
+
+> One figure here does NOT apply: the TTS price is an internal credit conversion
+> from that stack. Cartesia bills $0.00005/character with no block rounding.
+
+
 **Compiled:** 2026-09-07
 **Sources:** `behooked_studio_backend` working tree + prod Supabase `app_db` (`qpmqcscuetaxjylhedrq`), read-only.
 **No secret values in this file.** Credentials are referenced by env var name only.

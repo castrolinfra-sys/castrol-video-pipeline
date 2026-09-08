@@ -8,6 +8,13 @@ one-time administrative change made with an account that can.
 Run from the repo root. Substitute nothing — the bucket and distribution names
 below are this project's.
 
+| File | What it is |
+|---|---|
+| [`s3-lifecycle.json`](s3-lifecycle.json) | the lifecycle rules applied in section 1 — what expires and when |
+| [`../src/castrol_pipeline/common/s3.py`](../src/castrol_pipeline/common/s3.py) | the code side: key builders, presigning, server-side copy, `cdn_url` |
+| [`../src/castrol_pipeline/stages/real.py`](../src/castrol_pipeline/stages/real.py) | `PublishStage` — what actually writes into `deliver/` |
+| [`../tests/test_storage_keys.py`](../tests/test_storage_keys.py) | pins the prefix and CDN-URL rules described under "URL construction" |
+
 ## 1. Object lifecycle (do this before first delivery)
 
 Delivered links must live 6 months and then stop working. Presigned URLs cannot
@@ -81,6 +88,7 @@ https://d1dgdtphnngtpp.cloudfront.net/<full s3 key>
 `https://d1dgdtphnngtpp.cloudfront.net/castrol/share/x.png` → 200
 `https://d1dgdtphnngtpp.cloudfront.net/share/x.png`         → 403
 
-Delivered videos go to `castrol/deliver/<uuid4>/video.mp4`. The uuid is the
+Delivered videos go to `castrol/deliver/<uuid4>/video.mp4`, built by
+`delivery_key()` in [`common/s3.py`](../src/castrol_pipeline/common/s3.py). The uuid is the
 whole security model, so it must never be derived from a phone number, a
 `job_id`, or anything else guessable.

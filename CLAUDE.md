@@ -35,6 +35,9 @@ uv sync
 
 ### Prototype — one video end to end (Phase 0 path)
 
+→ [`spikes/prototype.py`](spikes/prototype.py). Imports the card and ffmpeg
+settings from [`stages/media.py`](src/castrol_pipeline/stages/media.py).
+
 ```bash
 uv run python spikes/prototype.py --plate spikes/in/plate.png --photo spikes/in/mechanic.jpg --script spikes/in/script_spoken.txt --out spikes/out/run1 --name "Raju Shetty" --workshop "Shetty Motors" --address "Andheri, Mumbai" --phone "9898989898"
 ```
@@ -50,6 +53,10 @@ step to re-run, delete its key from that file. Never re-run the video step
 casually — it is ~$0.04 per second of output.
 
 ### Pipeline
+
+→ [`cli.py`](src/castrol_pipeline/cli.py) dispatches all of these;
+`seed-job` is [`seed.py`](src/castrol_pipeline/seed.py), the rest run through
+[`orchestrator.py`](src/castrol_pipeline/orchestrator.py).
 
 ```bash
 uv run castrol doctor
@@ -85,6 +92,10 @@ uv run castrol intake --from 2026-09-01 --to 2026-09-01
 
 ### Inspecting a run
 
+→ [`cli.py`](src/castrol_pipeline/cli.py) and
+[`seed.py:describe`](src/castrol_pipeline/seed.py), reading `job_costs` and
+`job_events` from [`0004`](supabase/migrations/0004_runtime_observability.sql).
+
 ```bash
 uv run castrol show <job-id>
 ```
@@ -113,6 +124,9 @@ uv run ruff check .
 
 ### Balances — check before any run that spends
 
+→ rates are pinned in [`common/budget.py`](src/castrol_pipeline/common/budget.py);
+daily caps live in `vendor_limits`.
+
 ```bash
 curl -sS https://api.apimart.ai/v1/user/balance -H "Authorization: Bearer $APIMART_API_KEY"
 ```
@@ -125,6 +139,8 @@ apimart reports USD directly (1 apimart credit = $0.10). kie reports its own
 credits at roughly 166 per USD — inferred from a refusal, not confirmed.
 
 ### Client export
+
+→ [`intake/export_client.py`](src/castrol_pipeline/intake/export_client.py).
 
 ```bash
 curl -sS "https://capi.letschbang.com/api/submissions/export/vendor?from=2026-09-02&to=2026-09-03" -H "apikey: $CLIENT_EXPORT_API_KEY"
@@ -144,10 +160,44 @@ uv run python scripts/apply_migration.py supabase/migrations/0004_runtime_observ
 
 ### AWS
 
-One-time admin setup only — see `infra/README.md`. The pipeline's IAM user
+One-time admin setup only — see [`infra/README.md`](infra/README.md) and
+[`infra/s3-lifecycle.json`](infra/s3-lifecycle.json). The pipeline's IAM user
 (`castrol-local`) can read and write objects but cannot delete them or change
 bucket configuration, which is deliberate: retention belongs to lifecycle
 rules, not application code.
+
+---
+
+## Where things live
+
+| Aspect | File |
+|---|---|
+| Every `castrol <cmd>` | [`src/castrol_pipeline/cli.py`](src/castrol_pipeline/cli.py) |
+| Claiming, retries, poller, **all writes to `jobs`** | [`orchestrator.py`](src/castrol_pipeline/orchestrator.py) |
+| The eight real stages | [`stages/real.py`](src/castrol_pipeline/stages/real.py) |
+| Stage protocol + the DAG | [`stages/base.py`](src/castrol_pipeline/stages/base.py) |
+| Anything that talks to a provider | [`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) |
+| Anything local and free — **the card**, ffmpeg, ffprobe | [`stages/media.py`](src/castrol_pipeline/stages/media.py) |
+| No-spend doubles (`USE_STUB_STAGES=true`) | [`stages/stubs.py`](src/castrol_pipeline/stages/stubs.py) |
+| **The only path to a paid vendor** | [`common/budget.py`](src/castrol_pipeline/common/budget.py) |
+| S3 keys, presigning, copy, `cdn_url` | [`common/s3.py`](src/castrol_pipeline/common/s3.py) |
+| Pool, `SKIP LOCKED` claim, `mark_*`, reaper | [`common/db.py`](src/castrol_pipeline/common/db.py) |
+| `input_hash` builders, canonical JSON | [`common/hashing.py`](src/castrol_pipeline/common/hashing.py) |
+| Durable `job_events` + credential scrubbing | [`common/events.py`](src/castrol_pipeline/common/events.py) |
+| structlog to stdout | [`common/logging.py`](src/castrol_pipeline/common/logging.py) |
+| Reject codes + stage error taxonomy | [`common/errors.py`](src/castrol_pipeline/common/errors.py) |
+| **The script text** and spoken overrides | [`prep/script.py`](src/castrol_pipeline/prep/script.py) |
+| Phone, address, numerals for speech | [`prep/normalise.py`](src/castrol_pipeline/prep/normalise.py) |
+| `outfit` + `background` → plate | [`prep/plates.py`](src/castrol_pipeline/prep/plates.py) |
+| Export pull, validation, dedupe (**stale schema**) | [`intake/`](src/castrol_pipeline/intake/) |
+| Create one job by hand | [`seed.py`](src/castrol_pipeline/seed.py) |
+| Every env var and pinned model id | [`config.py`](src/castrol_pipeline/config.py) / [`.env.example`](.env.example) |
+| Schema, budget function, RLS | [`supabase/migrations/`](supabase/migrations/) |
+| Lifecycle rules, bucket posture | [`infra/`](infra/) |
+| The standalone one-video script | [`spikes/prototype.py`](spikes/prototype.py) |
+
+Full annotated map with per-file descriptions: [`README.md`](README.md#where-things-live)
+and [`docs/TECH_DESIGN.md` §3](docs/TECH_DESIGN.md).
 
 ---
 
@@ -184,6 +234,7 @@ These are the things that break silently and expensively. Do not relax them
 without changing the tech doc first.
 
 **1. The Azure SAS photo URL is opaque bytes.**
+*`intake/media.py`*
 Pass `image_url_raw` to the HTTP client verbatim. Never `quote`/`unquote` it,
 never form-decode it, never rebuild it from parsed components, never route it
 through a URL-normalising client. Azure signs over exact bytes; any
@@ -191,40 +242,49 @@ normalisation returns 403 that reads like a permissions failure. Encoding is
 inconsistent *within a single URL*, so it looks wrong — it is not.
 
 **2. Validate magic bytes, not status codes.**
+*`intake/media.py`, `stages/vendors.py:_sniff_is_image`*
 A permissions failure can return HTTP 200 with an HTML body. Without a
 magic-byte check, that writes login pages into S3 as `.jpg`.
 
 **3. Every paid vendor call goes through `common/budget.py`.**
+*[`common/budget.py`](src/castrol_pipeline/common/budget.py), over `reserve_vendor_call()` in `0002_budget_and_seed.sql`*
 It calls the `reserve_vendor_call()` Postgres function and refuses on `false`.
 No stage may reach a vendor by any other path. This is the only thing between a
 retry bug and a real bill.
 
 **4. `input_hash` covers model ids and prompt/template versions.**
+*`common/hashing.py`, consumed by `orchestrator.schedule_ready`*
 That is what makes changing a model id regenerate instead of skip. Canonical
 JSON lives in `common/hashing.py` and nothing else may serialise for hashing.
 
 **5. No generative model ever renders text.**
+*`stages/media.py:render_card`*
 The personalisation card is a deterministic Pillow render burned in with ffmpeg
 after video generation. Keep it that way.
 
 **6. Geometry is preserved in stage B.**
+*`stages/vendors.py:IMAGE_PROMPT`*
 The card sits at a fixed pixel position. If person replacement shifts subject
 scale or the belt line, the card lands on the mechanic's hands. Change /
 Preserve / Constrain prompt structure is deliberate.
 
 **7. Async stages submit and release.**
+*`stages/real.py` (ImageStage, VideoStage), `orchestrator.poll_once`*
 Stage C writes `vendor_task_id` and returns. The poller reconciles. Never block
 a worker on a vendor poll.
 
 **8. Rejected rows are not repaired.**
+*`intake/validate.py`, `common/errors.py:RejectCode`*
 Intake rejects with a stable code. A repaired row is a row whose output nobody
 can explain.
 
 **9. Timestamp format is pinned, never inferred.**
+*`config.py:export_timestamp_format`, `intake/export_client.py`*
 `EXPORT_TIMESTAMP_FORMAT` in env. The raw string is also stored so a wrong
 format can be reparsed without re-pulling.
 
 **10. Real mechanic photos never enter git.**
+*`.gitignore`*
 `spikes/in/`, `spikes/out/` and media extensions are gitignored. This is
 personal data — face photos joinable to phone numbers.
 
@@ -235,48 +295,57 @@ which is prod-measured evidence from the existing BeHooked backend. Each one
 below is a failure someone already paid for.
 
 **11. Ship MP3 to the avatar model, never WAV.**
+*`stages/media.py:to_mp3`, called by `AudioStage`*
 `"Audio size is too large"` is a byte limit, not a duration limit. Every
 observed failure was a WAV — a 37s WAV failed while a 53s WAV succeeded.
 `pcm_f32le` @44.1kHz is ~176 KB/s, so 40s is ~7 MB against ~640 KB as MP3.
 Stage A transcodes before handing off.
 
 **12. Probe audio duration with ffmpeg. Never trust a supplied duration.**
+*`stages/media.py:probe_duration_seconds`, `common/budget.py:video_cost_usd`*
 No TTS provider returns duration. The avatar model bills *per output second*,
 so the probe sits in the charge path. Fail **closed** to the cap, never to
 zero — and note `kling-avatar-v2`'s `fallback_duration` is **5 seconds**, so a
 missed probe bills 5s for a 35s video and no cap notices.
 
 **13. Neither gateway supports an idempotency key on submit.**
+*`stages/base.py` (partial unique index on in-flight runs), `common/db.py:enqueue_stage_run`*
 Not kie, not apimart — the field does not exist. A network-level retry of a
 submit creates a second provider job and a second charge. Dedupe *before* the
 HTTP call; never blind-retry a submit that may have landed. Reconcile instead.
 
 **14. Check the body `code`, not the HTTP status.**
+*`stages/vendors.py`*
 Both gateways return HTTP 200 with `code != 200` on error. Also: kie's
 `resultJson` is a JSON *string* — parse before indexing. apimart's video
 result is `result.videos[0].url[0]` — `url` is a list.
 
 **15. Copy provider result URLs to our storage immediately.**
+*`stages/vendors.py:download`, called in each stage's `poll()`*
 Treat a provider URL as valid for the duration of the handler and no longer.
 Mirror constraint on the input side: presigned URLs expire in 1 hour, so a job
 that sits queued longer submits a dead URL. Presign at submit time, not at
 enqueue time.
 
 **16. Hand providers a URL that returns bytes on the first GET.**
+*`common/s3.py:presigned_get_url`, `stages/media.py:normalise_for_apimart`*
 Public or presigned, from a source path — never a CDN transform path, which
 202s on a cold-cache miss and the provider's fetcher bails. Images must be
 within [300, 6000] px on **both** axes; normalise to a *sibling* key, never
 overwrite the original.
 
 **17. Never feed a generated image back in as an identity reference.**
+*`stages/real.py:ImageStage` — always re-reads `source_photo`*
 It compounds its own drift. Always re-reference the source photo. Cap
 references at ~4.
 
 **18. Content safety is the dominant image failure** — 11 of 20 observed on
 this exact model. Swapping a real person into a branded plate is precisely the
 trigger. Needs a softened-prompt retry path and a visible terminal state.
+*`stages/vendors.py:apimart_poll` raises `VendorRejected`, which is not retryable — the same inputs trip the same filter*
 
 **19. Log which provider was tried and why it lost.**
+*`common/events.py`, `job_events`*
 A fallback chain that swallows the reason is a cost leak nobody can see: a
 dead kie lane 422'd for *months*, was classified retryable, silently fell
 through to a lane costing 3×, and left no trace in the database. Validate
@@ -284,12 +353,14 @@ against the exact endpoint's schema — sibling endpoints on the same gateway
 accept different fields.
 
 **20. A key carries its `S3_PREFIX` from the moment it is built.**
+*`common/s3.py`, pinned by `tests/test_storage_keys.py`*
 Nothing downstream adds or strips one. The CloudFront distribution has NO
 Origin Path, so the full key including `castrol/` must appear in the URL — a
 doubled or missing prefix is a 403 that reads exactly like a permissions
 failure. `assets.s3_key` is the same string you can paste into `aws s3 cp`.
 
 **21. Presign against the bucket's own regional endpoint.**
+*`common/s3.py:S3Backend.__init__`*
 boto3's default resolves the global host `<bucket>.s3.amazonaws.com`, and a
 SigV4 signature made against that does not validate for a bucket in another
 region: the presigned URL 403s while the SDK's own calls succeed. Pin both
@@ -297,24 +368,28 @@ region: the presigned URL 403s while the SDK's own calls succeed. Pin both
 against a URL signed for GET is a correct 403, not a broken URL.
 
 **22. Delivered links are CDN URLs, never presigned.**
+*`stages/real.py:PublishStage`, `common/s3.py:cdn_url`, `infra/s3-lifecycle.json`*
 SigV4 caps expiry at 7 days; the client link must live 6 months. A delivered
 link dies because the 180-day lifecycle rule DELETES the object. Publishing
 copies rather than moves: `jobs/` artefacts never expire, because expiring the
 client's link must not destroy the evidence.
 
 **23. Both paid remote stages are async — submit and release.**
+*`stages/real.py`, `orchestrator.execute_one`*
 Not only for throughput. A submitted run sits in `running`, and the stuck-claim
 reaper only touches `claimed`. A synchronous paid stage that outlived
 `STAGE_CLAIM_TIMEOUT_S` would be reaped and re-run while the first call was
 still in flight, and billed twice.
 
 **24. Record cost at SUBMIT, per attempt.**
+*`common/db.py:mark_running`, `0004_runtime_observability.sql`*
 The submit is what spent the money; a task that never completes still cost
 money, so recording only on success hides exactly the failures worth counting.
 Cost lives on `stage_runs`, never aggregated onto the job — a job that retried
 the video step really did pay twice.
 
 **25. Recording an event must never fail a stage.**
+*`common/events.py`, pinned by `tests/test_events.py`*
 `common/events.py` swallows every write error. The stage above it may have just
 spent a dollar; turning a logging outage into a stage failure turns it into a
 double charge on the retry. Note the failure handler logs `failed_event=`, not
@@ -322,6 +397,7 @@ double charge on the retry. Note the failure handler logs `failed_event=`, not
 `TypeError` out of the very handler meant to swallow.
 
 **26. Never write a presigned URL or a credential into `job_events`.**
+*`common/events.py:_scrub`*
 A presigned URL is a bearer credential for one object; the events table is read
 by the admin panel and quoted in support threads. `_scrub()` keeps the path and
 drops the signature.
@@ -333,6 +409,7 @@ on the lower-third cost nothing. `stages/media.py` is the ONE implementation;
 `spikes/prototype.py` imports it.
 
 **28. `DELIVERY_ENABLED` gates the only irreversible action.**
+*`stages/real.py:DeliverStage`, `config.py:delivery_enabled`*
 The client relays the POST to a real mechanic over WhatsApp. While false the
 stage logs exactly what it would have sent. Turning it on is a deliberate act.
 
@@ -341,10 +418,19 @@ stage logs exactly what it would have sent. Turning it on is a deliberate act.
 ## Conventions
 
 - Python 3.12+, `uv`, `src/` layout. Matches `behooked_studio_backend`.
-- `structlog` JSON to stdout; `job_id` bound inside any job context.
-- Stages implement the `Stage` protocol in `stages/base.py`. Stages do not
-  write to `jobs` and do not decide retries — the orchestrator does both.
-- `spikes/` is throwaway. It never imports `src/`, and `src/` never imports it.
+- `structlog` JSON to stdout ([`common/logging.py`](src/castrol_pipeline/common/logging.py));
+  `job_id` bound inside any job context. Anything worth reconstructing an
+  incident from also goes to `job_events` via
+  [`common/events.py`](src/castrol_pipeline/common/events.py).
+- Stages implement the `Stage` protocol in
+  [`stages/base.py`](src/castrol_pipeline/stages/base.py) and are implemented in
+  [`stages/real.py`](src/castrol_pipeline/stages/real.py). Stages do not write to
+  `jobs` and do not decide retries —
+  [`orchestrator.py`](src/castrol_pipeline/orchestrator.py) does both.
+- `spikes/` is throwaway and `src/` never imports it. The one exception runs the
+  other way: [`spikes/prototype.py`](spikes/prototype.py) imports
+  [`stages/media.py`](src/castrol_pipeline/stages/media.py), so the card has a
+  single implementation rather than two that drift.
 - RLS is deny-all with no policies.
 - **Supabase keys are the new style only** — `sb_secret_…` / `sb_publishable_…`,
   never the legacy `anon` / `service_role` JWTs. Those are deprecated by end of
