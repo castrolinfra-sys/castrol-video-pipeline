@@ -58,14 +58,34 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - name: Check image name is configured
+      # All three at once, and by name. docker/login-action reports a missing
+      # username as a bare "Error: Username required" after the token has
+      # already been accepted, which reads like a credential problem rather
+      # than an unset field.
+      - name: Check Docker Hub configuration
+        env:
+          IMAGE_NAME: ${{ vars.DOCKERHUB_IMAGE }}
+          HUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          if [ -z "${{ vars.DOCKERHUB_IMAGE }}" ]; then
-            echo "::error::Repository variable DOCKERHUB_IMAGE is not set." \
-                 "Set it to the Docker Hub repository, e.g. acct/castrol-video-pipeline," \
-                 "under Settings → Secrets and variables → Actions → Variables."
-            exit 1
+          missing=0
+          if [ -z "$IMAGE_NAME" ]; then
+            echo "::error::Variable DOCKERHUB_IMAGE is not set. Actions → Variables" \
+                 "(the Variables tab, not Secrets). Value is the full repository," \
+                 "e.g. acct/castrol-video-pipeline."
+            missing=1
           fi
+          if [ -z "$HUB_USERNAME" ]; then
+            echo "::error::Secret DOCKERHUB_USERNAME is not set. Actions → Secrets" \
+                 "(the Secrets tab, not Variables). Value is the Docker Hub account" \
+                 "name, not an email address."
+            missing=1
+          fi
+          if [ -z "$HUB_TOKEN" ]; then
+            echo "::error::Secret DOCKERHUB_TOKEN is not set. Actions → Secrets."
+            missing=1
+          fi
+          exit "$missing"
 
       - uses: actions/checkout@v5
 
@@ -108,9 +128,15 @@ jobs:
       # entrypoint vanish while the build still succeeds.
       - name: Smoke test the pushed image
         env:
-          IMAGE: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+          # `tags` is a newline-separated string; take the first line in shell.
+          # Deriving it with fromJSON(steps.meta.outputs.json) instead makes the
+          # whole workflow unparseable — the expression is evaluated before the
+          # step's own outputs exist, and fromJSON on an empty string is a
+          # template error, not a step failure.
+          TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           set -euo pipefail
+          IMAGE="$(printf '%s\n' "$TAGS" | head -n 1)"
           docker run --rm --entrypoint ffprobe "$IMAGE" -version | head -1
           docker run --rm --entrypoint python "$IMAGE" -c \
             "from PIL import ImageFont; ImageFont.truetype('DejaVuSans-Bold.ttf', 48); print('fonts ok')"
