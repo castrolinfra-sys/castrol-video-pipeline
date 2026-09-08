@@ -91,6 +91,19 @@ still in flight, and billed twice.
 generation, so a revision to the lower-third is an ffmpeg re-encode of media we
 already have — not a regenerated second.
 
+**The avatar prompt drives motion, not just lipsync.** On `kling-avatar-v2` the
+`prompt` field steers expression, head movement and hand gesture; the inherited
+default was literally `"."`, which produced correct lipsync with the hands
+locked at rest. `AVATAR_PROMPT` in
+[`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) asks for natural
+open-palm gestures **at chest height** — the card is an opaque overlay over
+70–87% of frame height, so a waist-level gesture happens behind it and the
+viewer sees a hand enter frame and vanish.
+
+The prompt text is part of the video `input_hash`, not a version string you can
+forget to bump. Editing it therefore regenerates — at $0.04 per output second
+for every job that has not completed.
+
 ### Storage and URLs
 
 Two kinds of read, and the difference is not cosmetic:

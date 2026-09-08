@@ -458,6 +458,16 @@ per person. They cannot be composited. That is why the logo check is
 load-bearing rather than nice-to-have.
 
 ### C — video
+The `prompt` field is REQUIRED on kie (max 5000 chars) and is not decorative:
+it steers expression, head movement and hand gesture. `AVATAR_PROMPT` in
+[`stages/vendors.py`](../src/castrol_pipeline/stages/vendors.py) follows the
+model's documented shape — subject, expression, motion, style preservation, in
+a few sentences — and carries two constraints that come from our own pipeline
+rather than from the model: gestures stay at **chest height** so they are not
+hidden behind the card overlay (70-87% of frame height), and off the **chest
+logo**, which is the point of the video. The text is hashed directly, so
+editing it regenerates rather than silently skipping.
+
 `kling-avatar-v2` on kie. Async submit, `vendor_task_id` stored, poller
 reconciles. The bottleneck, and 93–96% of the money.
 

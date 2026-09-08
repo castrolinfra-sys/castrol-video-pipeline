@@ -352,7 +352,22 @@ class VideoStage:
     is_async = True
 
     def _params(self) -> dict[str, Any]:
-        return {"pro": get_settings().video_use_pro}
+        """Everything that changes the output, and therefore the input_hash.
+
+        The prompt goes in as TEXT, not as a version string. A version string
+        is a thing you can forget to bump: edit the wording, leave the version,
+        and every existing job silently skips regeneration and ships the old
+        motion. Hashing the text removes that failure mode — there is nothing
+        to remember.
+
+        The cost of that is real and worth stating: editing AVATAR_PROMPT
+        re-runs the video stage on every job that has not completed, at
+        $0.04 per output second. Completed jobs are never rescheduled.
+        """
+        return {
+            "pro": get_settings().video_use_pro,
+            "prompt": vendors.AVATAR_PROMPT,
+        }
 
     def input_hash(self, ctx: JobContext) -> str:
         s = get_settings()
@@ -391,7 +406,10 @@ class VideoStage:
             budget.VENDOR_VIDEO, cost_usd=cost, seconds=billed
         ):
             task_id = vendors.kie_submit(
-                image_url, audio_url, model_id=s.video_model_id
+                image_url,
+                audio_url,
+                model_id=s.video_model_id,
+                prompt=vendors.AVATAR_PROMPT,
             )
 
         record_event(

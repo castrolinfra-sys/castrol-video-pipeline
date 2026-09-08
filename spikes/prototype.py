@@ -55,6 +55,11 @@ from castrol_pipeline.stages.media import (
     to_mp3 as _to_mp3,
 )
 
+# Same reason: the avatar motion prompt is tuned content. If the spike and the
+# pipeline sent different prompts, a spike run would not predict what the
+# pipeline produces — which is the only thing the spike is for.
+from castrol_pipeline.stages.vendors import AVATAR_PROMPT
+
 # --------------------------------------------------------------- config ----
 
 ENV: dict[str, str] = {}
@@ -340,7 +345,7 @@ def step_video(image_url: str, audio_url: str, out: pathlib.Path) -> str:
             json={"model": model,
                   "input": {"image_url": image_url,
                             "audio_url": audio_url,
-                            "prompt": "."}},
+                            "prompt": AVATAR_PROMPT}},
         )
         j = r.json()
         if j.get("code") != 200:

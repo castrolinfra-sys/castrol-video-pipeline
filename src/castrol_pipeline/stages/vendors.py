@@ -169,6 +169,39 @@ def apimart_poll(task_id: str) -> str | None:
 # ------------------------------------------------------ [C] kie avatar video --
 
 
+#: Motion direction for the avatar. NOT decorative — on kling-avatar-v2 the
+#: prompt steers expression, head movement and hand gesture, and the field is
+#: required (max 5000 chars). The inherited default from the other stack was
+#: literally "." , which left the model to its own devices: correct lipsync,
+#: natural head motion, and hands locked at rest for the whole take.
+#:
+#: Written to the model's documented shape — subject, expression, motion, style
+#: preservation, in 1-3 sentences. Long or contradictory prompts measurably
+#: degrade it, and guidance that fights the source image causes drift, so this
+#: describes the person already in the plate rather than inventing one.
+#:
+#: Two clauses exist for reasons outside the model:
+#:
+#:   * "at chest height" — the personalisation card is an OPAQUE overlay
+#:     covering 70-87% of frame height (stages/media.py PANEL_Y0/PANEL_Y1).
+#:     A gesture at waist level happens behind it, so the viewer sees a hand
+#:     enter frame and vanish. Chest-height gestures stay clear of the panel.
+#:   * "without covering the chest logo" — the Castrol and MAGNATEC marks on the
+#:     chest panel are the point of the video. A hand parked across them for
+#:     eight seconds is worse than no gesture at all.
+#:
+#: This text is part of the video input_hash, so editing it regenerates. See
+#: VideoStage._params.
+AVATAR_PROMPT = (
+    "An Indian auto mechanic in his Castrol work uniform, speaking directly to "
+    "camera in his garage. Warm, confident and friendly, with clear "
+    "articulation and subtle head nods. Natural open-palm hand gestures at "
+    "chest height that emphasise his words and settle back between points, "
+    "staying below the shoulders and without covering the chest logo. Keep the "
+    "existing framing, uniform and branding unchanged."
+)
+
+
 def _kie_headers() -> dict[str, str]:
     return {
         "Authorization": f"Bearer {get_settings().require('kie_api_key')}",
@@ -180,8 +213,20 @@ def _kie_base() -> str:
     return (get_settings().kie_base_url or "https://api.kie.ai").rstrip("/")
 
 
-def kie_submit(image_url: str, audio_url: str, *, model_id: str) -> str:
+#: kie's documented ceiling on the prompt field.
+KIE_PROMPT_MAX_CHARS = 5000
+
+
+def kie_submit(
+    image_url: str, audio_url: str, *, model_id: str, prompt: str = AVATAR_PROMPT
+) -> str:
     """Submit the avatar render. Returns a task id. THIS TAKES 8-20 MINUTES."""
+    if len(prompt) > KIE_PROMPT_MAX_CHARS:
+        raise VendorRejected(
+            f"Avatar prompt is {len(prompt)} chars, over kie's {KIE_PROMPT_MAX_CHARS} "
+            "limit. Caught before submit: a rejected submit on this model is a "
+            "20-minute round trip to discover a typo."
+        )
     with httpx.Client(timeout=120.0) as c:
         j = c.post(
             f"{_kie_base()}/api/v1/jobs/createTask",
@@ -189,7 +234,7 @@ def kie_submit(image_url: str, audio_url: str, *, model_id: str) -> str:
             json={"model": model_id,
                   "input": {"image_url": image_url,
                             "audio_url": audio_url,
-                            "prompt": "."}},
+                            "prompt": prompt}},
         ).json()
     if j.get("code") != 200:
         raise VendorRejected(f"kie submit rejected: {json.dumps(j)[:400]}")

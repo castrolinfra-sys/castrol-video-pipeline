@@ -408,6 +408,28 @@ re-encode of media we already have — which is why three rounds of client revie
 on the lower-third cost nothing. `stages/media.py` is the ONE implementation;
 `spikes/prototype.py` imports it.
 
+**29. The avatar `prompt` steers motion — it is not decorative.**
+*[`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) `AVATAR_PROMPT`,
+in the hash via `stages/real.py:VideoStage._params`, pinned by
+[`tests/test_avatar_prompt.py`](tests/test_avatar_prompt.py)*
+On `kling-avatar-v2` the field is required and controls expression, head
+movement and hand gesture. The inherited default was literally `"."` — correct
+lipsync, hands locked at rest for the whole take. Keep it to a few sentences in
+the model's documented shape (subject / expression / motion / style
+preservation); long, contradictory, or image-contradicting prompts measurably
+degrade output. Two clauses are ours, not the model's: gestures at **chest
+height**, because the card is an opaque overlay over 70–87% of frame height and
+a waist-level gesture happens behind it; and off the **chest logo**, which is
+what the video is for.
+
+**30. The avatar prompt is hashed as TEXT, not as a version string.**
+*`stages/real.py:VideoStage._params`*
+A version string is a thing you can forget to bump — edit the wording, leave
+the version, and every existing job skips regeneration and ships the old
+motion. Hashing the text removes the failure mode. The price is real: editing
+`AVATAR_PROMPT` re-runs the video stage on every job that has not completed, at
+$0.04 per output second. Completed jobs are never rescheduled.
+
 **28. `DELIVERY_ENABLED` gates the only irreversible action.**
 *`stages/real.py:DeliverStage`, `config.py:delivery_enabled`*
 The client relays the POST to a real mechanic over WhatsApp. While false the
