@@ -50,14 +50,43 @@ class TestPromptShape:
         assert len(AVATAR_PROMPT) <= KIE_PROMPT_MAX_CHARS
 
     def test_stays_short(self):
-        # The model's own guidance: 1-3 sentences. Long or complex prompts
-        # measurably degrade output, so this is a real ceiling, not style.
+        # The model's guidance is about COMPLEXITY, not raw characters: long or
+        # convoluted prompts measurably degrade output. Sentence count is the
+        # real discipline, so that stays tight while the char ceiling has
+        # headroom for naming the three gestures.
         assert AVATAR_PROMPT.count(".") <= 5
-        assert len(AVATAR_PROMPT) < 600
+        assert len(AVATAR_PROMPT) < 700
 
     def test_asks_for_hands(self):
         low = AVATAR_PROMPT.lower()
         assert "hand" in low and "gesture" in low
+
+    def test_directs_slow_motion(self):
+        # Revision 2. The first render came back BLURRED: fast hand movement is
+        # what generative video smears, and v1 constrained where the hands go
+        # but never how fast. If these words are dropped, the smear returns.
+        low = AVATAR_PROMPT.lower()
+        assert "slow" in low and "deliberate" in low
+        assert "holds briefly" in low or "hold" in low
+
+    def test_asks_for_varied_gestures(self):
+        # Revision 2. The first render came back REPETITIVE because v1 named a
+        # single gesture type ("natural open-palm hand gestures") and the model
+        # looped it. Variety comes from naming DISTINCT gestures, so require
+        # more than one to be described.
+        low = AVATAR_PROMPT.lower()
+        assert "varied" in low
+        named = sum(w in low for w in ("open palm", "counting", "welcoming open hand"))
+        assert named >= 3, "name three distinct gestures, one per script beat"
+        assert "different from the last" in low
+
+    def test_phrased_positively(self):
+        # Negative instructions are unreliable on this class of model — asking
+        # it not to do something tends to surface the thing. Every constraint
+        # here is written as what TO do.
+        low = AVATAR_PROMPT.lower()
+        for banned in ("never repeat", "do not ", "don't ", "avoid "):
+            assert banned not in low, f"negative phrasing: {banned!r}"
 
     def test_keeps_gestures_clear_of_the_card(self):
         # The card is an OPAQUE overlay over 70-87% of frame height. A gesture

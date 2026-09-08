@@ -180,25 +180,49 @@ def apimart_poll(task_id: str) -> str | None:
 #: degrade it, and guidance that fights the source image causes drift, so this
 #: describes the person already in the plate rather than inventing one.
 #:
+#: Revision 2, after reviewing the first render. Two faults, one cause each:
+#:
+#:   * **Repetitive.** The first version said "natural open-palm hand
+#:     gestures" — ONE gesture type, so the model looped it. Fixed by naming
+#:     three DIFFERENT gestures mapped to the script's three beats: he
+#:     introduces himself and his workshop, explains engine wear in the first
+#:     8 seconds, then invites the viewer in. Naming distinct gestures is what
+#:     buys variety; do not collapse them back into one description.
+#:   * **Blurred.** Fast hand movement is exactly what generative video smears.
+#:     The first version constrained WHERE the hands go and never HOW FAST.
+#:     "slow, deliberate", "holds briefly" and "lowers before the next" all
+#:     exist to reduce the per-frame displacement that causes the smear.
+#:
+#: Phrased positively throughout — "each one different from the last" rather
+#: than "never repeat a gesture". Negative instructions are unreliable here.
+#:
 #: Two clauses exist for reasons outside the model:
 #:
 #:   * "at chest height" — the personalisation card is an OPAQUE overlay
 #:     covering 70-87% of frame height (stages/media.py PANEL_Y0/PANEL_Y1).
 #:     A gesture at waist level happens behind it, so the viewer sees a hand
-#:     enter frame and vanish. Chest-height gestures stay clear of the panel.
-#:   * "without covering the chest logo" — the Castrol and MAGNATEC marks on the
-#:     chest panel are the point of the video. A hand parked across them for
-#:     eight seconds is worse than no gesture at all.
+#:     enter frame and vanish. Note the script's closing line points at the
+#:     number "on screen", which invites exactly the downward gesture that
+#:     would disappear — hence a welcoming open hand there, not a point.
+#:   * "clear of the chest logo" — the Castrol and MAGNATEC marks on the chest
+#:     panel are the point of the video. A hand parked across them for eight
+#:     seconds is worse than no gesture at all.
+#:
+#: "fully inside the frame" stops hands leaving and re-entering, which is where
+#: finger warping tends to appear.
 #:
 #: This text is part of the video input_hash, so editing it regenerates. See
 #: VideoStage._params.
 AVATAR_PROMPT = (
-    "An Indian auto mechanic in his Castrol work uniform, speaking directly to "
-    "camera in his garage. Warm, confident and friendly, with clear "
-    "articulation and subtle head nods. Natural open-palm hand gestures at "
-    "chest height that emphasise his words and settle back between points, "
-    "staying below the shoulders and without covering the chest logo. Keep the "
-    "existing framing, uniform and branding unchanged."
+    "An Indian auto mechanic in his Castrol uniform speaking to camera in his "
+    "garage, warm and confident, with clear articulation and subtle head nods. "
+    "His hand gestures are slow, deliberate and varied: an open palm toward "
+    "himself as he introduces his workshop, a measured counting gesture as he "
+    "explains engine wear, then a welcoming open hand as he invites the "
+    "viewer. Each gesture holds briefly and lowers before the next, each one "
+    "different from the last. Hands stay at chest height, below the shoulders, "
+    "clear of the chest logo, and fully inside the frame. Keep the existing "
+    "framing, uniform and branding unchanged."
 )
 
 
