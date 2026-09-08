@@ -89,7 +89,7 @@ class TestPromptShape:
             assert banned not in low, f"negative phrasing: {banned!r}"
 
     def test_keeps_gestures_clear_of_the_card(self):
-        # The card is an OPAQUE overlay over 70-87% of frame height. A gesture
+        # The card is an OPAQUE overlay over 66-82% of frame height. A gesture
         # at waist level happens behind it: the viewer sees a hand enter frame
         # and vanish. If this constraint is ever dropped from the prompt, that
         # is what regresses.

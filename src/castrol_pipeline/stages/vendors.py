@@ -199,7 +199,7 @@ def apimart_poll(task_id: str) -> str | None:
 #: Two clauses exist for reasons outside the model:
 #:
 #:   * "at chest height" — the personalisation card is an OPAQUE overlay
-#:     covering 70-87% of frame height (stages/media.py PANEL_Y0/PANEL_Y1).
+#:     covering 66-82% of frame height (stages/media.py PANEL_Y0/PANEL_Y1).
 #:     A gesture at waist level happens behind it, so the viewer sees a hand
 #:     enter frame and vanish. Note the script's closing line points at the
 #:     number "on screen", which invites exactly the downward gesture that

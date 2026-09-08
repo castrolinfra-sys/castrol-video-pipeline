@@ -427,8 +427,8 @@ lipsync, hands locked at rest for the whole take. Keep it to a few sentences in
 the model's documented shape (subject / expression / motion / style
 preservation); long, contradictory, or image-contradicting prompts measurably
 degrade output. Two clauses are ours, not the model's: gestures at **chest
-height**, because the card is an opaque overlay over 70–87% of frame height and
-a waist-level gesture happens behind it; and off the **chest logo**, which is
+height**, because the card is an opaque overlay over 66–82% of frame height
+and a waist-level gesture happens behind it; and off the **chest logo**, which is
 what the video is for.
 
 **30. The avatar prompt is hashed as TEXT, not as a version string.**

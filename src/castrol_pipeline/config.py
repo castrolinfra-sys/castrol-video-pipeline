@@ -96,7 +96,11 @@ class Settings(BaseSettings):
     script_version: str = "v1"
     normalise_rules_version: str = "v1"
     image_prompt_version: str = "v1"
-    card_template_version: str = "v1"
+    # v2: full-width band, address and phone on one contact line, fixed rect
+    # with the type scaled to fit. In the composite input_hash, so bumping it
+    # re-renders and re-burns every open job. That is free — the composite
+    # stage is local ffmpeg only.
+    card_template_version: str = "v2"
 
     max_concurrency_audio: int = 4
     max_concurrency_image: int = 4

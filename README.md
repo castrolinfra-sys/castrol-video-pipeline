@@ -97,7 +97,7 @@ default was literally `"."`, which produced correct lipsync with the hands
 locked at rest. `AVATAR_PROMPT` in
 [`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) asks for natural
 open-palm gestures **at chest height** — the card is an opaque overlay over
-70–87% of frame height, so a waist-level gesture happens behind it and the
+66–82% of frame height, so a waist-level gesture happens behind it and the
 viewer sees a hand enter frame and vanish.
 
 The prompt text is part of the video `input_hash`, not a version string you can
