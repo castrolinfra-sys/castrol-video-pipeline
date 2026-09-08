@@ -1,0 +1,56 @@
+# Build context exclusions.
+#
+# The Dockerfile only COPYs pyproject.toml, uv.lock and src/, so this file is
+# mostly about keeping the context small and making it impossible to ship a
+# secret or a mechanic's photo by accident.
+
+# secrets — never in an image layer, never in the build context
+.env
+.env.*
+!.env.example
+
+# personal data: real mechanic photos and generated video (invariant 10)
+spikes/in/
+spikes/out/
+input/
+out/
+tmp/
+logs/
+*.mp4
+*.wav
+*.mov
+*.jpg
+*.jpeg
+*.png
+
+# local python state — .venv especially, it is linux-incompatible and large
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# not needed to run the worker
+.git/
+.github/
+.gitignore
+.gitattributes
+docs/
+tests/
+infra/
+supabase/
+scripts/
+spikes/
+*.md
+
+# node / admin panel (Phase 2, Vercel — never part of the worker image)
+node_modules/
+.next/
+.vercel/
+
+# os
+.DS_Store
+Thumbs.db

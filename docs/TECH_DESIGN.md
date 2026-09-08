@@ -464,7 +464,7 @@ it steers expression, head movement and hand gesture. `AVATAR_PROMPT` in
 model's documented shape — subject, expression, motion, style preservation, in
 a few sentences — and carries two constraints that come from our own pipeline
 rather than from the model: gestures stay at **chest height** so they are not
-hidden behind the card overlay (70-87% of frame height), and off the **chest
+hidden behind the card overlay (66-82% of frame height), and off the **chest
 logo**, which is the point of the video. The text is hashed directly, so
 editing it regenerates rather than silently skipping.
 
@@ -591,20 +591,38 @@ Deterministic Pillow render, transparent PNG, burned in by ffmpeg after video
 generation.
 
 ```
-Raju Shetty          full name
-Shetty Motors        workshop
-Andheri, Mumbai      locality, city
-Mo. 9898989898       whatsapp number from the export
+Raju Shetty                        full name, bold hero line
+Shetty Motors                      workshop, bold
+Andheri, Mumbai | Mo. 9898989898   locality/city and the whatsapp number
 ```
 
-Fixed pixel position just below the belt line, identical across all six plates
-(every plate shares framing and subject placement). Full video duration.
+**Template v2** (`card_template_version` in [`config.py`](../src/castrol_pipeline/config.py))
+runs the panel to the **full frame width** — the client asked for the contact
+details on one full-width line — while keeping v1's vertical rect, which is
+the position that survived client review: `y 66.40% .. 81.13%`, top edge just
+below the belt and clear of the hands. Identical across all six plates (every
+plate shares framing and subject placement). Full video duration.
 
-Text fitting is rule-based and must degrade predictably: shrink to a floor,
-then truncate with an ellipsis, never wrap into a second line and never
-overflow the card. Overflow is caught at intake by the length rules above, so
-the renderer's fallback should effectively never fire — if it does, that is a
-signal the intake limits are wrong.
+The rect is FIXED and the type adapts, which is the opposite of v1. A panel
+that grew with its content changed size from job to job, and at full width
+that reads as a different template rather than as a longer address. Content
+that does not fit is scaled down as a block — every size and gap by the same
+factor — so the proportions hold too. `MIN_SCALE` floors that at 0.55 and the
+renderer logs `media.card_overflows` rather than shrinking past legibility.
+
+Text fitting is rule-based and degrades predictably, as a unit per field. The
+contact block goes: one line → address and phone on separate lines → address
+wrapped at the comma that best balances the two lines by RENDERED WIDTH. That
+choice is made once at nominal size, before any vertical scaling, because
+wrapping and then scaling keeps the card in proportion where a shrunk font
+pulling the address back onto one line would give a full-width line of tiny
+type. Overflow is caught at intake by the length rules above, so the
+renderer's fallback should rarely fire — if it fires often, that is a signal
+the intake limits are wrong.
+
+Bumping `card_template_version` puts the change into the composite
+`input_hash`, so every open job re-renders and re-burns. That is free: the
+composite stage is local ffmpeg and touches no vendor.
 
 ---
 

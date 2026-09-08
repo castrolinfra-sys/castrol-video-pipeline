@@ -108,12 +108,37 @@ def normalise_for_apimart(src: Path, dst: Path) -> Path:
 # ----------------------------------------------------------------- card ----
 
 #: Geometry as fractions of the frame, so it scales to whatever the plate
-#: resolution turns out to be. Measured from the client's reference mockup; the
-#: vertical position is from client review of the first real videos.
-PANEL_X0, PANEL_X1 = 0.1856, 0.8144
-PANEL_Y0 = 0.7000
-PANEL_Y1 = PANEL_Y0 + 0.1703
+#: resolution turns out to be.
+#:
+#: v2 is FULL WIDTH — the client wanted the contact details on one full-width
+#: line — but the vertical rect is v1's, which is the position that survived
+#: client review: top edge just below the belt, clear of the hands. The v1
+#: reference mockup measured 80.95% for the top edge, but that plate was framed
+#: waist-up; once apimart reframes to 9:16 the subject sits higher and that
+#: lands the card over the knees.
+PANEL_X0, PANEL_X1 = 0.0, 1.0
+PANEL_Y0 = 0.6640
+PANEL_Y1 = 0.8113
+#: Red accent, directly beneath the panel.
 ACCENT_H = 0.0077
+#: Text inset from each frame edge. The panel is full-bleed; the TYPE is not.
+SIDE_MARGIN = 0.030
+
+#: Nominal type and spacing, as fractions of frame HEIGHT. These are a ceiling,
+#: not a promise: the panel rect above is FIXED, so a card that needs more
+#: lines is scaled down to fit rather than being allowed to grow.
+NAME_H = 0.0300
+BODY_H = 0.0195
+LINE_GAP = 0.0030
+PANEL_PAD = 0.0100
+#: Floor on that scaling. Below this the card is unreadable on a phone and the
+#: right fix is the intake length limits, not a smaller font.
+MIN_SCALE = 0.55
+
+#: Address and phone share one line while they fit. Wide separator: at this
+#: size a bare "|" reads as part of the address.
+CONTACT_SEP = "   |   "
+
 GREEN = (1, 77, 38, 255)
 RED = (210, 36, 25, 255)
 WHITE = (255, 255, 255, 255)
@@ -122,14 +147,19 @@ WHITE = (255, 255, 255, 255)
 def render_card(fields: dict[str, str], frame_w: int, frame_h: int, path: Path) -> Path:
     """Deterministic Pillow render. No generative model ever touches this text.
 
-        panel   x 18.56% .. 81.44%   (62.9% wide, centred)
-                y 70.00% down, growing to fit
+        panel   full frame width, y 66.40% .. 81.13% — a FIXED rect
         accent  red bar directly beneath, ~0.77% of frame height
         colours panel #014D26 (Castrol green), accent #D22419, text white
 
-    The reference mockup measured 80.95% for the top edge, but that plate was
-    framed waist-up. Once apimart reframes to 9:16 the subject sits higher and
-    the card lands over the knees, so 70% is the reviewed position.
+        Raju Shetty                        bold, hero
+        Shetty Motors                      bold
+        Andheri, Mumbai | Mo. 9898989898   regular, one line while it fits
+
+    The rect is fixed and the TYPE adapts, which is the opposite of v1. A band
+    that grew with its content changed size from job to job, and at full width
+    that reads as a different template rather than as a longer address. Content
+    that does not fit is scaled down as a block — every size and gap by the
+    same factor — so the proportions never change either.
 
     Returns a FULL-FRAME transparent PNG, so the composite is a plain overlay
     at 0,0 and the position cannot drift.
@@ -140,9 +170,9 @@ def render_card(fields: dict[str, str], frame_w: int, frame_h: int, path: Path) 
     d = ImageDraw.Draw(img)
 
     x0, x1 = round(frame_w * PANEL_X0), round(frame_w * PANEL_X1)
-    y0 = round(frame_h * PANEL_Y0)
-    pw = x1 - x0
-    ph = round(frame_h * (PANEL_Y1 - PANEL_Y0))   # nominal, for type sizing
+    y0, y1 = round(frame_h * PANEL_Y0), round(frame_h * PANEL_Y1)
+    panel_h = y1 - y0
+    inner = (x1 - x0) * (1 - 2 * SIDE_MARGIN)
 
     def font(px: int, bold: bool):
         names = (("segoeuib.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf") if bold
@@ -154,63 +184,88 @@ def render_card(fields: dict[str, str], frame_w: int, frame_h: int, path: Path) 
                 continue
         return ImageFont.load_default()
 
-    def font_for(text, size, bold, limit):
-        f = font(size, bold)
-        while d.textlength(text, font=f) > limit and size > 8:
+    def fits(text: str, size: int, bold: bool) -> bool:
+        return d.textlength(text, font=font(size, bold)) <= inner
+
+    def shrink_to_fit(text: str, size: int, bold: bool) -> int:
+        while size > 8 and not fits(text, size, bold):
             size -= 1
+        return size
+
+    # The contact block: address and phone on one line while that fits at the
+    # nominal body size. It is one field to the reader, so it degrades as a
+    # unit — first by splitting the phone onto its own line, then by wrapping
+    # the address at a comma. This decision is made ONCE, at nominal size,
+    # before any vertical scaling: wrapping and then scaling the block keeps
+    # the card in proportion, where letting a shrunk font pull the address back
+    # onto one line would give a full-width line of tiny type.
+    body = round(frame_h * BODY_H)
+    phone_line = f"Mo. {fields['phone']}"
+    address = fields["address"]
+    contact = f"{address}{CONTACT_SEP}{phone_line}"
+    if fits(contact, body, False):
+        contact_lines = [contact]
+    else:
+        contact_lines = [address, phone_line]
+        if not fits(address, body, False):
+            f_body = font(body, False)
+            cuts = [i for i, ch in enumerate(address) if ch == ","]
+            if cuts:
+                # Balance by RENDERED WIDTH, not character index — the widest
+                # line is what forces the shrink, so minimising it is the goal.
+                def widest(i: int) -> float:
+                    a, b_ = address[:i + 1].strip(), address[i + 1:].strip()
+                    return max(d.textlength(a, font=f_body),
+                               d.textlength(b_, font=f_body))
+                c = min(cuts, key=widest)
+                contact_lines = [address[:c + 1].strip(),
+                                 address[c + 1:].strip(), phone_line]
+
+    def layout(scale: float):
+        """Every line the card draws at one scale factor, and the height it needs.
+
+        Widths are re-fitted at each scale, and heights come from the fonts
+        actually chosen rather than from the nominal sizes.
+        """
+        name_size = round(frame_h * NAME_H * scale)
+        body_size = round(frame_h * BODY_H * scale)
+        gap = round(frame_h * LINE_GAP * scale)
+        pad = round(frame_h * PANEL_PAD * scale)
+
+        spec = [
+            (fields["name"], shrink_to_fit(fields["name"], name_size, True), True),
+            (fields["workshop"], shrink_to_fit(fields["workshop"], body_size, True), True),
+        ]
+        # Every contact line shares ONE size — the largest at which all of them
+        # fit. Sizing them independently left a short line large next to a long
+        # line small, which reads as a rendering fault rather than a layout.
+        contact_size = body_size
+        while contact_size > 8 and any(
+            not fits(t, contact_size, False) for t in contact_lines
+        ):
+            contact_size -= 1
+        spec += [(t, contact_size, False) for t in contact_lines]
+
+        rendered = []
+        for text, size, bold in spec:
             f = font(size, bold)
-        return f
+            asc, desc = f.getmetrics()
+            rendered.append((text, f, asc + desc))
+        total = sum(h for _, _, h in rendered) + gap * (len(rendered) - 1)
+        return rendered, gap, total, total + 2 * pad
 
-    inner = pw * 0.92
-    body = round(ph * 0.150)
+    scale = 1.0
+    rendered, gap, total, needed = layout(scale)
+    while needed > panel_h and scale > MIN_SCALE:
+        scale = round(scale - 0.02, 2)
+        rendered, gap, total, needed = layout(scale)
+    if needed > panel_h:
+        # Not a failure — a squeezed card still delivers. But it means intake
+        # let through something longer than the template was sized for, which
+        # is worth seeing in the logs before the client sees it in a video.
+        log.warning("media.card_overflows", needed=needed, panel_h=panel_h,
+                    scale=scale, lines=len(rendered))
 
-    # A long address wraps onto a second line rather than shrinking away.
-    # Shrinking made a 54-char address render at ~60% the size of the line
-    # above it, which is unreadable on a phone.
-    addr = fields["address"]
-    addr_lines = [addr]
-    if d.textlength(addr, font=font(body, False)) > inner:
-        f_body = font(body, False)
-        cuts = [i for i, ch in enumerate(addr) if ch == ","]
-        if cuts:
-            # Balance by RENDERED WIDTH, not character index — the widest line
-            # is what forces the shrink, so minimising it is the actual goal.
-            def widest(i):
-                a, b_ = addr[:i + 1].strip(), addr[i + 1:].strip()
-                return max(d.textlength(a, font=f_body), d.textlength(b_, font=f_body))
-            c = min(cuts, key=widest)
-            addr_lines = [addr[:c + 1].strip(), addr[c + 1:].strip()]
-
-    # Name is the hero line; everything else is one smaller regular size.
-    # A wrapped address is ONE field, so both its lines share one size — the
-    # largest at which every line fits. Sizing them independently left the
-    # short first line large and the long second line small, which reads as a
-    # rendering fault rather than a layout.
-    addr_size = body
-    while addr_size > 8 and any(
-        d.textlength(a, font=font(addr_size, False)) > inner for a in addr_lines
-    ):
-        addr_size -= 1
-
-    spec = [(fields["name"], round(ph * 0.235), True)]
-    spec.append((fields["workshop"], body, False))
-    spec += [(a, addr_size, False) for a in addr_lines]
-    spec.append((f"Mo. {fields['phone']}", body, False))
-
-    rendered = []
-    for text, size, bold in spec:
-        f = font_for(text, size, bold, inner)
-        asc, desc = f.getmetrics()
-        rendered.append((text, f, asc + desc))
-
-    # Draw the panel only once the content height is known: a wrapped address
-    # adds a line, and a fixed panel would push the last line onto the accent
-    # bar. Top edge stays pinned at PANEL_Y0 so the card never moves up.
-    gap = round(ph * 0.02)
-    pad = round(ph * 0.10)
-    total = sum(h for _, _, h in rendered) + gap * (len(rendered) - 1)
-    panel_h = max(ph, total + 2 * pad)
-    y1 = y0 + panel_h
     d.rectangle([x0, y0, x1, y1], fill=GREEN)
     d.rectangle([x0, y1, x1, y1 + max(2, round(frame_h * ACCENT_H))], fill=RED)
 
