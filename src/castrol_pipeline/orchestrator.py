@@ -328,6 +328,102 @@ def advance_job(job_id: str) -> None:
     )
 
 
+# ------------------------------------------------------------------- redo --
+
+
+def downstream_of(stage: PipelineStage) -> list[PipelineStage]:
+    """Every stage that depends on `stage`, transitively, in plan order.
+
+    Computed from STAGE_DEPENDENCIES rather than listed, so adding a stage to
+    the DAG cannot leave a stale hand-written list behind.
+    """
+    affected = {stage}
+    changed = True
+    while changed:
+        changed = False
+        for candidate, deps in STAGE_DEPENDENCIES.items():
+            if candidate not in affected and any(d in affected for d in deps):
+                affected.add(candidate)
+                changed = True
+    return [s for s in DEFAULT_PLAN if s in affected and s != stage]
+
+
+def redo_stage(job_id: str, stage: PipelineStage) -> dict[str, Any]:
+    """Make `stage` runnable again for a finished job, and everything after it.
+
+    Used when an input the hash cannot see has changed — a reworded prompt, a
+    corrected model id, a plate reissued under the same key. It does NOT run
+    anything; it clears the way and re-schedules.
+
+    Succeeded runs are marked `skipped`, never deleted. Two reasons: the
+    partial unique index only constrains `succeeded`, so demoting is enough to
+    free the slot; and the row carries what that attempt COST, which is the one
+    number a deleted row would take with it (invariant 24).
+
+    Downstream stages are demoted too. They would re-run on their own once the
+    new video lands — their input hashes cover the new output — but leaving
+    them `succeeded` in the meantime makes the job look finished while it is
+    not, and `advance_job` would mark it completed on the next sweep.
+    """
+    stages = [stage, *downstream_of(stage)]
+    names = [str(s) for s in stages]
+
+    inflight = db.fetch_one(
+        """
+        SELECT stage FROM stage_runs
+         WHERE job_id = %(job)s AND stage::text = ANY(%(stages)s)
+           AND status IN ('pending', 'claimed', 'running')
+         LIMIT 1;
+        """,
+        {"job": job_id, "stages": names},
+    )
+    if inflight:
+        raise PipelineError(
+            f"A {inflight['stage']} run is already in flight for this job. "
+            "Redoing now would submit a second paid call alongside it — wait "
+            "for `castrol poll` to reconcile, or let it fail first."
+        )
+
+    demoted = db.execute(
+        """
+        UPDATE stage_runs
+           SET status = 'skipped',
+               error_code = 'SUPERSEDED_BY_REDO'
+         WHERE job_id = %(job)s AND stage::text = ANY(%(stages)s) AND status = 'succeeded';
+        """,
+        {"job": job_id, "stages": names},
+    )
+
+    # The job is very likely `completed`, and `schedule` only looks at jobs that
+    # are not. Reopen it or nothing will ever pick this up.
+    db.execute(
+        """
+        UPDATE jobs SET status = 'running', current_stage = %(stage)s,
+                        completed_at = NULL, failure_reason = NULL
+         WHERE id = %(job)s;
+        """,
+        {"job": job_id, "stage": str(stage)},
+    )
+
+    enqueued = schedule_ready(job_id)
+    record_event(
+        "job.redo",
+        job_id=job_id,
+        stage=str(stage),
+        level="warning",
+        demoted_runs=demoted,
+        cleared=names,
+        enqueued=[str(s) for s in enqueued],
+    )
+    return {
+        "job_id": job_id,
+        "stage": str(stage),
+        "cleared": names,
+        "demoted_runs": demoted,
+        "enqueued": [str(s) for s in enqueued],
+    }
+
+
 # ------------------------------------------------------------- worker loop --
 
 

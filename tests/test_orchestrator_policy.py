@@ -65,3 +65,42 @@ class TestDag:
 
     def test_deliver_is_last(self):
         assert DEFAULT_PLAN[-1] == PipelineStage.DELIVER
+
+
+class TestRedoBlastRadius:
+    """`redo` re-runs a stage and everything after it. Getting the "after"
+    wrong is expensive in one direction and incorrect in the other: too wide
+    re-runs paid stages nobody asked for, too narrow ships a final video built
+    from a stale upstream.
+    """
+
+    def test_video_clears_the_tail_but_not_its_inputs(self):
+        from castrol_pipeline.orchestrator import downstream_of
+        from castrol_pipeline.stages.base import PipelineStage as S
+
+        after = downstream_of(S.VIDEO)
+        assert after == [S.COMPOSITE, S.CHECKS, S.PUBLISH, S.DELIVER]
+        # The expensive half must survive: re-running video must not repay for
+        # audio and image.
+        assert S.AUDIO not in after and S.IMAGE not in after and S.PREP not in after
+
+    def test_prep_clears_everything(self):
+        from castrol_pipeline.orchestrator import downstream_of
+        from castrol_pipeline.stages.base import DEFAULT_PLAN
+        from castrol_pipeline.stages.base import PipelineStage as S
+
+        after = downstream_of(S.PREP)
+        assert after == [s for s in DEFAULT_PLAN if s != S.PREP]
+
+    def test_deliver_clears_nothing(self):
+        from castrol_pipeline.orchestrator import downstream_of
+        from castrol_pipeline.stages.base import PipelineStage as S
+
+        assert downstream_of(S.DELIVER) == []
+
+    def test_composite_does_not_touch_video(self):
+        from castrol_pipeline.orchestrator import downstream_of
+        from castrol_pipeline.stages.base import PipelineStage as S
+
+        # A card-only revision must never re-run the $0.04/s step.
+        assert S.VIDEO not in downstream_of(S.COMPOSITE)

@@ -79,7 +79,16 @@ uv run castrol work --stage audio
 ```
 
 ```bash
-uv run castrol poll
+uv run castrol poll --watch
+```
+
+Re-run a stage on a finished job — a reworded avatar prompt, a corrected model
+id. Demotes that stage and everything downstream to `skipped`, reopens the job,
+re-schedules. **SPENDS on the next `work`**; shows the last attempt's cost and
+asks first.
+
+```bash
+uv run castrol redo <job-id> --stage video
 ```
 
 ```bash

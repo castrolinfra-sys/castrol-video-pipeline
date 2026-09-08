@@ -211,9 +211,26 @@ uv run castrol drain
 uv run castrol work --stage audio
 ```
 
+One pass of the poller, or block until the queue is empty — which is what you
+want while a 20-minute avatar render is in flight. Ctrl-C is safe; the task
+keeps running at the vendor and the next poll picks it up.
+
 ```bash
-uv run castrol poll
+uv run castrol poll --watch
 ```
+
+**Re-run a stage on a finished job.** For when an input the hash cannot see has
+changed — a reworded avatar prompt, a corrected model id, a plate reissued
+under the same key. It demotes the succeeded runs for that stage and everything
+after it, reopens the job and re-schedules. **It spends money on the next
+`work`.**
+
+```bash
+uv run castrol redo <job-id> --stage video
+```
+
+Succeeded runs are marked `skipped`, never deleted — the row carries what that
+attempt cost, and a deleted row takes that with it.
 
 **Bulk intake** from the client export (still written against the pre-CSV
 schema — see Status):

@@ -6,6 +6,7 @@
     schedule    enqueue ready stages                      -> orchestrator.py
     work        drain one stage                           -> orchestrator.py
     poll        reconcile in-flight vendor tasks          -> orchestrator.py
+    redo        re-run a stage on a finished job (SPENDS) -> orchestrator.py
     drain       sweep every stage until nothing moves     -> orchestrator.py
     show        one job: runs, cost, assets, checks       -> seed.py:describe
     events      one job's durable timeline                -> common/events.py
@@ -195,6 +196,60 @@ def costs(
 
 
 @app.command()
+def redo(
+    job_id: Annotated[str, typer.Argument(help="Job UUID")],
+    stage: Annotated[str, typer.Option("--stage", help="Stage to re-run")],
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Skip the confirmation prompt")
+    ] = False,
+) -> None:
+    """Make one stage runnable again for a finished job, and everything after it.
+
+    For when an input the hash cannot see has changed — a reworded avatar
+    prompt, a corrected model id, a plate reissued under the same key.
+
+    This SPENDS MONEY on the next `work`/`drain`. It clears the way and
+    schedules; it does not run anything itself.
+    """
+    _boot()
+    from .common import db
+    from .orchestrator import redo_stage
+
+    try:
+        target = PipelineStage(stage)
+    except ValueError:
+        raise typer.BadParameter(
+            f"Unknown stage {stage!r}. Known: {[str(s) for s in PipelineStage]}"
+        ) from None
+
+    # Show the bill before touching anything. The video stage is 96% of spend
+    # and re-running it by accident is the expensive mistake this guards.
+    prior = db.fetch_one(
+        """
+        SELECT cost_usd, billed_seconds FROM stage_runs
+         WHERE job_id = %(job)s AND stage = %(stage)s AND status = 'succeeded'
+         ORDER BY finished_at DESC LIMIT 1;
+        """,
+        {"job": job_id, "stage": str(target)},
+    )
+    if prior is None:
+        typer.echo(f"No succeeded {target} run for this job — nothing to redo.")
+        raise typer.Exit(1)
+
+    cost = float(prior["cost_usd"] or 0)
+    typer.echo(
+        f"Re-running {target} for {job_id}.\n"
+        f"  last attempt cost ${cost:.4f} (~Rs {cost * 100:.2f}) "
+        f"for {prior['billed_seconds'] or '?'}s\n"
+        f"  the next `castrol work --stage {target}` will spend about that again"
+    )
+    if not yes and not typer.confirm("Proceed?"):
+        raise typer.Abort()
+
+    typer.echo(json.dumps(redo_stage(job_id, target), indent=2))
+
+
+@app.command()
 def work(
     stage: Annotated[str, typer.Option("--stage", help="Stage to drain")],
     limit: Annotated[int, typer.Option(help="Max runs to process")] = 1000,
@@ -215,14 +270,48 @@ def work(
 
 
 @app.command()
-def poll(limit: Annotated[int, typer.Option(help="Max in-flight tasks to check")] = 100) -> None:
-    """Reconcile in-flight async vendor tasks."""
+def poll(
+    limit: Annotated[int, typer.Option(help="Max in-flight tasks to check")] = 100,
+    watch: Annotated[
+        bool, typer.Option("--watch", help="Keep polling until nothing is in flight")
+    ] = False,
+    interval: Annotated[int, typer.Option(help="Seconds between passes with --watch")] = 30,
+) -> None:
+    """Reconcile in-flight async vendor tasks.
+
+    One pass by default — that is what a cron-driven poller wants. `--watch`
+    blocks until the queue is empty, which is what a person waiting on a
+    20-minute avatar render wants. Ctrl-C is safe: the task keeps running at
+    the vendor and the next poll picks it up.
+    """
     _boot()
+    import time as _time
+
+    from .common import db
     from .orchestrator import poll_once, reap
 
-    reaped = reap()
-    completed = poll_once(limit=limit)
-    typer.echo(json.dumps({"reaped": reaped, "completed": completed}))
+    def _inflight() -> int:
+        row = db.fetch_one(
+            "SELECT count(*) AS n FROM stage_runs "
+            "WHERE status = 'running' AND vendor_task_id IS NOT NULL;"
+        )
+        return int(row["n"]) if row else 0
+
+    total = 0
+    while True:
+        reaped = reap()
+        completed = poll_once(limit=limit)
+        total += completed
+        remaining = _inflight()
+        typer.echo(json.dumps(
+            {"reaped": reaped, "completed": completed, "in_flight": remaining}
+        ))
+        if not watch or remaining == 0:
+            break
+        _time.sleep(interval)
+
+    if watch:
+        typer.echo(json.dumps({"watched": True, "completed_total": total}))
 
 
 @app.command()
