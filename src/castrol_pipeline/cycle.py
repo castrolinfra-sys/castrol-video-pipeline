@@ -18,6 +18,20 @@ matter when there is no human in the room:
 
   * **It stops at a deadline** instead of running until the next timer fires.
 
+Throughput is not what the deadline limits, and the arithmetic is worth writing
+down because it looks otherwise. A render takes ~8.6 minutes, but renders do not
+queue behind each other - image and video submit and release, so a hundred of
+them are in flight at the vendor at once and the wall clock is the LONGEST one,
+not the sum. What is serial is only our own work, measured end to end on a real
+job at **~32 seconds per video**, nearly all of it the ffmpeg composite:
+
+    prep 1s | audio <1s | image submit <1s | video submit <1s
+    | composite 28s | checks 1s | publish 1s | deliver 1s
+
+At 8 hours that is roughly 900 videos per cycle. The binding limit at a hundred
+a day is `vendor_limits.daily_cost_cap_usd` - $50 on kie is about 44 videos -
+and that is a deliberate guard, not an accident to route around.
+
 Nothing here is a new source of truth. Readiness is still computed from
 `stage_runs`, so a cycle killed at any point — deadline, deploy, instance
 reboot — resumes from the next one with no bookkeeping to repair. That is the
@@ -183,7 +197,7 @@ def _reopen_suppressed_deliveries() -> list[str]:
 def run_cycle(
     *,
     lookback_days: int = 1,
-    deadline_minutes: int = 240,
+    deadline_minutes: int = 480,
     interval_s: int = 60,
     fetch: bool = True,
 ) -> dict[str, Any]:

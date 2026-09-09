@@ -39,7 +39,7 @@ and everything below is either how to install it or how to read what it did.
    render means "still rendering" — it would submit every paid job and exit
    before collecting a single result.
 
-5. **Stops at a deadline** (default 4 hours, well inside the 12-hour gap) and
+5. **Stops at a deadline** (default 8 hours, inside the 12-hour gap) and
    exits 1 if work is still outstanding. Nothing is lost when this happens —
    readiness is recomputed from `stage_runs`, so the next cycle picks up exactly
    where this one stopped — but a batch that outlasts its own window is worth
@@ -49,6 +49,48 @@ and everything below is either how to install it or how to read what it did.
 would have POSTed and records the delivery row without posting. Everything up to
 and including publish runs for real, so turning delivery on later requires no
 re-render: flip the variable and the deliver stage runs on the next cycle.
+
+---
+
+## How many videos a cycle can actually do
+
+The deadline is not the limit, and the arithmetic looks like it should be. A
+render takes ~8.6 minutes — but renders do not queue behind each other. The
+image and video stages hand the job to the vendor and return immediately, so a
+hundred renders are in flight at once and the wall clock is the *longest* one,
+not the sum.
+
+What is serial is only our own work. Measured end to end on a real completed job:
+
+| stage | time | note |
+|---|---|---|
+| prep | 1s | |
+| audio | <1s | Cartesia, synchronous but fast |
+| image | <1s | submit only |
+| video | <1s | submit only — the 8.6 min render happens at kie |
+| **composite** | **28s** | ffmpeg burn-in, local, CPU-bound — the real bottleneck |
+| checks / publish / deliver | 1s each | |
+
+**~32 seconds of our own time per video.** At an 8-hour deadline that is roughly
+900 videos per cycle, 1800 a day across two. Hundreds a day is not close to it.
+
+The limit you will actually hit first is money:
+
+```bash
+uv run castrol costs
+```
+
+`vendor_limits.daily_cost_cap_usd` is **$50 on `kie_video`**, which is about 44
+videos a day at $1.12 each. That is a deliberate runaway guard, not an
+oversight — raising it is a decision about spend, taken in the database:
+
+```sql
+UPDATE vendor_limits SET daily_cost_cap_usd = 150 WHERE vendor = 'kie_video';
+```
+
+If composite ever does become the constraint, the fix is more workers, not a
+longer deadline: `castrol work --stage composite` can run in N processes against
+the same database, because claiming is `SKIP LOCKED`.
 
 ---
 
