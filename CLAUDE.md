@@ -704,17 +704,30 @@ a layout rule.
 `address_normalized` holds the **spoken** form, not a tidied postal address.
 `address_raw` is what the card prints.
 
-**All six plates are active, but the repo and the database have DIVERGED.**
-The six rows were registered 2026-09-09 from the then-current
-`plates/plate_0N.png`, content-addressed by sha256. `plates/` has since been
-replaced with finalised artwork (~2.0 MB files, commit `5791619`) and all six
-sha256s now differ from what is registered — so a video generated today is
-still built from the OLD artwork.
+**All six plates are FINAL, registered and active** — 2026-09-09,
+`approved_by = "final artwork 2026-09-09 - client-approved"`, all 1536x2752.
+Each combination now has two rows, one retired and one active, and the four
+existing jobs still point at the RETIRED `plate_02`, which is correct: that is
+what they were built from (invariant 31 doing its job).
 
-Nothing is broken and nothing is blocked; the fix is to re-run `register_plate`
-for all six once the artwork is final, which retires the active rows and
-inserts new ones (invariant 31). Until then, treat every rendered video as
-carrying superseded plates.
+**To check the repo and the database agree, hash the NORMALISED file, not the
+raw one.** `register_plate` stores `sha256(normalise_for_apimart(file))`, and
+that step converts to RGB and re-encodes the PNG — so the sha of
+`plates/plate_01.png` on disk NEVER equals `plates.sha256`, even when the
+artwork is identical. Comparing raw hashes reports every plate as diverged,
+always. The real check:
+
+```python
+norm = media.normalise_for_apimart(path, tmp)     # what actually gets uploaded
+hashing.sha256_hex(norm.read_bytes()) == row["sha256"]
+```
+
+One consequence worth knowing: the plates are 1536x2752, which is 0.5581 rather
+than 9:16's 0.5625, so `register_plate` logs `seed.plate_not_1080x1920` six
+times. That warning is expected and harmless here — 21px of extra height — and
+the card geometry is expressed as FRACTIONS of the frame, so plate resolution
+does not move it. A plate at a genuinely different ASPECT would matter; a
+different resolution does not.
 
 **Spike 0.1 is answered — do not rewrite the script.** `kling-avatar-v2` has
 completed in prod at 39s via kie and 60s via fal; the ~80-word script at 30–40s
