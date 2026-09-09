@@ -704,10 +704,17 @@ a layout rule.
 `address_normalized` holds the **spoken** form, not a tidied postal address.
 `address_raw` is what the card prints.
 
-**All six plates are live and active.** Uploaded 2026-09-09 from
-`plates/plate_0N.png`, content-addressed by sha256. The artwork is provisional
-— the client has not finalised it — but nothing is blocked on that: re-running
-`register_plate` with replaced files supersedes them.
+**All six plates are active, but the repo and the database have DIVERGED.**
+The six rows were registered 2026-09-09 from the then-current
+`plates/plate_0N.png`, content-addressed by sha256. `plates/` has since been
+replaced with finalised artwork (~2.0 MB files, commit `5791619`) and all six
+sha256s now differ from what is registered — so a video generated today is
+still built from the OLD artwork.
+
+Nothing is broken and nothing is blocked; the fix is to re-run `register_plate`
+for all six once the artwork is final, which retires the active rows and
+inserts new ones (invariant 31). Until then, treat every rendered video as
+carrying superseded plates.
 
 **Spike 0.1 is answered — do not rewrite the script.** `kling-avatar-v2` has
 completed in prod at 39s via kie and 60s via fal; the ~80-word script at 30–40s
@@ -730,7 +737,7 @@ IST on EC2 ([`deploy/`](deploy/README.md)). It is not `drain` under a timer:
 `drain` stops the moment a sweep moves nothing, which for an async stage means
 "still rendering", so under a timer it would submit every paid render and exit
 before collecting one. The cycle waits, holds an advisory lock so two runs
-cannot overlap, and stops at a deadline (4h, inside the 12h gap) rather than
+cannot overlap, and stops at a deadline (8h, inside the 12h gap) rather than
 running into the next window. Nothing is lost when it stops early — readiness
 is recomputed from `stage_runs`, so the next cycle resumes.
 
