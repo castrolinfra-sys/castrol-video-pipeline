@@ -187,6 +187,17 @@ locally, Vercel's env vars in production. It is not a Supabase setting and
 Supabase never sees it. Supabase decides who can authenticate; this decides who
 is let in once they have.
 
+**Passwords are ours to hold, and the panel deliberately cannot change one.**
+Decided 2026-09-09. There is no account page and no self-service rotation: a
+password is set in Supabase → Authentication → Users and reset there. Do not add
+a change-password page - it was considered and declined, not overlooked.
+
+The consequence is deliberate but worth stating: whoever sets a client's
+password knows it, and rotation is a dashboard action rather than something the
+client can do alone. Supabase stores only a bcrypt hash and verifies it itself -
+the panel forwards the password to `signInWithPassword` and receives a session,
+so nothing here ever stores, logs or can read one.
+
 ### Checks
 
 ```bash

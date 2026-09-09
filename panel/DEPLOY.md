@@ -85,6 +85,20 @@ Note the assigned URL, e.g. `https://castrol-panel.vercel.app`.
 Supabase → **Authentication → Users → Add user**: the address from
 `ADMIN_ALLOWED_EMAILS`, a password, **Auto Confirm User** on.
 
+This is the ONLY place a password is ever set or changed. The panel has no
+account page and will not be getting one (decided 2026-09-09), so every
+password is held by whoever typed it here and rotated from this same screen.
+Supabase keeps a bcrypt hash and does the checking itself; the panel forwards
+the password and gets back a session, so nothing in this repo stores, logs or
+can read one.
+
+`ADMIN_ALLOWED_EMAILS` is comma-separated, so giving someone at the client
+their own login is two steps and no code change: add their address to the
+variable, add a user here. Worth it over sharing one credential -
+`job_reports.reported_by` records whoever was signed in, so a shared account
+means you can never tell who reviewed what, and revoking one person means
+changing a password everyone uses.
+
 Then Supabase → **Authentication → Sign In / Providers → Email** → turn
 **"Allow new users to sign up" OFF**.
 
