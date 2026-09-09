@@ -8,6 +8,7 @@ from castrol_pipeline.prep.normalise import (
     expand_for_speech,
     normalise_address,
     normalise_phone,
+    spoken_place_from,
 )
 from castrol_pipeline.prep.plates import (
     UnknownBackground,
@@ -48,15 +49,53 @@ class TestPhone:
 
 
 class TestAddress:
-    def test_splits_locality_city(self):
-        assert normalise_address("Dombivili, Thane") == ("Dombivili", "Thane")
+    """Free text, confirmed by the client 2026-09-09.
 
-    def test_collapses_whitespace(self):
-        assert normalise_address("  Andheri ,   Mumbai ") == ("Andheri", "Mumbai")
+    This used to require exactly `Locality, City`. A mechanic writing their own
+    address normally - one word, or three clauses with a landmark - was
+    rejected for it, which is not a data problem, it is an address.
+    """
 
-    @pytest.mark.parametrize("raw", ["Mumbai", "A, B, C", "", None])
-    def test_rejects_anything_that_is_not_two_parts(self, raw):
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "Mumbai",
+            "Dombivili, Thane",
+            "Beturkar Pada, Opposite New National Hospital, Andheri",
+        ],
+    )
+    def test_any_shape_is_accepted(self, raw):
+        assert normalise_address(raw) is not None
+
+    def test_collapses_whitespace_and_drops_empty_segments(self):
+        assert normalise_address("  Andheri ,   Mumbai ") == "Andheri, Mumbai"
+        assert normalise_address("Andheri, , Mumbai") == "Andheri, Mumbai"
+
+    def test_the_text_is_otherwise_left_alone(self):
+        # The card prints this. Inventing punctuation for a stranger's address
+        # is not ours to do.
+        assert normalise_address("Shop 4 - MG Rd.") == "Shop 4 - MG Rd."
+
+    @pytest.mark.parametrize("raw", ["", "   ", ",", None])
+    def test_only_empty_is_rejected(self, raw):
         assert normalise_address(raw) is None
+
+
+class TestSpokenPlace:
+    def test_a_long_address_is_spoken_as_its_last_segment(self):
+        # Reading the whole string aloud puts a hospital landmark in a
+        # 30-second ad.
+        assert (
+            spoken_place_from("Beturkar Pada, Opposite New National Hospital, Andheri")
+            == "Andheri"
+        )
+
+    @pytest.mark.parametrize(
+        "address,said",
+        [("Mumbai", "Mumbai"), ("Dombivili, Thane", "Dombivili, Thane")],
+    )
+    def test_one_or_two_segments_are_already_the_spoken_form(self, address, said):
+        assert spoken_place_from(address) == said
 
 
 class TestSpeechExpansion:

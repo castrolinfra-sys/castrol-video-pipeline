@@ -492,6 +492,15 @@ A presigned URL is a bearer credential for one object; the events table is read
 by the admin panel and quoted in support threads. `_scrub()` keeps the path and
 drops the signature.
 
+**31. A plate is never edited in place.**
+*`seed.py:register_plate`*
+Replacing a combination's artwork RETIRES the active row and inserts a new one.
+Updating in place looks harmless and silently rewrites history: `jobs.plate_id`
+keeps pointing at the same row, so every job built from the old artwork starts
+claiming it used the new. There is no per-job plate asset to fall back on, so
+that link is the only record of what a video was actually made from — and the
+client intends to revise this artwork.
+
 **27. The card is rendered by Pillow, after generation, and is free.**
 No generative model ever touches the text. A card revision is an ffmpeg
 re-encode of media we already have — which is why three rounds of client review
@@ -606,11 +615,21 @@ if one stops holding we get a row with a stable reject code, not a broken
 video: `mechanic_phone_number` is never empty, `whatsapp_number` is unique,
 `address` is never empty, `background` never holds a seventh value.
 
-**Five of the six plates are still placeholders.** Only `plate_02` has real
-artwork in S3; the other five `plates` rows point at `plates/pending/…` keys
-that do not exist. The approved PNGs are committed at `plates/plate_0N.png` and
-need uploading and activating before any combination but T-shirt × Sedan can
-run.
+**The address is free text, any shape** (client, 2026-09-09). It used to be
+required to be exactly `Locality, City`, which rejected real people for writing
+their own address normally — a one-word `Worli` was a `BAD_ADDRESS`. The card
+prints the whole thing; the voice says only the last segment, because Indian
+addresses run most-specific to least and reading it all aloud puts a hospital
+landmark in a 30-second ad. `MAX_ADDRESS_CHARS` is now a sanity bound (90), not
+a layout rule.
+
+`address_normalized` holds the **spoken** form, not a tidied postal address.
+`address_raw` is what the card prints.
+
+**All six plates are live and active.** Uploaded 2026-09-09 from
+`plates/plate_0N.png`, content-addressed by sha256. The artwork is provisional
+— the client has not finalised it — but nothing is blocked on that: re-running
+`register_plate` with replaced files supersedes them.
 
 **Spike 0.1 is answered — do not rewrite the script.** `kling-avatar-v2` has
 completed in prod at 39s via kie and 60s via fal; the ~80-word script at 30–40s

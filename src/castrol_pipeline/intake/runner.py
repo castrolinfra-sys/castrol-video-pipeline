@@ -155,7 +155,10 @@ def _insert_submission(
             "name": valid.user_name if valid else row.get("user_name"),
             "workshop": valid.workshop_name if valid else row.get("workshop_name"),
             "address_raw": row.get("address"),
-            "address_norm": f"{valid.locality}, {valid.city}" if valid else None,
+            # address_normalized holds the SPOKEN form, not a tidied postal
+            # address - it is what the voiceover says. address_raw is what the
+            # card prints.
+            "address_norm": valid.spoken_place if valid else None,
             "gender": row.get("gender"),
             "mech_id": row.get("mechanic_id"),
             # The export reports verification as a STRING, not the boolean this

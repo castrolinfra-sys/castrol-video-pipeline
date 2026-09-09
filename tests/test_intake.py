@@ -65,6 +65,27 @@ class TestValidation:
         assert (result.uniform_id, result.background_id) == ("u1_tshirt", "bg1_white_suv")
         assert result.client_submission_id == "aee311ec-2999-4614-9fc4-a77858d5ad9d"
 
+    def test_a_free_form_address_is_kept_whole_but_spoken_short(self):
+        """The card is read, the voiceover is heard, and they differ.
+
+        A landmark helps someone looking at the card and is noise in a
+        30-second ad, so the full address is printed and only the last segment
+        is said.
+        """
+        result = validate_row(
+            good_row(address="Beturkar Pada, Opposite New National Hospital, Andheri")
+        )
+        assert isinstance(result, ValidRow)
+        assert result.address == "Beturkar Pada, Opposite New National Hospital, Andheri"
+        assert result.spoken_place == "Andheri"
+
+    def test_a_one_word_address_is_no_longer_rejected(self):
+        # "Worli" was rejected as BAD_ADDRESS by the old two-part rule - a real
+        # row, lost for writing an address normally.
+        result = validate_row(good_row(address="Worli"))
+        assert isinstance(result, ValidRow)
+        assert result.spoken_place == "Worli"
+
     def test_the_two_phones_do_not_get_crossed(self):
         """The failure this guards is silent and lands on a real person.
 
@@ -89,7 +110,8 @@ class TestValidation:
             ({"id": ""}, RejectCode.MISSING_FIELD),
             ({"user_name": "R" * 26}, RejectCode.NAME_TOO_LONG),
             ({"workshop_name": "W" * 31}, RejectCode.WORKSHOP_TOO_LONG),
-            ({"address": "Thane"}, RejectCode.BAD_ADDRESS),
+            ({"address": ""}, RejectCode.BAD_ADDRESS),
+            ({"address": "x" * 91}, RejectCode.BAD_ADDRESS),
             ({"outfit": "Castrol Overall"}, RejectCode.UNKNOWN_OUTFIT),
             ({"background": "Motorbike"}, RejectCode.UNKNOWN_BACKGROUND),
             ({"user_name": "test user"}, RejectCode.TEST_ROW),

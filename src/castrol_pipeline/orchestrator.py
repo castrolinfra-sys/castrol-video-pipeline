@@ -127,7 +127,6 @@ def load_context(job_id: str) -> JobContext:
     if row is None:
         raise LookupError(f"No job {job_id}")
 
-    locality, _, city = (row["address_normalized"] or "").partition(", ")
     return JobContext(
         job_id=str(row["job_id"]),
         submission_id=str(row["submission_id"]),
@@ -136,8 +135,10 @@ def load_context(job_id: str) -> JobContext:
         plate_id=str(row["plate_id"]) if row["plate_id"] else None,
         user_name=row["user_name"] or "",
         workshop_name=row["workshop_name"] or "",
-        locality=locality,
-        city=city,
+        # address_normalized IS the spoken form. It used to be split on ", "
+        # here and rejoined in PrepStage, a round-trip that existed only to
+        # satisfy a two-part address rule that no longer applies.
+        spoken_place=row["address_normalized"] or "",
         phone_e164=row["phone_e164"] or "",
         uniform_id=row["outfit_choice"] or "",
         background_id=row["background_choice"] or "",

@@ -89,7 +89,7 @@ def card_payload(ctx: JobContext) -> dict[str, Any]:
     return {
         "name": ctx.user_name,
         "workshop": ctx.workshop_name,
-        "address": f"{ctx.locality}, {ctx.city}",
+        "address": ctx.spoken_place,
         "phone": ctx.phone_e164,
     }
 
@@ -112,7 +112,7 @@ class StubPrep:
             version=ctx.script_version,
             name=ctx.user_name,
             workshop=ctx.workshop_name,
-            locality=ctx.locality,
+            locality=ctx.spoken_place,
         )
         return StageResult(
             meta={

@@ -90,8 +90,8 @@ class JobContext:
     # Submission fields the stages need. Populated by the orchestrator.
     user_name: str = ""
     workshop_name: str = ""
-    locality: str = ""
-    city: str = ""
+    #: What the voiceover says. Already resolved - stages do not re-derive it.
+    spoken_place: str = ""
     phone_e164: str = ""
     uniform_id: str = ""
     background_id: str = ""

@@ -16,16 +16,23 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ..common.errors import RejectCode
-from ..prep.normalise import normalise_address, normalise_name, normalise_phone
+from ..prep.normalise import (
+    normalise_address,
+    normalise_name,
+    normalise_phone,
+    spoken_place_from,
+)
 from ..prep.plates import UnknownBackground, UnknownOutfit, resolve_combo
 
-#: Card width limits. TBC from the final artwork (PROJECT_PLAN open issue 5).
-#: These bound what the card renderer will ever be asked to fit; the renderer's
-#: shrink-then-truncate fallback should therefore effectively never fire. If it
-#: does, these numbers are wrong.
+#: Card width limits. These bound what the card renderer will ever be asked to
+#: fit; the renderer scales content down as a block within them.
 MAX_NAME_CHARS = 25
 MAX_WORKSHOP_CHARS = 30
-MAX_ADDRESS_CHARS = 34
+#: The address is free text (client, 2026-09-09), so this is a SANITY bound and
+#: not a layout one - it catches a pasted paragraph, it does not enforce a
+#: shape. It was 34, which assumed a two-part `Locality, City`; the address in
+#: our own seed-job example is 54 characters and would have been rejected.
+MAX_ADDRESS_CHARS = 90
 
 _TEST_NAME = re.compile(r"^\s*(test|testing|abc+|xyz+|asdf|demo|dummy|qwerty)\b", re.I)
 _REPEATED_DIGITS = re.compile(r"^\+91(\d)\1{9}$")
@@ -50,8 +57,11 @@ class ValidRow:
     card_phone_e164: str
     user_name: str
     workshop_name: str
-    locality: str
-    city: str
+    #: The full address, free-form. What the CARD prints.
+    address: str
+    #: The area the VOICE says - the last segment of the above. The card is
+    #: read, so a landmark helps there; the voiceover says only the area.
+    spoken_place: str
     uniform_id: str
     background_id: str
     image_url_raw: str
@@ -156,8 +166,7 @@ def validate_row(row: dict[str, Any]) -> ValidRow | Rejection:
     address = normalise_address(row.get("address"))
     if address is None:
         return Rejection(RejectCode.BAD_ADDRESS, f"address={row.get('address')!r}")
-    locality, city = address
-    if len(f"{locality}, {city}") > MAX_ADDRESS_CHARS:
+    if len(address) > MAX_ADDRESS_CHARS:
         return Rejection(RejectCode.BAD_ADDRESS, f"address exceeds {MAX_ADDRESS_CHARS} chars")
 
     # ---------------------------------------------------------- plate combo --
@@ -189,8 +198,8 @@ def validate_row(row: dict[str, Any]) -> ValidRow | Rejection:
         card_phone_e164=card_phone,
         user_name=name,
         workshop_name=workshop,
-        locality=locality,
-        city=city,
+        address=address,
+        spoken_place=spoken_place_from(address),
         uniform_id=uniform_id,
         background_id=background_id,
         # Stored byte-exact. Never rebuilt from parts. See intake/media.py.

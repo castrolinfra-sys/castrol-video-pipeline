@@ -121,7 +121,7 @@ def _card_fields(ctx: JobContext) -> dict[str, str]:
     return media.card_payload(
         name=ctx.user_name,
         workshop=ctx.workshop_name,
-        address=(row or {}).get("address_raw") or ctx.locality,
+        address=(row or {}).get("address_raw") or ctx.spoken_place,
         # The card shows the local 10-digit form, not E.164.
         phone=str(phone).removeprefix("+91"),
     )
@@ -141,10 +141,10 @@ class PrepStage:
         return hashing.prep_hash(ctx.raw, s.script_version, s.normalise_rules_version)
 
     def run(self, ctx: JobContext) -> StageResult:
-        # The voice says the area, not the whole postal address. `locality` is
-        # what the orchestrator split off address_normalized; city is appended
-        # only when it is actually present, so we never say "Andheri, " alone.
-        spoken_place = ", ".join(p for p in (ctx.locality, ctx.city) if p)
+        # The voice says the area, not the whole postal address. Resolved at
+        # intake or seed time and carried on the context - deriving it again
+        # here would be a second implementation, free to drift from the first.
+        spoken_place = ctx.spoken_place
         filled = fill_script(
             version=get_settings().script_version,
             name=ctx.user_name,
