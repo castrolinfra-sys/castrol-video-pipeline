@@ -151,8 +151,17 @@ Needs `panel/.env.local` (see `panel/.env.local.example`) — its own file, not
 the pipeline's `.env`. **RLS is deny-all with no policies, so a signed-in
 user's own token reads nothing**: every query runs server-side with the secret
 key, and `ADMIN_ALLOWED_EMAILS` is therefore the only access control in the
-product. Auth is Supabase magic-link; the gate uses `getUser()`, never
-`getSession()`, because a session cookie is forgeable by the browser.
+product.
+
+Auth is Supabase email + password. **Accounts are created in the Supabase
+dashboard — the panel has no sign-up, and public sign-ups must stay disabled**,
+or anyone could mint an account. (The allowlist would still stop them reading
+anything, but that is the second line, not the first.) The form posts to a
+server action, so the password is never client component state. The gate uses
+`getUser()`, never `getSession()`, because a session cookie is forgeable by the
+browser, and it lives ONLY in `middleware.ts` — signing in proves identity, the
+allowlist decides access, and a second check elsewhere would be one more thing
+to keep in step. `/auth/callback` now serves password-recovery links only.
 
 ### Checks
 

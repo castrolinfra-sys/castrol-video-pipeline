@@ -1,7 +1,12 @@
-// Magic-link landing. Exchanges the code for a session cookie, then bounces
-// to wherever the user was headed. The allowlist is NOT checked here - the
-// middleware does that on the next request, so there is exactly one place
-// that decides who gets in.
+// Emailed-link landing: exchanges a code for a session cookie, then bounces to
+// wherever the user was headed.
+//
+// Sign-in itself is email + password now, so the only thing that still arrives
+// here is a PASSWORD RECOVERY link from the Supabase dashboard. Kept for that
+// reason and no other - a reset that lands on a 404 is a locked-out admin.
+//
+// The allowlist is NOT checked here. The middleware does that on the next
+// request, so there is exactly one place that decides who gets in.
 
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";

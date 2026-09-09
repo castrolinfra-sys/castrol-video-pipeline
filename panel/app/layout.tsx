@@ -1,4 +1,5 @@
 import "./globals.css";
+import { signOut } from "./login/actions";
 import { currentAdmin } from "@/lib/session";
 
 export const metadata = { title: "Castrol pipeline — admin" };
@@ -22,7 +23,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <a href="/submissions">Client data</a>
               <a href="/costs">Costs</a>
             </nav>
-            <div className="who">{admin}</div>
+            <div className="who">
+              {admin}
+              {/* A password session outlives the browser tab, so there has to
+                  be a way to end it deliberately - on a shared machine, and
+                  for an account the allowlist has stopped accepting. */}
+              <form action={signOut}>
+                <button>Sign out</button>
+              </form>
+            </div>
           </header>
         )}
         <main>{children}</main>

@@ -21,6 +21,9 @@ header.top .brand { font-weight: 700; letter-spacing: .02em; }
 header.top .brand span { color: var(--red); }
 header.top nav { display: flex; gap: 16px; }
 header.top .who { margin-left: auto; color: var(--dim); font-size: 12px; }
+/* Sits inline with the email rather than as a second row. */
+header.top .who form { display: inline; }
+header.top .who button { padding: 2px 8px; margin-left: 8px; font-size: 12px; }
 main { padding: 20px; max-width: 1400px; }
 h1 { font-size: 18px; margin: 0 0 16px; }
 h2 { font-size: 14px; margin: 24px 0 8px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
@@ -47,7 +50,7 @@ button, .btn {
 }
 button:hover { border-color: var(--accent); }
 button[disabled] { opacity: .5; cursor: default; }
-input[type=email], input[type=text] {
+input[type=email], input[type=text], input[type=password] {
   background: var(--bg); color: var(--fg); border: 1px solid var(--line);
   padding: 8px 10px; border-radius: 6px; font: inherit; width: 100%;
 }
