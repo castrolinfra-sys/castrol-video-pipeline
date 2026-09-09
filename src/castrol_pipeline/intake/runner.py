@@ -13,13 +13,13 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from ..common import db
+from ..common import db, hashing
 from ..common.errors import RejectCode
 from ..common.logging import get_logger
 from ..common.s3 import get_storage, job_key
 from ..config import Settings, get_settings
 from .dedupe import compute_submission_hash, media_key_from_url
-from .export_client import ExportClient, ExportWindow
+from .export_client import ExportClient, ExportResult, ExportWindow
 from .media import MediaError, fetch_photo
 from .validate import Rejection, ValidRow, parse_export_timestamp, validate_row
 
@@ -48,6 +48,64 @@ class IntakeCounters:
             "jobs_created": self.jobs_created,
             "reject_codes": self.reject_codes,
         }
+
+
+def record_pull(batch_id: str, window: ExportWindow, result: ExportResult) -> str:
+    """Store the pull itself, before anything is interpreted.
+
+    `submissions` records what we DID with a row. This records what we were
+    HANDED, which is a different question and the only one that can settle a
+    dispute about whether a field was ever sent to us. It is also the only
+    place a REJECTED row's data survives in full - invariant 8 says we never
+    repair one, so nothing downstream keeps it.
+    """
+    row = db.fetch_one(
+        """
+        INSERT INTO export_pulls (batch_id, from_date, to_date, http_status,
+                                  row_count, csv_sha256, header)
+        VALUES (%(batch)s, %(from)s, %(to)s, %(status)s, %(count)s, %(sha)s, %(header)s)
+        RETURNING id;
+        """,
+        {
+            "batch": batch_id,
+            "from": window.from_date,
+            "to": window.to_date,
+            "status": result.http_status,
+            "count": len(result.rows),
+            "sha": result.csv_sha256,
+            "header": result.header,
+        },
+    )
+    assert row is not None
+    return str(row["id"])
+
+
+def record_row(pull_id: str, index: int, row: dict[str, str]) -> None:
+    """One CSV row, verbatim, values as the strings they arrived as."""
+    db.execute(
+        """
+        INSERT INTO export_rows (pull_id, row_index, raw, row_sha256)
+        VALUES (%(pull)s, %(i)s, %(raw)s, %(sha)s)
+        ON CONFLICT (pull_id, row_index) DO NOTHING;
+        """,
+        {
+            "pull": pull_id,
+            "i": index,
+            "raw": Jsonb(row),
+            # canonical_json is the ONE serialiser for hashing (invariant 4).
+            "sha": hashing.sha256_hex(hashing.canonical_json(row)),
+        },
+    )
+
+
+def link_row_to_submission(pull_id: str, index: int, submission_id: str) -> None:
+    db.execute(
+        """
+        UPDATE export_rows SET submission_id = %(sub)s
+         WHERE pull_id = %(pull)s AND row_index = %(i)s;
+        """,
+        {"sub": submission_id, "pull": pull_id, "i": index},
+    )
 
 
 def open_batch(window: ExportWindow) -> str:
@@ -267,14 +325,20 @@ def run_intake(
     batch_id = open_batch(window)
 
     try:
-        rows = (
+        result = (
             ExportClient.from_fixture(fixture)
             if fixture
             else ExportClient(settings).fetch(window)
         )
-        counters.pulled = len(rows)
+        counters.pulled = len(result.rows)
 
-        for row in rows:
+        # Recorded BEFORE any row is interpreted, so a pull whose processing
+        # blows up halfway still leaves evidence of exactly what arrived.
+        pull_id = record_pull(batch_id, window, result)
+        for index, row in enumerate(result.rows):
+            record_row(pull_id, index, row)
+
+        for index, row in enumerate(result.rows):
             image_url_raw = row.get("image_url") or ""
             # whatsapp_number, not mechanic_phone_number: the delivery key is
             # the identity this row is about. The card number is a different
@@ -299,6 +363,7 @@ def run_intake(
                 rejection=rejection,
             )
             counters.new += 1
+            link_row_to_submission(pull_id, index, submission_id)
 
             if rejection is not None:
                 counters.reject(str(rejection.code))
