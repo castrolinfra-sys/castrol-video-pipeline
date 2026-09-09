@@ -140,8 +140,10 @@ uv run castrol report
 
 ### Admin panel
 
-→ [`panel/`](panel/). Next.js, deployed on Vercel with Root Directory `panel`
-— step by step in [`panel/DEPLOY.md`](panel/DEPLOY.md).
+→ [`panel/`](panel/). Next.js, **live** at
+<https://castrol-pipeline-admin-panel.vercel.app> — Vercel scope `castroinfra`,
+Root Directory `panel`. Deployed and verified 2026-09-09; the how and the
+reasoning are in [`panel/DEPLOY.md`](panel/DEPLOY.md).
 Reads the pipeline's tables directly; the one thing it writes is `job_reports`.
 
 **It is a CLIENT-facing surface, not our operations console.** It must never

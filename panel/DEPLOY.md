@@ -1,5 +1,13 @@
 # Deploying the panel to Vercel
 
+**Done — live at <https://castrol-pipeline-admin-panel.vercel.app>** (scope
+`castroinfra`, Root Directory `panel`, deployed and verified 2026-09-09:
+sign-in works, all four pages render live data, and the secret key is confirmed
+absent from the browser bundle).
+
+Kept as the record of what was set and why, and as the runbook for doing it
+again — a second environment, a rebuild, or a handover.
+
 Ten minutes, five steps.
 
 ---
