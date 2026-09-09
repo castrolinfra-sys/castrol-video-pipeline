@@ -23,9 +23,8 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
     .single();
   if (error) return <Problem what="this job" message={error.message} />;
 
-  const [assets, delivery, link] = await Promise.all([
-    db.from("assets").select("kind, cdn_url, duration_ms").eq("job_id", id),
-    db.from("deliveries").select("phone_e164, cdn_url, posted_at").eq("job_id", id).maybeSingle(),
+  const [delivery, link] = await Promise.all([
+    db.from("deliveries").select("phone_e164, posted_at").eq("job_id", id).maybeSingle(),
     // job_usage does not carry the raw client row - it is a wide jsonb blob and
     // most pages have no use for it - so the submission id is fetched here and
     // the blob read separately.
@@ -36,10 +35,12 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
     ? await db.from("submissions").select("raw").eq("id", link.data.submission_id).maybeSingle()
     : null;
 
-  // Invariant 22: a delivered link is a CDN URL, never presigned.
-  const video = (assets.data ?? []).find(
-    (a: any) => a.kind === "video_final" && a.cdn_url,
-  );
+  // From the view, not from `assets` directly. Publishing writes a new asset row
+  // each time it runs, so picking one out of that table shows whichever
+  // re-publish the query happened to reach first - a real file, and the wrong
+  // one. job_usage.video_url resolves it against `deliveries`, which holds the
+  // link the mechanic was actually given. Invariant 22: always a CDN url.
+  const video: string | null = job.video_url ?? null;
 
   return (
     <>
@@ -71,9 +72,9 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
       {video && (
         <>
           <h2>Video</h2>
-          <video src={video.cdn_url} controls style={{ maxWidth: 320, borderRadius: 6 }} />
+          <video src={video} controls style={{ maxWidth: 320, borderRadius: 6 }} />
           <p className="mono dim" style={{ wordBreak: "break-all" }}>
-            {video.cdn_url}
+            <a href={video} target="_blank" rel="noopener noreferrer">{video}</a>
           </p>
         </>
       )}

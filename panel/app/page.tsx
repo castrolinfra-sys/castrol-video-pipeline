@@ -24,7 +24,7 @@ export default async function Jobs({
     .from("job_usage")
     .select(
       "job_id, status, created_at, failure_reason, mechanic_id, " +
-        "whatsapp_number, user_name, workshop_name, video_seconds",
+        "whatsapp_number, user_name, workshop_name, video_seconds, video_url",
     )
     .order("created_at", { ascending: false })
     .limit(500);
@@ -83,6 +83,7 @@ export default async function Jobs({
                 <th>Status</th>
                 <th className="num">Duration</th>
                 <th>Created</th>
+                <th>Video</th>
               </tr>
             </thead>
             <tbody>
@@ -101,6 +102,26 @@ export default async function Jobs({
                   </td>
                   <td className="num">{secs(j.video_seconds)}</td>
                   <td className="mono dim">{ts(j.created_at)}</td>
+                  <td>
+                    {/* The full CloudFront url is ~90 characters and would set
+                        the width of the whole table, so it is a link rather
+                        than text. It is still an anchor, so "copy link address"
+                        gets the url itself, and title= shows it on hover.
+                        Invariant 22: always a CDN url, never presigned - safe
+                        to put on a page and safe to forward. */}
+                    {j.video_url ? (
+                      <a
+                        href={j.video_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={j.video_url}
+                      >
+                        Watch
+                      </a>
+                    ) : (
+                      <span className="dim">—</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

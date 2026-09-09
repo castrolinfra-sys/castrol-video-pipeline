@@ -262,7 +262,7 @@ keyed on the file's name so a re-run cannot claim a second apply. It did not
 always: 0001–0003 were registered by the Supabase tooling and 0004–0005 were
 not, and a HALF-populated ledger is worse than none, because `supabase db push`
 reads it and would treat applied migrations as pending. Both were backfilled;
-0001–0007 are now applied and registered.
+0001–0008 are now applied and registered.
 
 ### AWS
 
@@ -307,7 +307,7 @@ rules, not application code.
 | The panel's only DB handle — secret key, bypasses RLS | [`panel/lib/db.ts`](panel/lib/db.ts) |
 | Who may open the panel | [`panel/middleware.ts`](panel/middleware.ts) |
 | The panel's only write | [`panel/app/actions.ts`](panel/app/actions.ts) |
-| Duration-only views the panel reads | [`0007`](supabase/migrations/0007_usage_views_for_the_panel.sql) |
+| Duration-only views the panel reads | [`0007`](supabase/migrations/0007_usage_views_for_the_panel.sql), [`0008`](supabase/migrations/0008_job_usage_video_url.sql) |
 
 Full annotated map with per-file descriptions: [`README.md`](README.md#where-things-live)
 and [`docs/TECH_DESIGN.md` §3](docs/TECH_DESIGN.md).
@@ -623,7 +623,7 @@ repeat post is harmless where a missed one is a video nobody ever gets.
 **The pipeline runs end to end under the orchestrator** against real Supabase,
 real S3 and the real CDN. All eight stages are implemented in
 `stages/real.py`; `USE_STUB_STAGES=true` still swaps in deterministic fakes to
-exercise the DAG without spending. Migrations 0001–0007 are applied.
+exercise the DAG without spending. Migrations 0001–0008 are applied.
 
 Verified on a real job: seed → prep → composite → checks → publish → deliver,
 with the delivered CDN URL returning 200. The three paid stages are the same
