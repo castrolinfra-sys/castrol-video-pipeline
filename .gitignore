@@ -2,6 +2,8 @@
 .env
 .env.*
 !.env.example
+# The panel documents its own vars; this file holds names, never values.
+!.env.local.example
 
 # python
 __pycache__/

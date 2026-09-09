@@ -8,10 +8,12 @@ from castrol_pipeline.prep.normalise import (
     expand_for_speech,
     normalise_address,
     normalise_phone,
+    spoken_place_from,
 )
 from castrol_pipeline.prep.plates import (
     UnknownBackground,
     UnknownOutfit,
+    plate_code,
     resolve_combo,
 )
 from castrol_pipeline.prep.script import ScriptError, fill_script
@@ -47,15 +49,53 @@ class TestPhone:
 
 
 class TestAddress:
-    def test_splits_locality_city(self):
-        assert normalise_address("Dombivili, Thane") == ("Dombivili", "Thane")
+    """Free text, confirmed by the client 2026-09-09.
 
-    def test_collapses_whitespace(self):
-        assert normalise_address("  Andheri ,   Mumbai ") == ("Andheri", "Mumbai")
+    This used to require exactly `Locality, City`. A mechanic writing their own
+    address normally - one word, or three clauses with a landmark - was
+    rejected for it, which is not a data problem, it is an address.
+    """
 
-    @pytest.mark.parametrize("raw", ["Mumbai", "A, B, C", "", None])
-    def test_rejects_anything_that_is_not_two_parts(self, raw):
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "Mumbai",
+            "Dombivili, Thane",
+            "Beturkar Pada, Opposite New National Hospital, Andheri",
+        ],
+    )
+    def test_any_shape_is_accepted(self, raw):
+        assert normalise_address(raw) is not None
+
+    def test_collapses_whitespace_and_drops_empty_segments(self):
+        assert normalise_address("  Andheri ,   Mumbai ") == "Andheri, Mumbai"
+        assert normalise_address("Andheri, , Mumbai") == "Andheri, Mumbai"
+
+    def test_the_text_is_otherwise_left_alone(self):
+        # The card prints this. Inventing punctuation for a stranger's address
+        # is not ours to do.
+        assert normalise_address("Shop 4 - MG Rd.") == "Shop 4 - MG Rd."
+
+    @pytest.mark.parametrize("raw", ["", "   ", ",", None])
+    def test_only_empty_is_rejected(self, raw):
         assert normalise_address(raw) is None
+
+
+class TestSpokenPlace:
+    def test_a_long_address_is_spoken_as_its_last_segment(self):
+        # Reading the whole string aloud puts a hospital landmark in a
+        # 30-second ad.
+        assert (
+            spoken_place_from("Beturkar Pada, Opposite New National Hospital, Andheri")
+            == "Andheri"
+        )
+
+    @pytest.mark.parametrize(
+        "address,said",
+        [("Mumbai", "Mumbai"), ("Dombivili, Thane", "Dombivili, Thane")],
+    )
+    def test_one_or_two_segments_are_already_the_spoken_form(self, address, said):
+        assert spoken_place_from(address) == said
 
 
 class TestSpeechExpansion:
@@ -87,17 +127,54 @@ class TestScript:
 
 
 class TestPlateMapping:
-    def test_confirmed_combo_resolves(self):
-        assert resolve_combo(outfit="Castrol T-shirt", background="SUV") == (
-            "polo",
+    def test_the_value_the_export_actually_sends_resolves(self):
+        """The regression this pins cost every row.
+
+        The export sends "Background 1", never "SUV". The mapping only had the
+        vehicle words, and because an unmapped value REJECTS rather than
+        defaulting, every real row would have failed with UNKNOWN_BACKGROUND
+        while the ids it mapped to were perfectly correct.
+        """
+        assert resolve_combo(outfit="Castrol T-shirt", background="Background 1") == (
+            "u1_tshirt",
             "bg1_white_suv",
+        )
+        assert resolve_combo(outfit="Castrol Uniform", background="Background 3") == (
+            "u2_uniform",
+            "bg3_hatchback_hood",
+        )
+
+    def test_the_clients_own_reference_words_also_resolve(self):
+        # Their combination map describes the same three as SUV / Sedan /
+        # Hatchback. Same fact written two ways, not a guess at a new value.
+        assert resolve_combo(outfit="Uniform 1", background="SUV") == (
+            "u1_tshirt",
+            "bg1_white_suv",
+        )
+        assert resolve_combo(outfit="Uniform 2", background="Sedan") == (
+            "u2_uniform",
+            "bg2_dark_sedan",
         )
 
     def test_is_case_and_space_insensitive(self):
-        assert resolve_combo(outfit="  castrol t-shirt ", background="suv") == (
-            "polo",
+        assert resolve_combo(outfit="  castrol t-shirt ", background=" BACKGROUND 1 ") == (
+            "u1_tshirt",
             "bg1_white_suv",
         )
+
+    def test_every_combination_has_exactly_one_plate(self):
+        """All six the resolvers can produce must name a plate.
+
+        A KeyError here means the outfit/background tables and the plate table
+        disagree, which would be a job that resolves a combination with no
+        artwork behind it.
+        """
+        codes = {
+            plate_code(*resolve_combo(outfit=o, background=b))
+            for o in ("Castrol T-shirt", "Castrol Uniform")
+            for b in ("Background 1", "Background 2", "Background 3")
+        }
+        assert codes == {f"plate_0{n}" for n in range(1, 7)}
 
     def test_unmapped_outfit_raises_rather_than_defaulting(self):
         # A silent default would put a mechanic in the wrong uniform.

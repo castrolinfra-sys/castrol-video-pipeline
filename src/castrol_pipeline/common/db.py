@@ -55,6 +55,39 @@ def connection() -> Iterator[psycopg.Connection]:
         yield conn
 
 
+#: Namespace for this pipeline's advisory locks, so a key here cannot collide
+#: with one taken by anything else sharing the database. Arbitrary constant.
+ADVISORY_LOCK_NAMESPACE = 0x6361_7374  # "cast"
+
+
+@contextmanager
+def advisory_lock(key: int) -> Iterator[bool]:
+    """Try to take a session-level advisory lock. Yields whether we got it.
+
+    Deliberately NOT taken from the pool. A session lock lives and dies with
+    its Postgres session, and a pooled connection is handed back at the end of
+    every statement - so a lock taken on one would be released at a moment
+    nothing in the calling code can see. This opens its own connection and
+    holds it for the whole block, which makes the lock last exactly as long as
+    the work it guards, and releases it if the process is killed.
+    """
+    dsn = get_settings().require("supabase_db_url")
+    with psycopg.connect(dsn, autocommit=True, row_factory=dict_row) as conn:
+        row = conn.execute(
+            "SELECT pg_try_advisory_lock(%s, %s) AS got;",
+            (ADVISORY_LOCK_NAMESPACE, key),
+        ).fetchone()
+        got = bool(row and row["got"])
+        try:
+            yield got
+        finally:
+            if got:
+                conn.execute(
+                    "SELECT pg_advisory_unlock(%s, %s);",
+                    (ADVISORY_LOCK_NAMESPACE, key),
+                )
+
+
 @contextmanager
 def transaction() -> Iterator[psycopg.Cursor]:
     """A cursor inside a transaction. Commits on clean exit, rolls back on error."""

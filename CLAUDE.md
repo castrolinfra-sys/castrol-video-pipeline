@@ -62,12 +62,29 @@ casually — it is ~$0.04 per second of output.
 uv run castrol doctor
 ```
 
+**The whole run, unattended.** This is what the EC2 timer fires at 00:00 and
+12:00 IST and the only command the server executes: pull the window, schedule,
+then work and wait until every job is terminal or the deadline hits. See
+[`deploy/`](deploy/README.md). Holds a database advisory lock, so a second
+cycle starting on top of a running one exits instead of doubling the load on a
+paid vendor. **SPENDS.**
+
+```bash
+uv run castrol cycle
+```
+
+Finish what is already in the database without pulling anything new:
+
+```bash
+uv run castrol cycle --no-fetch
+```
+
 One video by hand — creates the rows and lands the photo in S3, runs nothing.
 Idempotent on (photo, phone). `--address` is what the CARD prints; what the
 voice SAYS defaults to the last segment of it, override with `--spoken-place`.
 
 ```bash
-uv run castrol seed-job --photo spikes/in/mechanic2.jpg --plate spikes/in/plate_bg2.png --name "Amit Kumar" --workshop "Ganesh Car Service" --address "Beturkar Pada, Opposite New National Hospital, Andheri" --phone 9773128990 --uniform polo --background bg2_dark_sedan
+uv run castrol seed-job --photo spikes/in/mechanic2.jpg --plate spikes/in/plate_bg2.png --name "Amit Kumar" --workshop "Ganesh Car Service" --address "Beturkar Pada, Opposite New National Hospital, Andheri" --phone 9773128990 --uniform u1_tshirt --background bg2_dark_sedan
 ```
 
 ```bash
@@ -120,6 +137,43 @@ uv run castrol costs
 ```bash
 uv run castrol report
 ```
+
+### Admin panel
+
+→ [`panel/`](panel/). Next.js, deployed on Vercel with Root Directory `panel`.
+Reads the pipeline's tables directly; the one thing it writes is `job_reports`.
+
+**It is a CLIENT-facing surface, not our operations console.** It must never
+show cost, vendor, model id, stage, retry attempts, or an internal error code —
+the metric it reports is DURATION, seconds of video delivered. That line is held
+structurally rather than by care: the pages read
+[`job_usage` / `daily_usage`](supabase/migrations/0007_usage_views_for_the_panel.sql),
+views with no cost or vendor column in them, and `lib/format.ts` has no money
+formatter to reach for. `lib/reasons.ts` turns `"video: VENDOR_TIMEOUT"` into a
+sentence, falling back to a generic line rather than to the raw string — a
+fallback that leaks does it exactly when something new breaks. Pages: Jobs
+(searchable by mechanic id or WhatsApp number, filterable by date), Failures,
+Submissions, Usage.
+
+```bash
+cd panel && npm install && npm run dev
+```
+
+Needs `panel/.env.local` (see `panel/.env.local.example`) — its own file, not
+the pipeline's `.env`. **RLS is deny-all with no policies, so a signed-in
+user's own token reads nothing**: every query runs server-side with the secret
+key, and `ADMIN_ALLOWED_EMAILS` is therefore the only access control in the
+product.
+
+Auth is Supabase email + password. **Accounts are created in the Supabase
+dashboard — the panel has no sign-up, and public sign-ups must stay disabled**,
+or anyone could mint an account. (The allowlist would still stop them reading
+anything, but that is the second line, not the first.) The form posts to a
+server action, so the password is never client component state. The gate uses
+`getUser()`, never `getSession()`, because a session cookie is forgeable by the
+browser, and it lives ONLY in `middleware.ts` — signing in proves identity, the
+allowlist decides access, and a second check elsewhere would be one more thing
+to keep in step. `/auth/callback` now serves password-recovery links only.
 
 ### Checks
 
@@ -196,12 +250,19 @@ Returns **CSV**, not JSON. Rate limit 100 / 900s.
 ### Migrations
 
 Forward-only numbered SQL in `supabase/migrations/`, applied in order. There
-are no down migrations. The Supabase MCP server for this project is READ-ONLY,
-so use the apply script — one file per invocation, in a single transaction:
+are no down migrations. Use the apply script — one file per invocation, the
+DDL and its ledger row in a single transaction:
 
 ```bash
-uv run python scripts/apply_migration.py supabase/migrations/0004_runtime_observability.sql
+uv run python scripts/apply_migration.py supabase/migrations/0005_admin_review_and_export_copy.sql
 ```
+
+The script registers what it applies in `supabase_migrations.schema_migrations`,
+keyed on the file's name so a re-run cannot claim a second apply. It did not
+always: 0001–0003 were registered by the Supabase tooling and 0004–0005 were
+not, and a HALF-populated ledger is worse than none, because `supabase db push`
+reads it and would treat applied migrations as pending. Both were backfilled;
+0001–0008 are now applied and registered.
 
 ### AWS
 
@@ -219,6 +280,8 @@ rules, not application code.
 |---|---|
 | Every `castrol <cmd>` | [`src/castrol_pipeline/cli.py`](src/castrol_pipeline/cli.py) |
 | Claiming, retries, poller, **all writes to `jobs`** | [`orchestrator.py`](src/castrol_pipeline/orchestrator.py) |
+| The unattended run: lock, window, wait loop | [`cycle.py`](src/castrol_pipeline/cycle.py) |
+| systemd units + the EC2 runbook | [`deploy/`](deploy/README.md) |
 | The eight real stages | [`stages/real.py`](src/castrol_pipeline/stages/real.py) |
 | Stage protocol + the DAG | [`stages/base.py`](src/castrol_pipeline/stages/base.py) |
 | Anything that talks to a provider | [`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) |
@@ -234,12 +297,17 @@ rules, not application code.
 | **The script text** and spoken overrides | [`prep/script.py`](src/castrol_pipeline/prep/script.py) |
 | Phone, address, numerals for speech | [`prep/normalise.py`](src/castrol_pipeline/prep/normalise.py) |
 | `outfit` + `background` → plate | [`prep/plates.py`](src/castrol_pipeline/prep/plates.py) |
-| Export pull, validation, dedupe (**stale schema**) | [`intake/`](src/castrol_pipeline/intake/) |
+| Export pull (**CSV, BOM**), validation, dedupe | [`intake/`](src/castrol_pipeline/intake/) |
 | Create one job by hand | [`seed.py`](src/castrol_pipeline/seed.py) |
 | Every env var and pinned model id | [`config.py`](src/castrol_pipeline/config.py) / [`.env.example`](.env.example) |
 | Schema, budget function, RLS | [`supabase/migrations/`](supabase/migrations/) |
 | Lifecycle rules, bucket posture | [`infra/`](infra/) |
 | The standalone one-video script | [`spikes/prototype.py`](spikes/prototype.py) |
+| Admin panel (Next.js, Vercel) | [`panel/`](panel/) |
+| The panel's only DB handle — secret key, bypasses RLS | [`panel/lib/db.ts`](panel/lib/db.ts) |
+| Who may open the panel | [`panel/middleware.ts`](panel/middleware.ts) |
+| The panel's only write | [`panel/app/actions.ts`](panel/app/actions.ts) |
+| Duration-only views the panel reads | [`0007`](supabase/migrations/0007_usage_views_for_the_panel.sql), [`0008`](supabase/migrations/0008_job_usage_video_url.sql) |
 
 Full annotated map with per-file descriptions: [`README.md`](README.md#where-things-live)
 and [`docs/TECH_DESIGN.md` §3](docs/TECH_DESIGN.md).
@@ -255,11 +323,21 @@ and [`docs/TECH_DESIGN.md` §3](docs/TECH_DESIGN.md).
 | Name | export `user_name` | **spoken** + card |
 | Workshop name | export `workshop_name` | **spoken** + card |
 | Location | export `address` | **spoken** + card |
-| Phone | export `whatsapp_number` | **card only**, never spoken |
+| Delivery phone | export `whatsapp_number` | **delivery key only**, never spoken, never printed |
+| Card phone | export `mechanic_phone_number` | **card only**, never spoken |
 
-Only name, workshop and location vary inside the script. `whatsapp_number` is
-the delivery key and the card number; `mechanic_phone_number` is unreliable and
-is not used.
+Only name, workshop and location vary inside the script. The two phone fields
+are two different numbers doing two different jobs, confirmed by the client
+2026-09-08: `whatsapp_number` is what we POST back as `phone` and is the join
+key the client relays on; `mechanic_phone_number` is the contact number printed
+in the card's green panel. Neither is ever spoken.
+
+They are NOT interchangeable and must not be collapsed back into one column.
+`submissions.phone_e164` is the delivery key (`whatsapp_number`), and the card
+number needs its own column — today `stages/real.py` renders the card from
+`phone_e164`, so until that is split the card prints the delivery number.
+`mechanic_id` would be the natural primary key but is not reliable enough to
+use as one; the export's own `id` is.
 
 ---
 
@@ -359,11 +437,19 @@ Not kie, not apimart — the field does not exist. A network-level retry of a
 submit creates a second provider job and a second charge. Dedupe *before* the
 HTTP call; never blind-retry a submit that may have landed. Reconcile instead.
 
-**14. Check the body `code`, not the HTTP status.**
-*`stages/vendors.py`*
+**14. Check the body, not the HTTP status.**
+*`stages/vendors.py`, `stages/real.py:webhook_accepted`, pinned by [`tests/test_deliver_webhook.py`](tests/test_deliver_webhook.py)*
 Both gateways return HTTP 200 with `code != 200` on error. Also: kie's
 `resultJson` is a JSON *string* — parse before indexing. apimart's video
 result is `result.videos[0].url[0]` — `url` is a list.
+
+The client's delivery webhook is the same shape and the stakes are higher: it
+answers 200 and puts the verdict in `success`, which arrives as the STRING
+`"true"`. There is **no failure channel** back to the client, so a delivery
+recorded from the status code alone is a video the mechanic never gets and
+nobody ever looks for. `webhook_accepted()` fails CLOSED on anything it cannot
+read — the cost of being wrong that way is a retry POSTing an identical
+`{phone, videoLink}`, which the client stores idempotently.
 
 **15. Copy provider result URLs to our storage immediately.**
 *`stages/vendors.py:download`, called in each stage's `poll()`*
@@ -447,6 +533,15 @@ A presigned URL is a bearer credential for one object; the events table is read
 by the admin panel and quoted in support threads. `_scrub()` keeps the path and
 drops the signature.
 
+**31. A plate is never edited in place.**
+*`seed.py:register_plate`*
+Replacing a combination's artwork RETIRES the active row and inserts a new one.
+Updating in place looks harmless and silently rewrites history: `jobs.plate_id`
+keeps pointing at the same row, so every job built from the old artwork starts
+claiming it used the new. There is no per-job plate asset to fall back on, so
+that link is the only record of what a video was actually made from — and the
+client intends to revise this artwork.
+
 **27. The card is rendered by Pillow, after generation, and is free.**
 No generative model ever touches the text. A card revision is an ffmpeg
 re-encode of media we already have — which is why three rounds of client review
@@ -479,6 +574,18 @@ $0.04 per output second. Completed jobs are never rescheduled.
 *`stages/real.py:DeliverStage`, `config.py:delivery_enabled`*
 The client relays the POST to a real mechanic over WhatsApp. While false the
 stage logs exactly what it would have sent. Turning it on is a deliberate act.
+
+**32. A suppressed delivery still SUCCEEDS, so the backlog needs reopening.**
+*`cycle.py:_reopen_suppressed_deliveries`*
+It has to succeed — the video is made and published, and failing the stage
+would park a finished job as `failed` forever. So every video made while
+`DELIVERY_ENABLED` was false is already marked delivered: the job is
+`completed`, nothing schedules it, and `deliver_hash` covers the CDN url and
+the phone, neither of which changes when the flag flips. Switching delivery on
+would silently strand the entire backlog, and the failure looks like nothing at
+all. Each cycle reopens those jobs once delivery is enabled — the stage is free
+and the client stores `{phone, videoLink}` idempotently (invariant 14), so a
+repeat post is harmless where a missed one is a video nobody ever gets.
 
 ---
 
@@ -516,16 +623,66 @@ stage logs exactly what it would have sent. Turning it on is a deliberate act.
 **The pipeline runs end to end under the orchestrator** against real Supabase,
 real S3 and the real CDN. All eight stages are implemented in
 `stages/real.py`; `USE_STUB_STAGES=true` still swaps in deterministic fakes to
-exercise the DAG without spending. Migrations 0001–0004 are applied.
+exercise the DAG without spending. Migrations 0001–0008 are applied.
 
 Verified on a real job: seed → prep → composite → checks → publish → deliver,
 with the delivered CDN URL returning 200. The three paid stages are the same
 calls the prototype proved, now under budget reservation and cost recording.
 
-**Intake is still written against the pre-CSV export schema** — the real export
-returns CSV, has no `image_face_count`, and carries two phone fields
-(`whatsapp_number` is the real one). Use `castrol seed-job` until it is
-reworked.
+**Intake is written against the real CSV export**, confirmed against a live
+pull on 2026-09-08 and the client's combination map on 2026-09-09. Six defects
+were fixed together, because each one alone rejected every row:
+
+- `intake/export_client.py` parses CSV, decoding **`utf-8-sig`**. The body
+  carries a UTF-8 BOM; as plain utf-8 the first header becomes `﻿id` and
+  `id` — the only unique identifier in the feed — silently reads as missing
+  while the other 17 columns parse perfectly.
+- The two phone columns are separated. `whatsapp_number` → `phone_e164`, the
+  delivery key and the dedupe anchor. `mechanic_phone_number` →
+  `card_phone_e164`, printed and nothing else.
+- `prep/plates.py` maps what the export actually sends. Background 1|2|3 **are**
+  the SUV, sedan and hatchback, so the ids were always right — the lookup keys
+  were not. The client's own words (SUV / Sedan / Hatchback, Uniform 1 / 2) are
+  accepted as aliases.
+- Uniform ids are `u1_tshirt` / `u2_uniform`, the client's number and the
+  client's word. `polo` / `half_shirt` were ours, and one of the two values is
+  literally a t-shirt — which way round they mapped was a coin flip.
+- `EXPORT_TIMESTAMP_FORMAT` is `iso8601`. Still pinned, still never inferred;
+  it names the standard instead of restating its pattern.
+- **There is no `image_face_count`.** Rekognition arrives as a status string,
+  which says a face was found but not how many — so the group-photo case is no
+  longer detectable at intake and falls to the stage B checks.
+  `tests/test_intake.py` asserts that gap deliberately.
+
+Real header, in order:
+
+```
+id, whatsapp_number, user_name, workshop_name, address, gender,
+mechanic_id_verified, mechanic_id, mechanic_phone_number, background,
+outfit, image_url, image_mime_type, image_validation_status,
+image_rekognition_status, status, createdAt, updatedAt
+```
+
+Client-confirmed guarantees, all encoded as CHECKS rather than assumptions —
+if one stops holding we get a row with a stable reject code, not a broken
+video: `mechanic_phone_number` is never empty, `whatsapp_number` is unique,
+`address` is never empty, `background` never holds a seventh value.
+
+**The address is free text, any shape** (client, 2026-09-09). It used to be
+required to be exactly `Locality, City`, which rejected real people for writing
+their own address normally — a one-word `Worli` was a `BAD_ADDRESS`. The card
+prints the whole thing; the voice says only the last segment, because Indian
+addresses run most-specific to least and reading it all aloud puts a hospital
+landmark in a 30-second ad. `MAX_ADDRESS_CHARS` is now a sanity bound (90), not
+a layout rule.
+
+`address_normalized` holds the **spoken** form, not a tidied postal address.
+`address_raw` is what the card prints.
+
+**All six plates are live and active.** Uploaded 2026-09-09 from
+`plates/plate_0N.png`, content-addressed by sha256. The artwork is provisional
+— the client has not finalised it — but nothing is blocked on that: re-running
+`register_plate` with replaced files supersedes them.
 
 **Spike 0.1 is answered — do not rewrite the script.** `kling-avatar-v2` has
 completed in prod at 39s via kie and 60s via fal; the ~80-word script at 30–40s
@@ -541,5 +698,22 @@ id: **there is no cloning call in the pipeline.**
 **There is no repair pass.** A second lipsync pass was considered and dropped
 — quality is solved in the main flow. If stage C output is unacceptable the
 fix is its inputs, not a patch stage. Do not reintroduce it.
+
+**The run is automated, twice a day.** `castrol cycle` is the whole flow —
+pull, schedule, work, wait, stop — driven by a systemd timer at 00:00 and 12:00
+IST on EC2 ([`deploy/`](deploy/README.md)). It is not `drain` under a timer:
+`drain` stops the moment a sweep moves nothing, which for an async stage means
+"still rendering", so under a timer it would submit every paid render and exit
+before collecting one. The cycle waits, holds an advisory lock so two runs
+cannot overlap, and stops at a deadline (4h, inside the 12h gap) rather than
+running into the next window. Nothing is lost when it stops early — readiness
+is recomputed from `stage_runs`, so the next cycle resumes.
+
+The pull window is `[today − 1, today + 1]` on the CLIENT's calendar, not the
+server's: EC2 runs UTC and 00:00 IST is still yesterday there. Both ends are
+loose because re-pulling is free and a missed row is not recoverable —
+`intake._already_seen` dedupes on the submission hash AND the client's own row
+`id`, the second of which is what stops an overlapping window turning a
+re-issued media url into a UNIQUE violation that fails the whole batch.
 
 **The open unknown is geometry drift** — spike 0.3. See below.

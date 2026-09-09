@@ -3,6 +3,7 @@
     doctor      config + database reachable
     seed-job    create one job by hand from local files   -> seed.py
     intake      pull an export window                     -> intake/runner.py
+    cycle       pull + work everything, unattended        -> cycle.py
     schedule    enqueue ready stages                      -> orchestrator.py
     work        drain one stage                           -> orchestrator.py
     poll        reconcile in-flight vendor tasks          -> orchestrator.py
@@ -67,6 +68,47 @@ def intake(
     typer.echo(json.dumps(counters.as_dict(), indent=2))
 
 
+@app.command()
+def cycle(
+    lookback_days: Annotated[
+        int, typer.Option("--lookback-days", help="How far back the pull window reaches")
+    ] = 1,
+    deadline_minutes: Annotated[
+        int, typer.Option("--deadline-minutes", help="Stop working after this long")
+    ] = 480,
+    interval: Annotated[int, typer.Option(help="Seconds between passes")] = 60,
+    no_fetch: Annotated[
+        bool, typer.Option("--no-fetch", help="Skip intake; only finish existing work")
+    ] = False,
+) -> None:
+    """One unattended run: pull the window, then work every job to a finish.
+
+    This is what the twice-daily timer runs — see `deploy/`. It holds a database
+    advisory lock, so a second cycle starting while this one is still rendering
+    exits immediately rather than piling more load onto a paid vendor.
+
+    The window is computed on the CLIENT's calendar and overlaps deliberately;
+    re-pulling is free because intake dedupes on the client's own row id.
+
+    EXIT CODES: 0 normally, including a clean run that found nothing to do.
+    1 if the export pull failed, or if the deadline was reached with work still
+    outstanding. Neither loses anything — readiness is recomputed, so the next
+    cycle resumes — but both are worth waking up for.
+    """
+    _boot()
+    from .cycle import run_cycle
+
+    out = run_cycle(
+        lookback_days=lookback_days,
+        deadline_minutes=deadline_minutes,
+        interval_s=interval,
+        fetch=not no_fetch,
+    )
+    typer.echo(json.dumps(out, indent=2, default=str))
+    if out.get("intake_error") or out.get("deadline_hit"):
+        raise typer.Exit(1)
+
+
 @app.command("seed-job")
 def seed_job_cmd(
     photo: Annotated[str, typer.Option(help="Mechanic photo (local file)")],
@@ -88,10 +130,10 @@ def seed_job_cmd(
                  "so landmarks are not read aloud.",
         ),
     ] = None,
-    uniform: Annotated[str, typer.Option(help="uniform_id for the plate")] = "polo",
+    uniform: Annotated[str, typer.Option(help="uniform_id for the plate")] = "u1_tshirt",
     background: Annotated[
         str, typer.Option(help="background_id for the plate")
-    ] = "bg1_white_suv",
+    ] = "bg2_dark_sedan",
 ) -> None:
     """Create one job by hand from local files. Idempotent on (photo, phone).
 

@@ -25,7 +25,7 @@ from .common.events import record_event
 from .common.logging import get_logger
 from .common.s3 import get_storage, job_key, plate_key
 from .config import get_settings
-from .prep.normalise import normalise_address, normalise_phone
+from .prep.normalise import normalise_phone, spoken_place_from
 from .stages import media
 
 log = get_logger(__name__)
@@ -33,23 +33,6 @@ log = get_logger(__name__)
 
 class SeedError(ValueError):
     pass
-
-
-def spoken_place_from(address: str) -> str:
-    """The area to SAY, derived from the address we print.
-
-    Indian addresses run most-specific to least, so the last segment is the
-    area and everything before it is doorway detail: "Beturkar Pada, Opposite
-    New National Hospital, Andheri" is spoken as "Andheri". Reading the whole
-    string aloud puts a hospital landmark in a 30-second ad.
-
-    A two-part `Locality, City` address is already the spoken form and is kept
-    whole. Pass --spoken-place to override either way.
-    """
-    parts = [p.strip() for p in address.split(",") if p.strip()]
-    if len(parts) <= 2:
-        return ", ".join(parts)
-    return parts[-1]
 
 
 def register_plate(
@@ -75,27 +58,41 @@ def register_plate(
         key = plate_key(uniform_id, background_id, digest)
         get_storage().put_file(key, norm, content_type="image/png")
 
-    row = db.fetch_one(
-        """
-        INSERT INTO plates (uniform_id, background_id, s3_key, sha256,
-                            approved_by, approved_at, active, notes)
-        VALUES (%(u)s, %(b)s, %(key)s, %(sha)s, %(who)s, now(), true, %(notes)s)
-        ON CONFLICT (uniform_id, background_id) WHERE active DO UPDATE
-           SET s3_key = EXCLUDED.s3_key,
-               sha256 = EXCLUDED.sha256,
-               approved_by = EXCLUDED.approved_by,
-               approved_at = now()
-        RETURNING id;
-        """,
-        {
-            "u": uniform_id,
-            "b": background_id,
-            "key": key,
-            "sha": digest,
-            "who": approved_by,
-            "notes": f"Seeded from {path.name}",
-        },
-    )
+    # Append-only, deliberately. This used to UPDATE the active row in place,
+    # which meant replacing the artwork for a combination silently rewrote
+    # history: `jobs.plate_id` still pointed at the same row, so every job ever
+    # made with the OLD plate now claimed to have used the new one. There is no
+    # per-job plate asset to fall back on, so that link is the only record of
+    # what a video was actually built from - and the client intends to revise
+    # this artwork.
+    #
+    # Retiring and inserting keeps each generation of a plate addressable. The
+    # partial unique index allows exactly one ACTIVE row per combination, so
+    # the two statements must share a transaction.
+    params = {
+        "u": uniform_id,
+        "b": background_id,
+        "key": key,
+        "sha": digest,
+        "who": approved_by,
+        "notes": f"Seeded from {path.name}",
+    }
+    with db.transaction() as cur:
+        cur.execute(
+            "UPDATE plates SET active = false "
+            " WHERE uniform_id = %(u)s AND background_id = %(b)s AND active;",
+            params,
+        )
+        cur.execute(
+            """
+            INSERT INTO plates (uniform_id, background_id, s3_key, sha256,
+                                approved_by, approved_at, active, notes)
+            VALUES (%(u)s, %(b)s, %(key)s, %(sha)s, %(who)s, now(), true, %(notes)s)
+            RETURNING id;
+            """,
+            params,
+        )
+        row = cur.fetchone()
     if row is None:
         raise SeedError(f"Could not register plate for {uniform_id}/{background_id}")
     return str(row["id"])
@@ -132,13 +129,11 @@ def seed_job(
         raise SeedError(f"Not a valid Indian mobile number: {phone!r}")
 
     said = spoken_place or spoken_place_from(address)
-    # address_normalized is the SPOKEN form and the orchestrator splits it on
-    # ", " into locality and city. address_raw is what the card prints.
-    if normalise_address(said) is None and "," in said:
-        raise SeedError(
-            f"Spoken place {said!r} is neither 'Locality' nor 'Locality, City'. "
-            "Pass --spoken-place explicitly."
-        )
+    # address_normalized is the SPOKEN form; address_raw is what the card
+    # prints. The address is free text - any shape - so there is nothing to
+    # validate beyond it not being empty.
+    if not said.strip():
+        raise SeedError("Address is empty, so there is nothing for the voice to say.")
 
     if plate_id is None:
         if plate is None:

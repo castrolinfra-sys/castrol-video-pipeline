@@ -1,0 +1,41 @@
+[Unit]
+Description=Castrol MAGNATEC video pipeline - one full cycle (container)
+Documentation=file:///opt/castrol-video-pipeline/deploy/README.md
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=castrol
+Group=castrol
+
+# The image tag is the ONE thing that changes per deploy, so it lives in a file
+# nobody has to edit this unit to change:
+#     echo 'CASTROL_IMAGE=acct/castrol-video-pipeline:main-abc1234' \
+#       | sudo tee /etc/castrol-image.env
+# Pin the sha tag, never :latest - a worker that spends a dollar a job must not
+# change what it runs because someone merged to main (CLAUDE.md, Docker / CI).
+EnvironmentFile=/etc/castrol-image.env
+
+# The .env is MOUNTED, not passed with --env-file. Docker's --env-file parser is
+# not a shell: it does not strip quotes, so KEY="value" arrives as the literal
+# "value" with the quotes attached. pydantic-settings reads the same file
+# correctly, and the image's WORKDIR is /app, which is where it looks.
+ExecStart=/usr/bin/docker run --rm \
+    --name castrol-cycle \
+    --volume /opt/castrol-video-pipeline/.env:/app/.env:ro \
+    --log-driver journald \
+    ${CASTROL_IMAGE} \
+    cycle
+
+# Leaves nothing behind if the unit is killed rather than exiting.
+ExecStopPost=-/usr/bin/docker rm -f castrol-cycle
+
+TimeoutStartSec=5h
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=castrol-cycle
+
+[Install]
+WantedBy=multi-user.target

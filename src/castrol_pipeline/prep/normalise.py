@@ -43,19 +43,38 @@ def normalise_phone(raw: str | None) -> str | None:
     return f"+91{digits}"
 
 
-def normalise_address(raw: str | None) -> tuple[str, str] | None:
-    """Split `Locality, City`. Returns None if it is not that shape.
+def normalise_address(raw: str | None) -> str | None:
+    """Tidy an address. Any shape is legal; only empty is a rejection.
 
-    The export now supplies this pre-split, so anything else is a data problem
-    worth rejecting rather than guessing at.
+    This used to demand exactly `Locality, City` and reject anything else as a
+    data problem. The client confirmed 2026-09-09 that the field is free text -
+    a mechanic may type one word or three clauses - so a shape requirement here
+    rejected real people for writing their own address normally.
+
+    Whitespace is collapsed and empty comma segments dropped. Nothing else is
+    touched: the card prints this, and inventing punctuation for a stranger's
+    address is not ours to do.
     """
     if not raw:
         return None
     parts = [collapse_whitespace(p) for p in str(raw).split(",")]
-    parts = [p for p in parts if p]
-    if len(parts) != 2:
-        return None
-    return parts[0], parts[1]
+    return ", ".join(p for p in parts if p) or None
+
+
+def spoken_place_from(address: str) -> str:
+    """The area to SAY, derived from the address we print.
+
+    Indian addresses run most-specific to least, so the last segment is the
+    area and everything before it is doorway detail: "Beturkar Pada, Opposite
+    New National Hospital, Andheri" is spoken as "Andheri". Reading the whole
+    string aloud puts a hospital landmark in a 30-second ad.
+
+    One or two segments are already the spoken form and are kept whole.
+    """
+    parts = [p.strip() for p in address.split(",") if p.strip()]
+    if len(parts) <= 2:
+        return ", ".join(parts)
+    return parts[-1]
 
 
 def normalise_name(raw: str | None) -> str | None:
