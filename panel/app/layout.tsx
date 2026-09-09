@@ -20,8 +20,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <nav>
               <a href="/">Jobs</a>
               <a href="/failures">Failures</a>
-              <a href="/submissions">Client data</a>
-              <a href="/costs">Costs</a>
+              <a href="/submissions">Submissions</a>
+              <a href="/usage">Usage</a>
             </nav>
             <div className="who">
               {admin}

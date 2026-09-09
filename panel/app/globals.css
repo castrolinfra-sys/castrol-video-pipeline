@@ -57,3 +57,33 @@ input[type=email], input[type=text], input[type=password] {
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; }
 .center { max-width: 380px; margin: 12vh auto; }
 pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; overflow-x: auto; font-size: 12px; margin: 0; }
+
+/* ---- filters: search box and date range, both plain links/forms ---- */
+.filters {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  margin: 0 0 16px;
+}
+.filters form { display: flex; gap: 8px; align-items: center; }
+.filters input[type=text] { width: 300px; }
+.ranges { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+a.range {
+  padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px;
+  font-size: 12px; color: var(--dim); text-decoration: none;
+}
+a.range:hover { border-color: var(--accent); color: var(--fg); }
+a.range.on { color: var(--fg); border-color: var(--accent); background: var(--panel); }
+a.btn { text-decoration: none; display: inline-block; }
+
+/* ---- usage: one headline number, then the supporting ones ---- */
+.headline { margin-bottom: 16px; }
+.headline .label {
+  color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+}
+.headline .big { font-size: 40px; font-weight: 700; line-height: 1.1; margin: 6px 0 2px; }
+.stats { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+.stat { min-width: 170px; flex: 1; }
+.stat .label {
+  color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+}
+.stat .value { font-size: 22px; font-weight: 700; margin-top: 4px; }
+.stat .sub { font-size: 12px; margin-top: 2px; }

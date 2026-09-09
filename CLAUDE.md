@@ -143,6 +143,18 @@ uv run castrol report
 → [`panel/`](panel/). Next.js, deployed on Vercel with Root Directory `panel`.
 Reads the pipeline's tables directly; the one thing it writes is `job_reports`.
 
+**It is a CLIENT-facing surface, not our operations console.** It must never
+show cost, vendor, model id, stage, retry attempts, or an internal error code —
+the metric it reports is DURATION, seconds of video delivered. That line is held
+structurally rather than by care: the pages read
+[`job_usage` / `daily_usage`](supabase/migrations/0007_usage_views_for_the_panel.sql),
+views with no cost or vendor column in them, and `lib/format.ts` has no money
+formatter to reach for. `lib/reasons.ts` turns `"video: VENDOR_TIMEOUT"` into a
+sentence, falling back to a generic line rather than to the raw string — a
+fallback that leaks does it exactly when something new breaks. Pages: Jobs
+(searchable by mechanic id or WhatsApp number, filterable by date), Failures,
+Submissions, Usage.
+
 ```bash
 cd panel && npm install && npm run dev
 ```
@@ -250,7 +262,7 @@ keyed on the file's name so a re-run cannot claim a second apply. It did not
 always: 0001–0003 were registered by the Supabase tooling and 0004–0005 were
 not, and a HALF-populated ledger is worse than none, because `supabase db push`
 reads it and would treat applied migrations as pending. Both were backfilled;
-0001–0005 are now applied and registered.
+0001–0007 are now applied and registered.
 
 ### AWS
 
@@ -295,6 +307,7 @@ rules, not application code.
 | The panel's only DB handle — secret key, bypasses RLS | [`panel/lib/db.ts`](panel/lib/db.ts) |
 | Who may open the panel | [`panel/middleware.ts`](panel/middleware.ts) |
 | The panel's only write | [`panel/app/actions.ts`](panel/app/actions.ts) |
+| Duration-only views the panel reads | [`0007`](supabase/migrations/0007_usage_views_for_the_panel.sql) |
 
 Full annotated map with per-file descriptions: [`README.md`](README.md#where-things-live)
 and [`docs/TECH_DESIGN.md` §3](docs/TECH_DESIGN.md).
@@ -610,7 +623,7 @@ repeat post is harmless where a missed one is a video nobody ever gets.
 **The pipeline runs end to end under the orchestrator** against real Supabase,
 real S3 and the real CDN. All eight stages are implemented in
 `stages/real.py`; `USE_STUB_STAGES=true` still swaps in deterministic fakes to
-exercise the DAG without spending. Migrations 0001–0006 are applied.
+exercise the DAG without spending. Migrations 0001–0007 are applied.
 
 Verified on a real job: seed → prep → composite → checks → publish → deliver,
 with the delivered CDN URL returning 200. The three paid stages are the same

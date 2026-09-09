@@ -4,14 +4,14 @@ import { ts } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-// The client's own data, exactly as their API returned it.
+// Every submission, exactly as the client's own API returned it.
 //
 // Rendered from export_rows.raw rather than from our `submissions` columns on
-// purpose: the client admin needs the fields the PIPELINE has no use for -
+// purpose: the client needs the fields the PIPELINE has no use for -
 // mechanic_id, the second phone, their own status - and needs them to still be
-// here if the client adds a column next month. Columns are discovered from the
-// data, so a new field appears without a code change.
-export default async function ClientData() {
+// here if they add a column next month. Columns are discovered from the data,
+// so a new field appears without a code change.
+export default async function Submissions() {
   const { data: rows, error } = await db
     .from("export_rows")
     .select("id, row_index, raw, submission_id, created_at, pull_id")
@@ -22,10 +22,9 @@ export default async function ClientData() {
   if (!rows?.length) {
     return (
       <>
-        <h1>Client data</h1>
+        <h1>Submissions</h1>
         <p className="empty">
-          No export rows stored yet. Intake has not been reworked for the CSV
-          schema — until it is, this fills up only once a pull runs.
+          Nothing pulled yet. This fills up on the next scheduled run.
         </p>
       </>
     );
@@ -39,7 +38,11 @@ export default async function ClientData() {
   return (
     <>
       <h1>
-        Client data <span className="dim">— {rows.length} rows, {cols.length} columns as returned</span>
+        Submissions{" "}
+        <span className="dim">
+          — {rows.length} rows, {cols.length} columns exactly as your system
+          returned them
+        </span>
       </h1>
       <div className="scroll">
         <table>

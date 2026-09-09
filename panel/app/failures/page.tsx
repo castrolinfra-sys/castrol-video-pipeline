@@ -2,16 +2,22 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { Problem } from "../problem";
 import { ts } from "@/lib/format";
+import { failureText } from "@/lib/reasons";
 import { ReportButton } from "./report-button";
 
 export const dynamic = "force-dynamic";
 
+// What did not get made, and for whom.
+//
+// No stage, no attempt count, no error code. How many times we retried before
+// giving up is our business; what the client needs is which mechanic has no
+// video and roughly why, in words that suggest what to do about it.
 export default async function Failures() {
   const { data: jobs, error } = await db
-    .from("jobs")
+    .from("job_usage")
     .select(
-      "id, status, current_stage, failure_reason, created_at, " +
-        "submissions ( user_name, workshop_name, phone_e164 )",
+      "job_id, status, created_at, failure_reason, mechanic_id, " +
+        "whatsapp_number, user_name, workshop_name",
     )
     .eq("status", "failed")
     .order("created_at", { ascending: false });
@@ -26,39 +32,53 @@ export default async function Failures() {
   const byJob = new Map<string, any>();
   for (const r of reports ?? []) if (!byJob.has(r.job_id)) byJob.set(r.job_id, r);
 
-  if (!jobs?.length) return <p className="empty">No failed jobs. </p>;
+  if (!jobs?.length) return <p className="empty">No failures. </p>;
 
-  const open = jobs.filter((j: any) => !byJob.has(j.id));
+  const open = jobs.filter((j: any) => !byJob.has(j.job_id));
 
   return (
     <>
       <h1>
-        Failures <span className="dim">— {open.length} untriaged of {jobs.length}</span>
+        Failures{" "}
+        <span className="dim">
+          — {open.length} untriaged of {jobs.length}
+        </span>
       </h1>
       <div className="scroll">
         <table>
           <thead>
             <tr>
-              <th>Created</th><th>Mechanic</th><th>Stage</th>
-              <th>Reason</th><th>Reported</th><th></th>
+              <th>Mechanic ID</th>
+              <th>WhatsApp</th>
+              <th>Mechanic</th>
+              <th>Workshop</th>
+              <th>What happened</th>
+              <th>Created</th>
+              <th>Reviewed</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             {jobs.map((j: any) => {
-              const s = Array.isArray(j.submissions) ? j.submissions[0] : j.submissions;
-              const r = byJob.get(j.id);
+              const r = byJob.get(j.job_id);
               return (
-                <tr key={j.id} style={r ? { opacity: 0.55 } : undefined}>
-                  <td className="mono"><Link href={`/jobs/${j.id}`}>{ts(j.created_at)}</Link></td>
-                  <td>{s?.user_name ?? "—"}</td>
-                  <td className="dim">{j.current_stage}</td>
-                  <td style={{ whiteSpace: "normal", maxWidth: 420 }}>
-                    {j.failure_reason ?? <span className="dim">—</span>}
+                <tr key={j.job_id} style={r ? { opacity: 0.55 } : undefined}>
+                  <td className="mono">
+                    <Link href={`/jobs/${j.job_id}`}>{j.mechanic_id || "—"}</Link>
                   </td>
+                  <td className="mono">{j.whatsapp_number ?? "—"}</td>
+                  <td>{j.user_name ?? "—"}</td>
+                  <td className="dim">{j.workshop_name ?? "—"}</td>
+                  <td style={{ whiteSpace: "normal", maxWidth: 380 }}>
+                    {failureText(j.failure_reason)}
+                  </td>
+                  <td className="mono dim">{ts(j.created_at)}</td>
                   <td className="dim mono">
                     {r ? `${r.reported_by} · ${ts(r.created_at)}` : "—"}
                   </td>
-                  <td><ReportButton jobId={j.id} report={r ?? null} /></td>
+                  <td>
+                    <ReportButton jobId={j.job_id} report={r ?? null} />
+                  </td>
                 </tr>
               );
             })}
