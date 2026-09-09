@@ -1,0 +1,24 @@
+[Unit]
+Description=Run the Castrol video pipeline at 00:00 and 12:00 IST
+Documentation=file:///opt/castrol-video-pipeline/deploy/README.md
+
+[Timer]
+# The client's day, not the server's. EC2 runs UTC, and "midnight" here means
+# midnight where the mechanics are - a bare 00:00 would fire at 05:30 IST.
+# The trailing timezone needs systemd 252+ (Amazon Linux 2023 has it); on
+# anything older, drop it and set the box: timedatectl set-timezone Asia/Kolkata
+OnCalendar=*-*-* 00,12:00:00 Asia/Kolkata
+
+# If the instance was down, stopped, or rebooting when a run was due, run it on
+# the next boot instead of skipping the batch. A missed pull is not recoverable
+# by anything downstream - nobody notices the videos that were never made.
+Persistent=true
+
+# Enough jitter that we are not hitting the client's export API on the stroke of
+# the hour, small enough that the run is still recognisably "the midnight one".
+RandomizedDelaySec=120
+
+Unit=castrol-cycle.service
+
+[Install]
+WantedBy=timers.target
