@@ -65,7 +65,12 @@ class Settings(BaseSettings):
     # The export timestamp format is PINNED, never inferred. A wrong format
     # silently shifts the pull window; the raw string is stored so a bad parse
     # can be redone without re-pulling.
-    export_timestamp_format: str = "%d-%m-%Y %H:%M"
+    # Confirmed 2026-09-08: the feed sends ISO 8601 with an explicit Z
+    # (2026-09-07T10:13:49.681Z), not the naive dd-MM string first assumed.
+    # "iso8601" names the standard rather than restating its pattern; it is
+    # still pinned here and still never inferred from the data.
+    export_timestamp_format: str = "iso8601"
+    # Only applies to a naive format. ISO values carry their own offset.
     export_timezone: str = "Asia/Kolkata"
 
     # ----------------------------------------------------------- ai provider --

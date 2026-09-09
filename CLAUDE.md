@@ -67,7 +67,7 @@ Idempotent on (photo, phone). `--address` is what the CARD prints; what the
 voice SAYS defaults to the last segment of it, override with `--spoken-place`.
 
 ```bash
-uv run castrol seed-job --photo spikes/in/mechanic2.jpg --plate spikes/in/plate_bg2.png --name "Amit Kumar" --workshop "Ganesh Car Service" --address "Beturkar Pada, Opposite New National Hospital, Andheri" --phone 9773128990 --uniform polo --background bg2_dark_sedan
+uv run castrol seed-job --photo spikes/in/mechanic2.jpg --plate spikes/in/plate_bg2.png --name "Amit Kumar" --workshop "Ganesh Car Service" --address "Beturkar Pada, Opposite New National Hospital, Andheri" --phone 9773128990 --uniform u1_tshirt --background bg2_dark_sedan
 ```
 
 ```bash
@@ -257,7 +257,7 @@ rules, not application code.
 | **The script text** and spoken overrides | [`prep/script.py`](src/castrol_pipeline/prep/script.py) |
 | Phone, address, numerals for speech | [`prep/normalise.py`](src/castrol_pipeline/prep/normalise.py) |
 | `outfit` + `background` → plate | [`prep/plates.py`](src/castrol_pipeline/prep/plates.py) |
-| Export pull, validation, dedupe (**stale schema**) | [`intake/`](src/castrol_pipeline/intake/) |
+| Export pull (**CSV, BOM**), validation, dedupe | [`intake/`](src/castrol_pipeline/intake/) |
 | Create one job by hand | [`seed.py`](src/castrol_pipeline/seed.py) |
 | Every env var and pinned model id | [`config.py`](src/castrol_pipeline/config.py) / [`.env.example`](.env.example) |
 | Schema, budget function, RLS | [`supabase/migrations/`](supabase/migrations/) |
@@ -561,31 +561,36 @@ stage logs exactly what it would have sent. Turning it on is a deliberate act.
 **The pipeline runs end to end under the orchestrator** against real Supabase,
 real S3 and the real CDN. All eight stages are implemented in
 `stages/real.py`; `USE_STUB_STAGES=true` still swaps in deterministic fakes to
-exercise the DAG without spending. Migrations 0001–0005 are applied.
+exercise the DAG without spending. Migrations 0001–0006 are applied.
 
 Verified on a real job: seed → prep → composite → checks → publish → deliver,
 with the delivered CDN URL returning 200. The three paid stages are the same
 calls the prototype proved, now under budget reservation and cost recording.
 
-**Intake is still written against the pre-CSV export schema.** Confirmed
-against a real pull on 2026-09-08 — see the 18 real column names below. Use
-`castrol seed-job` until it is reworked. What is actually wrong:
+**Intake is written against the real CSV export**, confirmed against a live
+pull on 2026-09-08 and the client's combination map on 2026-09-09. Six defects
+were fixed together, because each one alone rejected every row:
 
-- `intake/export_client.py` parses **JSON** (`json.loads`), not CSV.
-- The body is served with a **UTF-8 BOM**. Decode `utf-8-sig` or the first
-  column, `id`, silently becomes `﻿id` and vanishes while the other 17
-  parse fine.
-- `intake/validate.py` and `intake/runner.py` read `mechanic_phone_number` as
-  *the* phone, including for `submission_hash`. That is the CARD number; the
-  delivery key and dedupe anchor is `whatsapp_number`.
-- `prep/plates.py` maps backgrounds `suv`/`sedan`/`hatchback`, which the export
-  never sends — it sends `Background 1|2|3` and `Castrol T-shirt|Castrol
-  Uniform`. Unmapped rejects rather than defaults, so every real row would
-  reject with `UNKNOWN_BACKGROUND`.
-- `EXPORT_TIMESTAMP_FORMAT` is pinned to `%d-%m-%Y %H:%M`; the feed sends ISO
-  8601 (`2026-09-07T10:13:49.681Z`) in camelCase `createdAt`/`updatedAt`.
-- No `image_face_count`. There IS an `id` — the client's own submission uuid,
-  and the only unique identifier in the feed.
+- `intake/export_client.py` parses CSV, decoding **`utf-8-sig`**. The body
+  carries a UTF-8 BOM; as plain utf-8 the first header becomes `﻿id` and
+  `id` — the only unique identifier in the feed — silently reads as missing
+  while the other 17 columns parse perfectly.
+- The two phone columns are separated. `whatsapp_number` → `phone_e164`, the
+  delivery key and the dedupe anchor. `mechanic_phone_number` →
+  `card_phone_e164`, printed and nothing else.
+- `prep/plates.py` maps what the export actually sends. Background 1|2|3 **are**
+  the SUV, sedan and hatchback, so the ids were always right — the lookup keys
+  were not. The client's own words (SUV / Sedan / Hatchback, Uniform 1 / 2) are
+  accepted as aliases.
+- Uniform ids are `u1_tshirt` / `u2_uniform`, the client's number and the
+  client's word. `polo` / `half_shirt` were ours, and one of the two values is
+  literally a t-shirt — which way round they mapped was a coin flip.
+- `EXPORT_TIMESTAMP_FORMAT` is `iso8601`. Still pinned, still never inferred;
+  it names the standard instead of restating its pattern.
+- **There is no `image_face_count`.** Rekognition arrives as a status string,
+  which says a face was found but not how many — so the group-photo case is no
+  longer detectable at intake and falls to the stage B checks.
+  `tests/test_intake.py` asserts that gap deliberately.
 
 Real header, in order:
 
@@ -595,6 +600,17 @@ mechanic_id_verified, mechanic_id, mechanic_phone_number, background,
 outfit, image_url, image_mime_type, image_validation_status,
 image_rekognition_status, status, createdAt, updatedAt
 ```
+
+Client-confirmed guarantees, all encoded as CHECKS rather than assumptions —
+if one stops holding we get a row with a stable reject code, not a broken
+video: `mechanic_phone_number` is never empty, `whatsapp_number` is unique,
+`address` is never empty, `background` never holds a seventh value.
+
+**Five of the six plates are still placeholders.** Only `plate_02` has real
+artwork in S3; the other five `plates` rows point at `plates/pending/…` keys
+that do not exist. The approved PNGs are committed at `plates/plate_0N.png` and
+need uploading and activating before any combination but T-shirt × Sedan can
+run.
 
 **Spike 0.1 is answered — do not rewrite the script.** `kling-avatar-v2` has
 completed in prod at 39s via kie and 60s via fal; the ~80-word script at 30–40s

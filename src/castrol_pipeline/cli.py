@@ -88,10 +88,10 @@ def seed_job_cmd(
                  "so landmarks are not read aloud.",
         ),
     ] = None,
-    uniform: Annotated[str, typer.Option(help="uniform_id for the plate")] = "polo",
+    uniform: Annotated[str, typer.Option(help="uniform_id for the plate")] = "u1_tshirt",
     background: Annotated[
         str, typer.Option(help="background_id for the plate")
-    ] = "bg1_white_suv",
+    ] = "bg2_dark_sedan",
 ) -> None:
     """Create one job by hand from local files. Idempotent on (photo, phone).
 

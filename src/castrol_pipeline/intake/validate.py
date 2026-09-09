@@ -39,7 +39,15 @@ class Rejection:
 
 @dataclass(frozen=True)
 class ValidRow:
+    #: The export's own `id`. The client's primary key and the only genuinely
+    #: unique identifier in the feed - `mechanic_id` is not one.
+    client_submission_id: str
+    #: `whatsapp_number`. The DELIVERY key: what we POST back as `phone`, and
+    #: what the client relays on. Never printed, never spoken.
     phone_e164: str
+    #: `mechanic_phone_number`. The CARD number, printed in the green panel.
+    #: A different number from the one above on most rows.
+    card_phone_e164: str
     user_name: str
     workshop_name: str
     locality: str
@@ -47,8 +55,18 @@ class ValidRow:
     uniform_id: str
     background_id: str
     image_url_raw: str
+    #: Carried through opaque, never trusted, never joined on.
+    mechanic_id: str | None = None
+    mechanic_id_verified: str | None = None
     is_test: bool = False
     parsed: dict[str, Any] = field(default_factory=dict)
+
+
+#: Sentinel for EXPORT_TIMESTAMP_FORMAT meaning "ISO 8601, as the standard
+#: defines it". Still pinned in config and still never inferred from the data -
+#: it just names a standard instead of restating its pattern, which is what the
+#: export actually sends: 2026-09-07T10:13:49.681Z, with and without millis.
+ISO_8601 = "iso8601"
 
 
 def parse_export_timestamp(raw: str | None, fmt: str, tz: str) -> datetime | None:
@@ -56,11 +74,21 @@ def parse_export_timestamp(raw: str | None, fmt: str, tz: str) -> datetime | Non
 
     Returns None rather than guessing — the raw string is stored alongside, so a
     wrong format can be reparsed later without re-pulling.
+
+    The feed sends ISO 8601 with an explicit `Z`, so the parsed value is already
+    absolute and `tz` is not applied to it. `tz` still governs the old
+    naive-string format, which had no offset and could not be read without one.
     """
     if not raw:
         return None
+    text = str(raw).strip()
+    if fmt == ISO_8601:
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
     try:
-        return datetime.strptime(str(raw).strip(), fmt).replace(tzinfo=ZoneInfo(tz))
+        return datetime.strptime(text, fmt).replace(tzinfo=ZoneInfo(tz))
     except (ValueError, KeyError):
         return None
 
@@ -81,23 +109,37 @@ def validate_row(row: dict[str, Any]) -> ValidRow | Rejection:
     if status != "APPROVED":
         return Rejection(RejectCode.NOT_APPROVED, f"image_validation_status={status!r}")
 
-    face_count = row.get("image_face_count")
-    try:
-        face_count = int(face_count)
-    except (TypeError, ValueError):
-        return Rejection(RejectCode.FACE_COUNT_NOT_1, f"image_face_count={face_count!r}")
-    if face_count != 1:
-        # A group photo passes "face detected" upstream and still breaks stage B.
-        return Rejection(RejectCode.FACE_COUNT_NOT_1, f"image_face_count={face_count}")
+    # The real export carries NO `image_face_count`. It reports Rekognition as
+    # a status string instead, which tells us a face was found but not how
+    # many - so the group-photo case this check used to catch is no longer
+    # detectable at intake and has to fall to the stage B checks.
+    rekognition = (row.get("image_rekognition_status") or "").strip().upper()
+    if rekognition != "FACE_DETECTED":
+        return Rejection(
+            RejectCode.FACE_COUNT_NOT_1, f"image_rekognition_status={rekognition!r}"
+        )
 
     # ------------------------------------------------------------- identity --
     gender = (row.get("gender") or "").strip().lower()
     if gender != "male":
         return Rejection(RejectCode.GENDER_UNSUPPORTED, f"gender={gender!r}")
 
-    phone = normalise_phone(row.get("mechanic_phone_number"))
+    # Two different numbers doing two different jobs. Getting these the wrong
+    # way round delivers a video to a stranger, or prints a stranger's number
+    # on a mechanic's video, and neither failure announces itself.
+    phone = normalise_phone(row.get("whatsapp_number"))
     if phone is None:
-        return Rejection(RejectCode.BAD_PHONE, f"phone={row.get('mechanic_phone_number')!r}")
+        return Rejection(RejectCode.BAD_PHONE, f"whatsapp_number={row.get('whatsapp_number')!r}")
+
+    # The client states this is always present. Encoded as a check rather than
+    # an assumption: if that stops being true we get a row with a stable reject
+    # code, not a card with a blank contact line.
+    card_phone = normalise_phone(row.get("mechanic_phone_number"))
+    if card_phone is None:
+        return Rejection(
+            RejectCode.BAD_PHONE,
+            f"mechanic_phone_number={row.get('mechanic_phone_number')!r} (card number)",
+        )
 
     name = normalise_name(row.get("user_name"))
     if not name:
@@ -137,8 +179,14 @@ def validate_row(row: dict[str, Any]) -> ValidRow | Rejection:
     if looks_like_test_row(name, phone):
         return Rejection(RejectCode.TEST_ROW, f"heuristic match on name={name!r}")
 
+    client_id = str(row.get("id") or "").strip()
+    if not client_id:
+        return Rejection(RejectCode.MISSING_FIELD, "id is empty")
+
     return ValidRow(
+        client_submission_id=client_id,
         phone_e164=phone,
+        card_phone_e164=card_phone,
         user_name=name,
         workshop_name=workshop,
         locality=locality,
@@ -147,4 +195,10 @@ def validate_row(row: dict[str, Any]) -> ValidRow | Rejection:
         background_id=background_id,
         # Stored byte-exact. Never rebuilt from parts. See intake/media.py.
         image_url_raw=str(image_url_raw),
+        mechanic_id=(str(row.get("mechanic_id")).strip() or None)
+        if row.get("mechanic_id")
+        else None,
+        mechanic_id_verified=(str(row.get("mechanic_id_verified")).strip() or None)
+        if row.get("mechanic_id_verified")
+        else None,
     )

@@ -109,11 +109,13 @@ def _insert_submission(
     valid: ValidRow | None,
     rejection: Rejection | None,
 ) -> str:
+    # The export sends camelCase ISO 8601, not the snake_case naive strings
+    # this originally assumed.
     created = parse_export_timestamp(
-        row.get("created_at_ist"), settings.export_timestamp_format, settings.export_timezone
+        row.get("createdAt"), settings.export_timestamp_format, settings.export_timezone
     )
     updated = parse_export_timestamp(
-        row.get("updated_at_ist"), settings.export_timestamp_format, settings.export_timezone
+        row.get("updatedAt"), settings.export_timestamp_format, settings.export_timezone
     )
     image_url_raw = row.get("image_url") or ""
 
@@ -122,7 +124,8 @@ def _insert_submission(
         INSERT INTO submissions (
             submission_hash, media_key, batch_id, raw,
             phone_e164, user_name, workshop_name, address_raw, address_normalized,
-            gender, mechanic_id, has_mechanic_id,
+            gender, mechanic_id, has_mechanic_id, mechanic_id_verified,
+            client_submission_id, card_phone_e164,
             background_choice, outfit_choice,
             image_url_raw, image_mime_type, image_validation_status,
             image_rekognition_status, image_face_count,
@@ -132,7 +135,8 @@ def _insert_submission(
         ) VALUES (
             %(hash)s, %(media_key)s, %(batch_id)s, %(raw)s,
             %(phone)s, %(name)s, %(workshop)s, %(address_raw)s, %(address_norm)s,
-            %(gender)s, %(mech_id)s, %(has_mech)s,
+            %(gender)s, %(mech_id)s, %(has_mech)s, %(mech_verified)s,
+            %(client_id)s, %(card_phone)s,
             %(bg)s, %(outfit)s,
             %(url)s, %(mime)s, %(val_status)s,
             %(rek)s, %(faces)s,
@@ -154,7 +158,14 @@ def _insert_submission(
             "address_norm": f"{valid.locality}, {valid.city}" if valid else None,
             "gender": row.get("gender"),
             "mech_id": row.get("mechanic_id"),
-            "has_mech": row.get("has_mechanic_id"),
+            # The export reports verification as a STRING, not the boolean this
+            # column was built for. Both are stored: the boolean for anything
+            # already reading it, the string because it is what actually
+            # arrived and "NOT VERIFIED" is not the same fact as false.
+            "has_mech": (row.get("mechanic_id_verified") or "").strip().upper() == "VERIFIED",
+            "mech_verified": row.get("mechanic_id_verified"),
+            "client_id": valid.client_submission_id if valid else (row.get("id") or None),
+            "card_phone": valid.card_phone_e164 if valid else None,
             # The resolved plate ids are stored here because they are what the
             # pipeline routes on. The client's exact strings are preserved
             # verbatim in `raw`, so nothing is lost.
@@ -165,10 +176,12 @@ def _insert_submission(
             "mime": row.get("image_mime_type"),
             "val_status": row.get("image_validation_status"),
             "rek": row.get("image_rekognition_status"),
-            "faces": row.get("image_face_count"),
+            # Not in the real export at all. Kept NULL rather than removed:
+            # the column is harmless and dropping it is a separate decision.
+            "faces": None,
             "client_status": row.get("status"),
-            "created_raw": row.get("created_at_ist"),
-            "updated_raw": row.get("updated_at_ist"),
+            "created_raw": row.get("createdAt"),
+            "updated_raw": row.get("updatedAt"),
             "created": created,
             "updated": updated,
             "verdict": "valid" if valid else "rejected",
@@ -260,7 +273,10 @@ def run_intake(
 
         for row in rows:
             image_url_raw = row.get("image_url") or ""
-            phone_for_hash = str(row.get("mechanic_phone_number") or "")
+            # whatsapp_number, not mechanic_phone_number: the delivery key is
+            # the identity this row is about. The card number is a different
+            # number and hashing on it would dedupe the wrong thing.
+            phone_for_hash = str(row.get("whatsapp_number") or "")
             sub_hash = compute_submission_hash(image_url_raw, phone_for_hash)
 
             if _already_seen(sub_hash):
