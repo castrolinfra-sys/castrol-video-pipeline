@@ -212,12 +212,19 @@ Returns **CSV**, not JSON. Rate limit 100 / 900s.
 ### Migrations
 
 Forward-only numbered SQL in `supabase/migrations/`, applied in order. There
-are no down migrations. The Supabase MCP server for this project is READ-ONLY,
-so use the apply script — one file per invocation, in a single transaction:
+are no down migrations. Use the apply script — one file per invocation, the
+DDL and its ledger row in a single transaction:
 
 ```bash
-uv run python scripts/apply_migration.py supabase/migrations/0004_runtime_observability.sql
+uv run python scripts/apply_migration.py supabase/migrations/0005_admin_review_and_export_copy.sql
 ```
+
+The script registers what it applies in `supabase_migrations.schema_migrations`,
+keyed on the file's name so a re-run cannot claim a second apply. It did not
+always: 0001–0003 were registered by the Supabase tooling and 0004–0005 were
+not, and a HALF-populated ledger is worse than none, because `supabase db push`
+reads it and would treat applied migrations as pending. Both were backfilled;
+0001–0005 are now applied and registered.
 
 ### AWS
 
@@ -389,11 +396,19 @@ Not kie, not apimart — the field does not exist. A network-level retry of a
 submit creates a second provider job and a second charge. Dedupe *before* the
 HTTP call; never blind-retry a submit that may have landed. Reconcile instead.
 
-**14. Check the body `code`, not the HTTP status.**
-*`stages/vendors.py`*
+**14. Check the body, not the HTTP status.**
+*`stages/vendors.py`, `stages/real.py:webhook_accepted`, pinned by [`tests/test_deliver_webhook.py`](tests/test_deliver_webhook.py)*
 Both gateways return HTTP 200 with `code != 200` on error. Also: kie's
 `resultJson` is a JSON *string* — parse before indexing. apimart's video
 result is `result.videos[0].url[0]` — `url` is a list.
+
+The client's delivery webhook is the same shape and the stakes are higher: it
+answers 200 and puts the verdict in `success`, which arrives as the STRING
+`"true"`. There is **no failure channel** back to the client, so a delivery
+recorded from the status code alone is a video the mechanic never gets and
+nobody ever looks for. `webhook_accepted()` fails CLOSED on anything it cannot
+read — the cost of being wrong that way is a retry POSTing an identical
+`{phone, videoLink}`, which the client stores idempotently.
 
 **15. Copy provider result URLs to our storage immediately.**
 *`stages/vendors.py:download`, called in each stage's `poll()`*
@@ -546,7 +561,7 @@ stage logs exactly what it would have sent. Turning it on is a deliberate act.
 **The pipeline runs end to end under the orchestrator** against real Supabase,
 real S3 and the real CDN. All eight stages are implemented in
 `stages/real.py`; `USE_STUB_STAGES=true` still swaps in deterministic fakes to
-exercise the DAG without spending. Migrations 0001–0004 are applied.
+exercise the DAG without spending. Migrations 0001–0005 are applied.
 
 Verified on a real job: seed → prep → composite → checks → publish → deliver,
 with the delivered CDN URL returning 200. The three paid stages are the same

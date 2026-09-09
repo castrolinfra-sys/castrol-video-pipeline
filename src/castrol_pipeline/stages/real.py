@@ -26,6 +26,7 @@ What changes versus the prototype, and why:
 
 from __future__ import annotations
 
+import json
 import math
 import tempfile
 from decimal import Decimal
@@ -659,6 +660,46 @@ class PublishStage:
 # --------------------------------------------------------- [deliver] -----
 
 
+def webhook_accepted(status_code: int, body_text: str) -> tuple[bool, str]:
+    """Did the client's webhook actually take the video?
+
+    Invariant 14 applies here too, not only to the vendor gateways: the client
+    answers HTTP 200 and puts the verdict in the BODY. Trusting the status code
+    records a delivery that never happened, and there is no failure channel to
+    catch it later - the client is told nothing, and the mechanic simply never
+    receives a video nobody knows is missing.
+
+    Note `success` arrives as the STRING "true", not a boolean.
+
+    Fails CLOSED on anything unreadable. The cost of being wrong that way is a
+    retry POSTing an identical {phone, videoLink} - the same link to the same
+    number, which the client stores idempotently. The cost of failing open is a
+    video silently lost, so the asymmetry is not close. A 200 carrying a body
+    we cannot parse is also exactly the shape invariant 2 warns about: a
+    permissions failure wearing a success status.
+    """
+    if status_code >= 400:
+        return False, f"HTTP {status_code}: {body_text[:200]}"
+
+    try:
+        body = json.loads(body_text)
+    except ValueError:
+        return False, f"HTTP {status_code} but body was not JSON: {body_text[:200]}"
+
+    if not isinstance(body, dict):
+        return False, f"HTTP {status_code} but body was {type(body).__name__}, not an object"
+
+    raw = body.get("success")
+    if raw is None:
+        return False, f"HTTP {status_code} but body has no `success` field: {body_text[:200]}"
+
+    ok = raw is True or (isinstance(raw, str) and raw.strip().lower() == "true")
+    if ok:
+        return True, ""
+    return False, f"HTTP {status_code} but success={raw!r}: {str(body.get('message'))[:200]}"
+
+
+
 class DeliverStage:
     """POST {phone, videoLink} to the client webhook.
 
@@ -710,18 +751,22 @@ class DeliverStage:
         with httpx.Client(timeout=30.0) as c:
             r = c.post(s.require("client_webhook_url"), json=payload, headers=headers)
 
+        accepted, why = webhook_accepted(r.status_code, r.text)
+
         record_event(
             "deliver.posted",
             job_id=ctx.job_id,
             stage=str(self.name),
-            level="info" if r.status_code < 400 else "error",
+            level="info" if accepted else "error",
             status_code=r.status_code,
+            accepted=accepted,
+            reason=why or None,
             cdn_url=url,
             phone=ctx.phone_e164,
         )
-        if r.status_code >= 400:
+        if not accepted:
             raise StageFailure(
-                f"client webhook {r.status_code}: {r.text[:300]}",
+                f"client webhook did not accept the video - {why}",
                 code=StageErrorCode.VENDOR_REJECTED,
             )
 
@@ -731,6 +776,7 @@ class DeliverStage:
                 "cdn_url": url,
                 "response_code": r.status_code,
                 "response_body": r.text[:1000],
+                "accepted": True,
             },
         )
 

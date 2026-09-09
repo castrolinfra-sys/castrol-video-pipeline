@@ -4,17 +4,24 @@
 
 Forward-only, one file per invocation, wrapped in a single transaction so a
 half-applied migration is not a state the database can be left in. There is no
-down path and no migration ledger: files are numbered, applied in order, and
-the schema itself is the record.
+down path.
 
-The Supabase MCP server configured for this project is read-only, and the SQL
-editor cannot be scripted. This is the write path.
+The apply and the ledger row are the SAME transaction. This file used to argue
+that the schema was its own record and no ledger was needed, which was fine
+while nothing else wrote one - but the Supabase tooling registers what IT
+applies, so the ledger ended up half true: 0001-0003 present, 0004-0005 not.
+A partial ledger is worse than none, because `supabase db push` reads it and
+would treat applied migrations as pending. Either everything registers or
+nothing does; this registers.
+
+This is the write path for schema changes.
 """
 
 from __future__ import annotations
 
 import pathlib
 import sys
+from datetime import UTC, datetime
 
 
 def dsn() -> str:
@@ -49,15 +56,36 @@ def main() -> int:
     import psycopg
 
     sql = path.read_text(encoding="utf-8")
+    name = path.stem
+    # Same shape the Supabase tooling writes: a UTC apply-time stamp, so the
+    # ledger sorts in the order things actually ran.
+    version = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+
     try:
         with psycopg.connect(dsn()) as conn:
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(sql)
+                # Keyed on `name`, not `version`: re-running a file must not
+                # add a second row under a fresh timestamp and claim it was
+                # applied twice.
+                cur.execute(
+                    """
+                    INSERT INTO supabase_migrations.schema_migrations
+                                (version, name, statements)
+                    SELECT %(version)s, %(name)s, ARRAY[%(sql)s]
+                     WHERE NOT EXISTS (
+                           SELECT 1 FROM supabase_migrations.schema_migrations
+                            WHERE name = %(name)s)
+                    """,
+                    {"version": version, "name": name, "sql": sql},
+                )
+                registered = cur.rowcount == 1
     except psycopg.OperationalError as exc:
         # psycopg puts the whole DSN in the message when it cannot parse or
         # connect, and the DSN carries the database password. Never surface it.
         raise SystemExit(f"FAIL  could not connect: {type(exc).__name__}") from None
-    print(f"  OK  applied {path.name} ({len(sql.splitlines())} lines)")
+    note = f"registered as {version}" if registered else "already in ledger"
+    print(f"  OK  applied {path.name} ({len(sql.splitlines())} lines) - {note}")
     return 0
 
 
