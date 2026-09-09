@@ -140,7 +140,10 @@ uv run castrol report
 
 ### Admin panel
 
-→ [`panel/`](panel/). Next.js, deployed on Vercel with Root Directory `panel`.
+→ [`panel/`](panel/). Next.js, **live** at
+<https://castrol-pipeline-admin-panel.vercel.app> — Vercel scope `castroinfra`,
+Root Directory `panel`. Deployed and verified 2026-09-09; the how and the
+reasoning are in [`panel/DEPLOY.md`](panel/DEPLOY.md).
 Reads the pipeline's tables directly; the one thing it writes is `job_reports`.
 
 **It is a CLIENT-facing surface, not our operations console.** It must never
@@ -173,7 +176,29 @@ server action, so the password is never client component state. The gate uses
 `getUser()`, never `getSession()`, because a session cookie is forgeable by the
 browser, and it lives ONLY in `middleware.ts` — signing in proves identity, the
 allowlist decides access, and a second check elsewhere would be one more thing
-to keep in step. `/auth/callback` now serves password-recovery links only.
+to keep in step.
+
+**There is no emailed-link route.** `/auth/callback` is gone: magic link is
+replaced and password recovery is not used — a forgotten password is reset in
+Supabase → Authentication → Users, which sends nothing. So there is no Supabase
+URL configuration to keep in sync, and no unauthenticated endpoint minting
+sessions from a code for a flow nobody uses.
+
+`ADMIN_ALLOWED_EMAILS` lives in the APP's environment — `panel/.env.local`
+locally, Vercel's env vars in production. It is not a Supabase setting and
+Supabase never sees it. Supabase decides who can authenticate; this decides who
+is let in once they have.
+
+**Passwords are ours to hold, and the panel deliberately cannot change one.**
+Decided 2026-09-09. There is no account page and no self-service rotation: a
+password is set in Supabase → Authentication → Users and reset there. Do not add
+a change-password page - it was considered and declined, not overlooked.
+
+The consequence is deliberate but worth stating: whoever sets a client's
+password knows it, and rotation is a dashboard action rather than something the
+client can do alone. Supabase stores only a bcrypt hash and verifies it itself -
+the panel forwards the password to `signInWithPassword` and receives a session,
+so nothing here ever stores, logs or can read one.
 
 ### Checks
 
