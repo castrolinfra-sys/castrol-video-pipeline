@@ -148,14 +148,31 @@ def close_batch(batch_id: str, counters: IntakeCounters, *, error: str | None = 
     )
 
 
-def _already_seen(submission_hash: str) -> bool:
-    return (
-        db.fetch_one(
-            "SELECT 1 AS x FROM submissions WHERE submission_hash = %(h)s;",
-            {"h": submission_hash},
-        )
-        is not None
-    )
+def _already_seen(submission_hash: str, client_submission_id: str | None) -> bool:
+    """Have we stored this row before? Two keys, because the strong one is theirs.
+
+    `submission_hash` covers the blob path and the whatsapp number. The client's
+    own `id` covers the one case that hash cannot see: the same submission
+    re-exported with a re-issued media url, which changes the path and so
+    changes the hash.
+
+    That case only became worth handling when the pull went on a timer. The
+    windows overlap by design and re-return every row twice a day, so without
+    this check a re-issued url is not a duplicate row - it is a UNIQUE violation
+    on submissions_client_id_idx, raised mid-loop, which fails the WHOLE batch
+    and takes the rows after it down with the one that collided.
+    """
+    if db.fetch_one(
+        "SELECT 1 AS x FROM submissions WHERE submission_hash = %(h)s;",
+        {"h": submission_hash},
+    ):
+        return True
+    if client_submission_id and db.fetch_one(
+        "SELECT 1 AS x FROM submissions WHERE client_submission_id = %(c)s;",
+        {"c": client_submission_id},
+    ):
+        return True
+    return False
 
 
 def _insert_submission(
@@ -346,7 +363,8 @@ def run_intake(
             phone_for_hash = str(row.get("whatsapp_number") or "")
             sub_hash = compute_submission_hash(image_url_raw, phone_for_hash)
 
-            if _already_seen(sub_hash):
+            client_id = (row.get("id") or "").strip() or None
+            if _already_seen(sub_hash, client_id):
                 counters.duplicate += 1
                 continue
 

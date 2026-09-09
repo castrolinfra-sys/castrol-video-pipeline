@@ -62,6 +62,23 @@ casually — it is ~$0.04 per second of output.
 uv run castrol doctor
 ```
 
+**The whole run, unattended.** This is what the EC2 timer fires at 00:00 and
+12:00 IST and the only command the server executes: pull the window, schedule,
+then work and wait until every job is terminal or the deadline hits. See
+[`deploy/`](deploy/README.md). Holds a database advisory lock, so a second
+cycle starting on top of a running one exits instead of doubling the load on a
+paid vendor. **SPENDS.**
+
+```bash
+uv run castrol cycle
+```
+
+Finish what is already in the database without pulling anything new:
+
+```bash
+uv run castrol cycle --no-fetch
+```
+
 One video by hand — creates the rows and lands the photo in S3, runs nothing.
 Idempotent on (photo, phone). `--address` is what the CARD prints; what the
 voice SAYS defaults to the last segment of it, override with `--spoken-place`.
@@ -242,6 +259,8 @@ rules, not application code.
 |---|---|
 | Every `castrol <cmd>` | [`src/castrol_pipeline/cli.py`](src/castrol_pipeline/cli.py) |
 | Claiming, retries, poller, **all writes to `jobs`** | [`orchestrator.py`](src/castrol_pipeline/orchestrator.py) |
+| The unattended run: lock, window, wait loop | [`cycle.py`](src/castrol_pipeline/cycle.py) |
+| systemd units + the EC2 runbook | [`deploy/`](deploy/README.md) |
 | The eight real stages | [`stages/real.py`](src/castrol_pipeline/stages/real.py) |
 | Stage protocol + the DAG | [`stages/base.py`](src/castrol_pipeline/stages/base.py) |
 | Anything that talks to a provider | [`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) |
@@ -534,6 +553,18 @@ $0.04 per output second. Completed jobs are never rescheduled.
 The client relays the POST to a real mechanic over WhatsApp. While false the
 stage logs exactly what it would have sent. Turning it on is a deliberate act.
 
+**32. A suppressed delivery still SUCCEEDS, so the backlog needs reopening.**
+*`cycle.py:_reopen_suppressed_deliveries`*
+It has to succeed — the video is made and published, and failing the stage
+would park a finished job as `failed` forever. So every video made while
+`DELIVERY_ENABLED` was false is already marked delivered: the job is
+`completed`, nothing schedules it, and `deliver_hash` covers the CDN url and
+the phone, neither of which changes when the flag flips. Switching delivery on
+would silently strand the entire backlog, and the failure looks like nothing at
+all. Each cycle reopens those jobs once delivery is enabled — the stage is free
+and the client stores `{phone, videoLink}` idempotently (invariant 14), so a
+repeat post is harmless where a missed one is a video nobody ever gets.
+
 ---
 
 ## Conventions
@@ -645,5 +676,22 @@ id: **there is no cloning call in the pipeline.**
 **There is no repair pass.** A second lipsync pass was considered and dropped
 — quality is solved in the main flow. If stage C output is unacceptable the
 fix is its inputs, not a patch stage. Do not reintroduce it.
+
+**The run is automated, twice a day.** `castrol cycle` is the whole flow —
+pull, schedule, work, wait, stop — driven by a systemd timer at 00:00 and 12:00
+IST on EC2 ([`deploy/`](deploy/README.md)). It is not `drain` under a timer:
+`drain` stops the moment a sweep moves nothing, which for an async stage means
+"still rendering", so under a timer it would submit every paid render and exit
+before collecting one. The cycle waits, holds an advisory lock so two runs
+cannot overlap, and stops at a deadline (4h, inside the 12h gap) rather than
+running into the next window. Nothing is lost when it stops early — readiness
+is recomputed from `stage_runs`, so the next cycle resumes.
+
+The pull window is `[today − 1, today + 1]` on the CLIENT's calendar, not the
+server's: EC2 runs UTC and 00:00 IST is still yesterday there. Both ends are
+loose because re-pulling is free and a missed row is not recoverable —
+`intake._already_seen` dedupes on the submission hash AND the client's own row
+`id`, the second of which is what stops an overlapping window turning a
+re-issued media url into a UNIQUE violation that fails the whole batch.
 
 **The open unknown is geometry drift** — spike 0.3. See below.

@@ -1,0 +1,45 @@
+[Unit]
+Description=Castrol MAGNATEC video pipeline - one full cycle (pull, render, deliver)
+Documentation=file:///opt/castrol-video-pipeline/deploy/README.md
+# The whole cycle is network-bound: the export API, three vendors, S3.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=castrol
+Group=castrol
+
+# The pipeline reads .env RELATIVE TO ITS WORKING DIRECTORY - pydantic-settings
+# is configured with env_file=".env" (config.py). This line is what loads the
+# credentials; there is deliberately no EnvironmentFile=, because systemd's
+# parser is not a shell and would mangle quoted values that pydantic reads fine.
+WorkingDirectory=/opt/castrol-video-pipeline
+
+# The console script from the venv, not `uv run`. uv would re-resolve the
+# environment on every fire, which needs the network and can change what runs
+# at 00:00 without anyone deciding to. Deploys run `uv sync` explicitly.
+ExecStart=/opt/castrol-video-pipeline/.venv/bin/castrol cycle
+
+# The cycle enforces its own deadline (--deadline-minutes, default 240) and
+# exits 1 when it hits it. This is the outer backstop for a process that has
+# stopped honouring its own clock, so it must be comfortably LONGER than that.
+TimeoutStartSec=5h
+
+# structlog writes JSON to stdout; journald keeps it. `journalctl -u
+# castrol-cycle -o cat | jq` is the whole log story.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=castrol-cycle
+
+# ffmpeg is CPU-hungry and this box may be doing other things; the run has
+# hours of slack, so it can afford to lose every race.
+Nice=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
