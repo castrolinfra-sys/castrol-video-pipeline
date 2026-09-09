@@ -1,13 +1,18 @@
 // Gate every page on a signed-in, allowlisted session.
 //
 // Deliberately a denylist-free design: everything is private except the login
-// route and the auth callback. A new page added later is protected by default
-// rather than by remembering to add it here.
+// route. A new page added later is protected by default rather than by
+// remembering to add it here.
 
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/auth/callback"];
+// Just the one. There was an /auth/callback here for emailed links - magic
+// link first, then password recovery - and neither is in use: sign-in is email
+// and password, and a forgotten password is reset from the Supabase dashboard.
+// An unauthenticated route that mints a session from a code is not worth
+// keeping for a flow nobody uses.
+const PUBLIC_PATHS = ["/login"];
 
 export async function middleware(request: NextRequest) {
   const response = NextResponse.next({ request });

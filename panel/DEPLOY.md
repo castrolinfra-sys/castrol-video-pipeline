@@ -1,30 +1,17 @@
 # Deploying the panel to Vercel
 
-Ten minutes, six steps. The one that catches people is step 0.
+Ten minutes, five steps.
 
 ---
 
-## 0. Get the panel onto the branch Vercel will build
+## 0. The panel must be on the branch Vercel builds — done
 
-**`main` has no `panel/` directory.** Everything — the panel, the cycle, the
-deploy units, migrations 0005–0008 — is on `admin-panel`, twelve commits ahead.
+Vercel builds Production from the repository's **default branch**. `main` had
+no `panel/` directory until PR #3 landed, so importing the project before that
+merge would have failed before the build started, complaining that the Root
+Directory did not exist — which reads like a typo rather than a missing merge.
 
-Vercel builds Production from the repository's **default branch**, which is
-`main`. Point it at this repo today and the build fails before it starts, with
-a message about the Root Directory not existing — which reads like a
-misconfiguration rather than what it is.
-
-Merge first. It is where this work belongs anyway; the EC2 deploy clones `main`
-too.
-
-```bash
-git checkout main && git merge --no-ff admin-panel && git push
-```
-
-Then come back to `admin-panel`, or delete it.
-
-*(The alternative — Vercel → Settings → Git → Production Branch → `admin-panel`
-— works, but leaves the whole project living on a feature branch.)*
+Settled: `main` carries `panel/` as of the merge. Nothing to do here.
 
 ---
 
@@ -93,22 +80,7 @@ Note the assigned URL, e.g. `https://castrol-panel.vercel.app`.
 
 ---
 
-## 5. Tell Supabase about the URL
-
-Supabase → **Authentication → URL Configuration**:
-
-- **Site URL** → your Vercel production URL
-- **Redirect URLs** → add `https://<your-url>/auth/callback`
-
-Sign-in is email and password and does not need this. **Password recovery
-does** — a reset link that lands anywhere else is a locked-out admin, and it is
-the kind of thing you discover on the day you need it.
-
-Add `http://localhost:3100/auth/callback` too, so recovery works locally.
-
----
-
-## 6. Create the admin account, and close the door behind it
+## 5. Create the admin account, and close the door behind it
 
 Supabase → **Authentication → Users → Add user**: the address from
 `ADMIN_ALLOWED_EMAILS`, a password, **Auto Confirm User** on.
@@ -119,6 +91,14 @@ Then Supabase → **Authentication → Sign In / Providers → Email** → turn
 With password auth and sign-ups open, anyone who finds the URL can mint an
 account. The allowlist still stops them reading anything — but that is the
 second line of defence, and you do not want to be standing on it.
+
+**There is no Supabase URL configuration step**, and there used to be. Emailed
+links needed one — a magic link, then a password-recovery link, both of which
+land on a route that exchanges a code for a session. Neither is in use: sign-in
+is email and password, and a forgotten password is reset directly in Supabase →
+Authentication → Users, which sends nothing and needs no route. `/auth/callback`
+has been removed rather than left sitting there as an unauthenticated endpoint
+serving a flow nobody uses.
 
 ---
 

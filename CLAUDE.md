@@ -174,7 +174,18 @@ server action, so the password is never client component state. The gate uses
 `getUser()`, never `getSession()`, because a session cookie is forgeable by the
 browser, and it lives ONLY in `middleware.ts` — signing in proves identity, the
 allowlist decides access, and a second check elsewhere would be one more thing
-to keep in step. `/auth/callback` now serves password-recovery links only.
+to keep in step.
+
+**There is no emailed-link route.** `/auth/callback` is gone: magic link is
+replaced and password recovery is not used — a forgotten password is reset in
+Supabase → Authentication → Users, which sends nothing. So there is no Supabase
+URL configuration to keep in sync, and no unauthenticated endpoint minting
+sessions from a code for a flow nobody uses.
+
+`ADMIN_ALLOWED_EMAILS` lives in the APP's environment — `panel/.env.local`
+locally, Vercel's env vars in production. It is not a Supabase setting and
+Supabase never sees it. Supabase decides who can authenticate; this decides who
+is let in once they have.
 
 ### Checks
 
