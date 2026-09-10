@@ -251,75 +251,46 @@ def apimart_poll(task_id: str) -> str | None:
 #: prompt steers expression, head movement and hand gesture, and the field is
 #: required (max 5000 chars).
 #:
-#: Written to the model's documented shape — subject, expression, motion, style
-#: preservation, in 1-3 sentences. Long or contradictory prompts measurably
-#: degrade it, and guidance that fights the source image causes drift, so this
-#: describes the person already in the plate rather than inventing one.
+#: THIS IS r1, RESTORED 2026-09-10, and the restore is deliberate. r1 is the
+#: text that was live when the render the client approved was shared to them on
+#: Tuesday 08 Sep. Later revisions r2-r5 each chased a fault seen in a later
+#: render; the client's own verdict outranks all of them, so we are back here.
 #:
-#: Phrased positively throughout. Negative instructions are unreliable on this
-#: class of model and tend to surface the thing they forbid — "clear of the
-#: chest logo" is how r2 put a hand on the chest logo.
+#: What the evidence actually says about that approved render, recorded because
+#: it is easy to misread and expensive to relearn:
 #:
-#: HISTORY, because three revisions were paid for and each one bought a fact:
+#:   The mechanic's arms are FOLDED for the entire take - 4s, 10s, 16s, 22s,
+#:   identical. r1 asks for "natural open-palm hand gestures" and the model
+#:   performed none of them. That render used the OLD plate artwork, in which
+#:   the mechanic stands with his arms crossed, and a locked pose in the source
+#:   image beats prompt text. The stillness came from the plate, not from here.
 #:
-#:   * **r1** asked for "natural open-palm hand gestures" — one gesture type,
-#:     so the model looped it, and it constrained WHERE the hands go but never
-#:     HOW FAST, so fast hand movement smeared.
-#:   * **r2** named three distinct gestures at "chest height ... clear of the
-#:     chest logo", and added speed words. It fixed the loop and the smear. It
-#:     also paired a position with an exclusion naming the SAME region, and the
-#:     model kept the position and dropped the exclusion: both hands came back
-#:     clawed across the chest panel.
-#:   * **r3** stated the band bounded on both sides, "between his chest panel
-#:     and his belt", and dropped the counting gesture that had asked for
-#:     individuated fingers. Fingers came back clean and nothing occluded the
-#:     logo — but the hands still rose to chest level, because a prompt that
-#:     asks for gestures gets gestures, and a raised hand near the brand mark
-#:     is a risk taken for no return.
+#:   The final plates pose him with his hands free at his thighs, so nothing
+#:   holds them down any more. On those plates this family of prompt has been
+#:   observed producing a looped, smeared gesture (r1) and both hands clawed
+#:   across the chest panel (r2).
 #:
-#: r4 stops asking for GESTURES — not for movement. The hands are calm and
-#: natural, and they stay where the source image already has them:
+#: Two known hazards live in the text below. They are left in place because
+#: this is a verbatim restore, not a new revision - do not "fix" them without a
+#: render to justify it, and do not re-derive them from scratch:
 #:
-#:   "calm" is load-bearing and was asked for by name. Frozen hands read as a
-#:   still photograph with a talking head pasted on, which is its own kind of
-#:   wrong; the fix for bad gestures is not no motion but UNHURRIED motion that
-#:   never leaves the resting position. "slow" stays beside it because that is
-#:   what stopped r1's smear, and the two say different things: slow is about
-#:   per-frame displacement, calm is about intent.
-#:
-#:   The card is an OPAQUE overlay across 66-82% of frame height
-#:   (stages/media.py PANEL_Y0/PANEL_Y1), and in the source image the hands
-#:   already rest at roughly 71-78% — BEHIND it. Hands left where they are are
-#:   therefore never on screen. Every hand failure this model has shown us —
-#:   warped fingers, claws, smeared motion, a palm across the Castrol mark —
-#:   becomes invisible rather than merely less likely.
-#:
-#:   The old objection was that a waist-level gesture "happens behind the card,
-#:   so the viewer sees a hand enter frame and vanish". That is an objection to
-#:   hands CROSSING the boundary, not to hands resting below it. Nothing enters
-#:   and nothing vanishes if nothing moves.
-#:
-#: What carries the video is the face: articulation, expression and head nods,
-#: which is the one thing this model has always done well — the inherited "."
-#: default produced correct lipsync and natural head motion, and only the hands
-#: were ever the problem.
-#:
-#: Note what is NOT in the preservation clause: "hand position". r4 pinned it
-#: there, which fought the movement clause above — a placement and a freeze
-#: naming the same thing is r2's mistake in a new costume. Placement is stated
-#: ONCE, positively, in the sentence that also grants the motion.
-#:
-#: Three sentences, three directives. The model's guidance is 3-5; additions
-#: here cost something, and a request for hand motion costs the most.
+#:   * "at chest height" and "without covering the chest logo" name the SAME
+#:     region. Given a position and an exclusion pointing at one place, this
+#:     model keeps the position and drops the exclusion. That is how r2 - which
+#:     carried the same pairing - put both hands on the chest panel.
+#:   * Nothing here constrains SPEED. Fast hand movement is what generative
+#:     video smears, and r1's first render came back blurred for exactly that
+#:     reason. "slow, deliberate", added in r2, is what fixed it.
 #:
 #: This text is part of the video input_hash, so editing it regenerates. See
 #: VideoStage._params.
 AVATAR_PROMPT = (
-    "An Indian auto mechanic in his Castrol uniform speaking to camera in his "
-    "garage, warm and confident, with clear articulation and subtle head nods. "
-    "His hands stay low at waist level beside his thighs, exactly where they "
-    "are in the image, moving only with calm, slow, natural motion. Keep the "
-    "existing framing, pose, uniform and chest branding unchanged."
+    "An Indian auto mechanic in his Castrol work uniform, speaking directly to "
+    "camera in his garage. Warm, confident and friendly, with clear "
+    "articulation and subtle head nods. Natural open-palm hand gestures at "
+    "chest height that emphasise his words and settle back between points, "
+    "staying below the shoulders and without covering the chest logo. Keep the "
+    "existing framing, uniform and branding unchanged."
 )
 
 
