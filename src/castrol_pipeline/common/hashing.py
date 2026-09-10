@@ -86,8 +86,16 @@ def audio_hash(script_text: str, voice_id: str, model_id: str) -> str:
 
 
 def image_hash(
-    plate_sha256: str, photo_sha256: str, prompt_version: str, model_id: str
+    plate_sha256: str,
+    photo_sha256: str,
+    prompt_version: str,
+    model_id: str,
+    uniform_ref_sha256: str = "",
 ) -> str:
+    """`uniform_ref_sha256` is the plain-background uniform reference, or "" for
+    a plate that has none. It is a real third input to the edit and it also
+    selects which prompt is sent, so it belongs in the hash on both counts:
+    registering a reference against a plate must regenerate, not skip."""
     return _stage_hash(
         "image",
         {
@@ -95,6 +103,7 @@ def image_hash(
             "photo_sha256": photo_sha256,
             "prompt_version": prompt_version,
             "model_id": model_id,
+            "uniform_ref_sha256": uniform_ref_sha256,
         },
     )
 

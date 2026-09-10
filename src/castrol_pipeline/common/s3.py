@@ -70,6 +70,15 @@ def plate_key(uniform_id: str, background_id: str, sha256: str) -> str:
     return f"{_prefix()}plates/{uniform_id}_{background_id}/{sha256}.png"
 
 
+def uniform_ref_key(uniform_id: str, sha256: str) -> str:
+    """The plain-background uniform shot handed to the image edit as a third
+    input. Keyed by uniform and content, NOT by background: the client is
+    expected to supply one reference per uniform, and the same bytes registered
+    against all three of that uniform's combinations resolve to one object.
+    Which plate rows point at it is recorded on the rows, not in the key."""
+    return f"{_prefix()}uniforms/{uniform_id}/{sha256}.png"
+
+
 def job_key(job_id: str, filename: str) -> str:
     """Working artefacts. Never expired by lifecycle — they are the evidence
     you need to explain a video that shipped five months ago."""

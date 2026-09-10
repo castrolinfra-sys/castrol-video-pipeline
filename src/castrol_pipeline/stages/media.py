@@ -69,20 +69,30 @@ def probe_dimensions(path: Path) -> tuple[int, int]:
 # ----------------------------------------------------------- transcoding --
 
 
-def to_mp3(src: Path, dst: Path) -> Path:
-    """Transcode to MP3.
+def to_mp3(src: Path, dst: Path, *, seconds: float | None = None) -> Path:
+    """Transcode to MP3, optionally keeping only the first `seconds`.
 
     NOT optional. The avatar model's "Audio size is too large" is a BYTE limit,
     not a duration limit — a 37s WAV has failed while a 53s WAV succeeded.
     Cartesia's pcm_f32le is ~176 KB/s, so 40s is ~7 MB against ~640 KB as MP3.
+
+    `seconds` exists for prompt work, and only the spike passes it. The avatar
+    model bills per OUTPUT second and the output is as long as the audio, so a
+    10s clip is a ~$0.40 render against ~$1.06 for the full take — and hand
+    placement, finger shape and logo survival are all visible in the first few
+    seconds. The pipeline never trims: a mechanic gets the whole script.
+
+    A trim always re-encodes, because the short-circuit below returns the
+    source untouched and would silently hand back the full-length file — a
+    "cheap" probe that quietly bills the full duration.
     """
-    if src.suffix.lower() == ".mp3":
+    if src.suffix.lower() == ".mp3" and seconds is None:
         return src
-    _run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
-         "-codec:a", "libmp3lame", "-b:a", "128k", str(dst)],
-        "mp3 transcode",
-    )
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src)]
+    if seconds is not None:
+        cmd += ["-t", f"{seconds:g}"]
+    cmd += ["-codec:a", "libmp3lame", "-b:a", "128k", str(dst)]
+    _run(cmd, "mp3 transcode")
     return dst
 
 
@@ -293,11 +303,46 @@ def card_payload(
 # ------------------------------------------------------------ composite ----
 
 
+def audio_stream_duration_seconds(path: Path) -> float | None:
+    """Duration of the AUDIO stream specifically, not the container.
+
+    `probe_duration_seconds` reports the container, which for an avatar render
+    is the VIDEO length. These differ, and the difference is the point — see
+    `composite`.
+    """
+    out = _run(
+        ["ffprobe", "-v", "error", "-select_streams", "a:0",
+         "-show_entries", "stream=duration",
+         "-of", "default=nw=1:nk=1", str(path)],
+        "probe audio stream duration",
+    )
+    try:
+        return float(out.stdout.strip().splitlines()[0])
+    except (ValueError, IndexError):
+        return None
+
+
 def composite(video: Path, card: Path, out: Path) -> Path:
-    """ffmpeg overlay, full duration, fixed geometry. Deterministic.
+    """ffmpeg overlay, fixed geometry, trimmed to the speech. Deterministic.
 
     The card is already frame-sized, so this is a straight 0,0 overlay — there
     is no offset to get wrong.
+
+    TRIMMED TO THE AUDIO, and that is not a detail. kling-avatar-v2 returns a
+    video LONGER than the audio it was given — measured at 27.47s of video
+    carrying 25.57s of speech, a 1.9s tail in which the avatar keeps moving
+    with nothing to say. It reads as the mechanic fidgeting after his line, and
+    it is the last thing the viewer sees.
+
+    Cutting it here rather than asking the model for stillness is deliberate:
+    the model does not take a duration and cannot be relied on to stop on cue,
+    while ffmpeg cuts exactly. It is also FREE and needs no re-render — the
+    trailing frames were already paid for at submit either way.
+
+    Note this drift is what `ChecksStage.duration_matches_audio` measures with a
+    1500ms tolerance. At 1902ms every job was failing that check silently,
+    because checks are logged rather than blocking. Trimming makes the check
+    mean what it says.
 
     -crf 16 / veryslow: the overlay is a static graphic over an already
     compressed source, so the re-encode must be visually lossless or it throws
@@ -305,12 +350,22 @@ def composite(video: Path, card: Path, out: Path) -> Path:
     bitrate from 4.59 to 1.19 Mbps here, which is very visible on the card
     edges and on skin gradients.
     """
-    _run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video), "-i", str(card),
-         "-filter_complex", "[0:v][1:v]overlay=0:0",
-         "-c:v", "libx264", "-crf", "16", "-preset", "veryslow",
-         "-pix_fmt", "yuv420p", "-movflags", "+faststart",
-         "-c:a", "copy", str(out)],
-        "composite overlay",
-    )
+    speech = audio_stream_duration_seconds(video)
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video), "-i", str(card),
+           "-filter_complex", "[0:v][1:v]overlay=0:0"]
+    if speech:
+        # Fail OPEN, not closed: an unreadable audio stream means we ship the
+        # untrimmed video, which is the behaviour we had. Refusing to composite
+        # would park a finished job over a cosmetic tail.
+        cmd += ["-t", f"{speech:.3f}"]
+    else:
+        log.warning(
+            "media.composite_no_audio_duration",
+            note="could not read the audio stream; shipping the full video "
+                 "including any silent tail",
+        )
+    cmd += ["-c:v", "libx264", "-crf", "16", "-preset", "veryslow",
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+            "-c:a", "copy", str(out)]
+    _run(cmd, "composite overlay")
     return out

@@ -36,6 +36,18 @@ class TestKeysCarryTheirPrefix:
             "castrol/plates/polo_bg1/deadbeef.png"
         )
 
+    def test_uniform_ref_key(self):
+        assert s3.uniform_ref_key("u1_tshirt", "deadbeef") == (
+            "castrol/uniforms/u1_tshirt/deadbeef.png"
+        )
+
+    def test_uniform_ref_key_ignores_the_background(self):
+        # Content-addressed under the uniform, so registering one file against
+        # all three of that uniform's combinations stores ONE object.
+        assert s3.uniform_ref_key("u1_tshirt", "cafe") == s3.uniform_ref_key(
+            "u1_tshirt", "cafe"
+        )
+
     def test_delivery_key_is_random_and_not_derived(self):
         a, b = s3.delivery_key(), s3.delivery_key()
         assert a != b, "two deliveries must not collide"

@@ -116,8 +116,10 @@ def ffprobe_duration(path: pathlib.Path) -> float:
     return probe_duration_seconds(path)
 
 
-def to_mp3(src: pathlib.Path, dst: pathlib.Path) -> pathlib.Path:
-    return _to_mp3(src, dst)
+def to_mp3(
+    src: pathlib.Path, dst: pathlib.Path, *, seconds: float | None = None
+) -> pathlib.Path:
+    return _to_mp3(src, dst, seconds=seconds)
 
 
 def normalise_for_apimart(src: pathlib.Path, dst: pathlib.Path) -> pathlib.Path:
@@ -197,31 +199,76 @@ def publish(path: pathlib.Path) -> str:
 
 # ------------------------------------------------------ [1] image (apimart) --
 
-PROMPT = """\
+# Kept in step with stages/vendors.py by hand - unlike the card, the prompt is
+# duplicated here rather than imported, because the point of the spike is to try
+# wordings the pipeline has not adopted yet.
+PRESERVE = """\
 Reproduce this image EXACTLY as-is. Same camera framing, same crop, same \
 subject scale, same head position, same shoulder line, same belt line, same \
 pose, same hand position, same background, same lighting, same uniform \
 geometry, and every Castrol and MAGNATEC logo, on the cap, the chest panel, \
 the sleeve and the overhead banner, identical in placement, size and colour.
 
-Make EXACTLY ONE change: replace the person's identity with the person in the \
-second reference image. Carry over their face, apparent age, skin tone on both \
-the face AND the hands, body build, and facial hair. Keep their eyeglasses if \
-they wear any.
+Make EXACTLY ONE change: replace the person with the person in the second \
+reference image. It is that person standing there, not the first person \
+wearing their face - so carry over their face, apparent age, ethnicity, skin \
+tone, facial hair, body build, proportions and posture, and keep all of it \
+consistent with one another throughout the frame. Their HANDS, wrists and \
+forearms are theirs too: the age, skin tone, thickness and hair of the hands \
+must match that same person, not the hands in the first image. Keep their \
+eyeglasses if they wear any.\
+"""
 
+# Only sent when --uniform-ref is given. Still ONE generation and ONE change:
+# this reads as part of the preserve half - where to read the uniform's detail
+# from - not as a second edit, or it contradicts "Make EXACTLY ONE change"
+# above. The garment's fit, size and position come from the first image, and
+# the flat shot's own framing and background must not leak in.
+UNIFORM = """\
+That one change does not include the uniform, which stays exactly as it is. \
+The third reference image is that same uniform, laid out flat on a plain \
+background - use it as the reference for what the uniform already looks like: \
+its exact fabric, colour, panel seams, collar and cuff shape, and the exact \
+shape, proportion and colour of every printed logo and text mark on it. It \
+tells you nothing else. The third image's framing, pose, lighting and \
+background are irrelevant, and so is the way the garment is laid out in it - \
+how the uniform sits on the body, its size in the frame and its place in the \
+frame all come from the first image and do not change.\
+"""
+
+CONSTRAIN = """\
 Do not reframe. Do not zoom. Do not move or rescale the subject within the \
 frame. Do not redesign, restyle, idealise or beautify anything. Do not invent \
 new text, logos or branding.\
 """
 
 
-def step_image(plate_url: str, photo_url: str, out: pathlib.Path) -> str:
+def prompt_for(with_uniform: bool) -> str:
+    parts = [PRESERVE] + ([UNIFORM] if with_uniform else []) + [CONSTRAIN]
+    return "\n\n".join(parts)
+
+
+#: The two-image prompt, unchanged.
+PROMPT = prompt_for(False)
+
+
+def step_image(
+    plate_url: str,
+    photo_url: str,
+    out: pathlib.Path,
+    uniform_ref_url: str | None = None,
+) -> str:
     base = ENV.get("APIMART_BASE_URL") or "https://api.apimart.ai/v1"
     model = ENV.get("IMAGE_EDIT_MODEL_ID") or "gpt-image-2"
+    # Ordinals: the prompt says "second" and "third", so plate, mechanic,
+    # uniform, in that order.
+    image_urls = [plate_url, photo_url]
+    if uniform_ref_url:
+        image_urls.append(uniform_ref_url)
     body = {
         "model": model,
-        "prompt": PROMPT,
-        "image_urls": [plate_url, photo_url],
+        "prompt": prompt_for(bool(uniform_ref_url)),
+        "image_urls": image_urls,
         "size": "9:16",
         "resolution": ENV.get("IMAGE_EDIT_RESOLUTION", "2K"),
         "n": 1,
@@ -390,6 +437,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--plate", help="frozen garage plate png")
     ap.add_argument("--photo", help="mechanic source photo")
+    ap.add_argument("--uniform-ref",
+                    help="plain-background shot of the uniform, sent as a third "
+                         "reference so its fabric and printed marks are copied "
+                         "rather than reconstructed")
     ap.add_argument("--out", default="spikes/out/run1")
     ap.add_argument("--script", help="file holding the Hindi script text")
     ap.add_argument("--name", default="Raju Shetty")
@@ -402,6 +453,12 @@ def main() -> int:
     ap.add_argument("--image-url",
                     help="skip step 1; drive the avatar from this image directly. "
                          "Useful before the plates exist.")
+    ap.add_argument("--trim-audio", type=float, metavar="SECONDS",
+                    help="send only the first N seconds of the mp3 to the avatar "
+                         "model. Prompt work costs ~$0.04 per output second, so a "
+                         "10s probe is ~$0.40 against ~$1.06 for the full take. "
+                         "Hands, fingers and the chest logo are all judgable in "
+                         "the first few seconds.")
     ap.add_argument("--only", choices=["image", "audio", "video", "composite"],
                     help="run one step and stop")
     args = ap.parse_args()
@@ -428,7 +485,11 @@ def main() -> int:
             normalise_for_apimart(pathlib.Path(args.plate), out / "plate_norm.png"))
         photo_url = args.photo_url or publish(
             normalise_for_apimart(pathlib.Path(args.photo), out / "photo_norm.png"))
-        st.set("image_url", step_image(plate_url, photo_url, out / "image_edit.png"))
+        uniform_ref_url = publish(normalise_for_apimart(
+            pathlib.Path(args.uniform_ref), out / "uniform_ref_norm.png"),
+        ) if args.uniform_ref else None
+        st.set("image_url", step_image(
+            plate_url, photo_url, out / "image_edit.png", uniform_ref_url))
     if only == "image":
         return 0
 
@@ -445,7 +506,13 @@ def main() -> int:
 
     # [3] video
     if only in (None, "video") and not st.get("video_path"):
-        audio_url = args.audio_url or publish(pathlib.Path(st.get("audio_path")))
+        audio_path = pathlib.Path(st.get("audio_path"))
+        if args.trim_audio:
+            audio_path = to_mp3(audio_path, out / "audio_trimmed.mp3",
+                                seconds=args.trim_audio)
+            say("video", f"trimmed audio to {ffprobe_duration(audio_path):.1f}s "
+                         f"~${ffprobe_duration(audio_path) * 0.04:.2f} render")
+        audio_url = args.audio_url or publish(audio_path)
         step_video(st.get("image_url"), audio_url, out / "video_raw.mp4")
         st.set("video_path", str(out / "video_raw.mp4"))
     if only == "video":

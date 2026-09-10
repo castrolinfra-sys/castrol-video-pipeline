@@ -66,7 +66,8 @@ def _plate_row(ctx: JobContext) -> dict[str, Any]:
     if not ctx.plate_id:
         raise AssetMissing("Job has no plate_id; prep should not have passed.")
     row = db.fetch_one(
-        "SELECT id, s3_key, sha256, active FROM plates WHERE id = %(id)s;",
+        "SELECT id, s3_key, sha256, active, uniform_ref_key, uniform_ref_sha256 "
+        "  FROM plates WHERE id = %(id)s;",
         {"id": ctx.plate_id},
     )
     if row is None:
@@ -265,6 +266,7 @@ class ImageStage:
             str(photo["sha256"]),
             s.image_prompt_version,
             s.image_edit_model_id,
+            uniform_ref_sha256=str(plate["uniform_ref_sha256"] or ""),
         )
 
     def run(self, ctx: JobContext) -> AsyncSubmission:
@@ -277,11 +279,24 @@ class ImageStage:
         # artefacts and must stay private and short-lived.
         plate_url = store.presigned_get_url(str(plate["s3_key"]))
         photo_url = store.presigned_get_url(str(photo["s3_key"]))
+        # Third input, and only if this plate has one: a flat shot of the
+        # uniform on a plain background, so the garment's fabric and printed
+        # marks are copied rather than reconstructed off a figure that is
+        # being redrawn. Optional per combination - a plate registered without
+        # one submits the two images it always did.
+        uniform_ref_url = (
+            store.presigned_get_url(str(plate["uniform_ref_key"]))
+            if plate["uniform_ref_key"]
+            else None
+        )
 
         cost = budget.image_cost_usd()
         with budget.vendor_call(budget.VENDOR_IMAGE, cost_usd=cost):
             task_id = vendors.apimart_submit(
-                plate_url, photo_url, model_id=s.image_edit_model_id
+                plate_url,
+                photo_url,
+                model_id=s.image_edit_model_id,
+                uniform_ref_url=uniform_ref_url,
             )
 
         record_event(
@@ -291,13 +306,20 @@ class ImageStage:
             vendor_task_id=task_id,
             model_id=s.image_edit_model_id,
             cost_usd=float(cost),
+            uniform_ref=bool(uniform_ref_url),
             note="avg ~83s, worst observed 644s",
         )
         return AsyncSubmission(
             vendor=budget.VENDOR_IMAGE,
             vendor_task_id=task_id,
             model_id=s.image_edit_model_id,
-            params={"resolution": s.image_edit_resolution, "size": "9:16"},
+            params={
+                "resolution": s.image_edit_resolution,
+                "size": "9:16",
+                # Which prompt this attempt got, recorded per attempt: it is the
+                # difference between two references and three.
+                "uniform_ref": bool(uniform_ref_url),
+            },
             cost_usd=cost,
             billed_units=Decimal(1),
         )
@@ -366,7 +388,10 @@ class VideoStage:
         $0.04 per output second. Completed jobs are never rescheduled.
         """
         return {
-            "pro": get_settings().video_use_pro,
+            # Redundant with model_id, which is hashed separately — kept so
+            # `stage_runs.params` says what rate an attempt was billed at
+            # without a lookup.
+            "pro": get_settings().video_is_pro,
             "prompt": vendors.AVATAR_PROMPT,
         }
 
@@ -398,7 +423,7 @@ class VideoStage:
 
         seconds = Decimal(str(duration_ms)) / 1000
         billed = Decimal(math.ceil(seconds))
-        cost = budget.video_cost_usd(float(seconds), pro=s.video_use_pro)
+        cost = budget.video_cost_usd(float(seconds), pro=s.video_is_pro)
 
         image_url = store.presigned_get_url(ctx.upstream_key(PipelineStage.IMAGE))
         audio_url = store.presigned_get_url(ctx.upstream_key(PipelineStage.AUDIO))

@@ -17,6 +17,7 @@ contracts and nothing else.
 |---|---|---|---|
 | 1 | **Plate** — uniform + garage background | pre-built, frozen, human-approved. Chosen by the export's `outfit` + `background` | the scene the mechanic is composited into |
 | 2 | **Mechanic photo** | export `image_url` (Azure blob) | the face/build swapped onto the plate |
+| 2b | **Uniform reference** — the garment alone on a plain background | pre-built, frozen, registered on the plate row. Optional per combination | a third reference to the image edit, so the uniform's fabric and printed marks are copied rather than reconstructed |
 | 3 | **Name** | export `user_name` | **spoken** and on the card |
 | 4 | **Workshop name** | export `workshop_name` | **spoken** and on the card |
 | 5 | **Location** | export `address` (`Locality, City`) | **spoken** and on the card |
@@ -95,10 +96,13 @@ already have — not a regenerated second.
 `prompt` field steers expression, head movement and hand gesture; the inherited
 default was literally `"."`, which produced correct lipsync with the hands
 locked at rest. `AVATAR_PROMPT` in
-[`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) asks for natural
-open-palm gestures **at chest height** — the card is an opaque overlay over
-66–82% of frame height, so a waist-level gesture happens behind it and the
-viewer sees a hand enter frame and vanish.
+[`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) deliberately asks
+for **no hand gestures**: hands stay at waist level exactly where the source
+image has them, moving only with calm, slow, natural motion. Three paid revisions each found a new way for this model
+to render moving hands badly, and the card is an opaque overlay across 66-82% of
+frame height while the hands already rest at ~71-78% — so hands left alone are
+behind it and never on screen. The failure mode stops being visible rather than
+merely less likely, and the face carries the video.
 
 The prompt text is part of the video `input_hash`, not a version string you can
 forget to bump. Editing it therefore regenerates — at $0.04 per output second
@@ -193,8 +197,22 @@ a client sample — without the export API in the way. Creates the rows and land
 the photo in S3; runs nothing. Idempotent on (photo, phone).
 
 ```bash
-uv run castrol seed-job --photo spikes/in/mechanic2.jpg --plate spikes/in/plate_bg2.png --name "Amit Kumar" --workshop "Ganesh Car Service" --address "Beturkar Pada, Opposite New National Hospital, Andheri" --phone 9773128990 --uniform polo --background bg2_dark_sedan
+uv run castrol seed-job --photo spikes/in/mechanic2.jpg --plate spikes/in/plate_bg2.png --uniform-ref spikes/in/uniform_u1.png --name "Amit Kumar" --workshop "Ganesh Car Service" --address "Beturkar Pada, Opposite New National Hospital, Andheri" --phone 9773128990 --uniform polo --background bg2_dark_sedan
 ```
+
+**Plate artwork on its own**, with the uniform reference the image edit uses as
+its third input. Append-only: the combination's current row is retired and a new
+one inserted, so every existing job keeps naming the artwork it was really built
+from. Free, and runs nothing.
+
+```bash
+uv run castrol register-plate --plate plates/plate_02.png --uniform u1_tshirt --background bg2_dark_sedan --uniform-ref plates/uniform_u1.png
+```
+
+The reference belongs to the uniform rather than the background, so the same
+file is normally registered against all three of that uniform's combinations —
+it is content-addressed in S3, so that stores one object. Omit `--uniform-ref`
+and the combination submits plate + photo only, on the two-image prompt.
 
 `--address` is what the **card** prints. What the voice **says** defaults to the
 last segment of it (`Andheri`), so landmarks are not read aloud; override with
@@ -329,9 +347,9 @@ Every path is real. If you are hunting for where something happens, start here.
 
 | File | Handles |
 |---|---|
-| [`src/castrol_pipeline/cli.py`](src/castrol_pipeline/cli.py) | every `castrol <cmd>` — `doctor`, `seed-job`, `drain`, `work`, `poll`, `schedule`, `intake`, `show`, `events`, `costs`, `report` |
+| [`src/castrol_pipeline/cli.py`](src/castrol_pipeline/cli.py) | every `castrol <cmd>` — `doctor`, `seed-job`, `register-plate`, `drain`, `work`, `poll`, `schedule`, `intake`, `show`, `events`, `costs`, `report` |
 | [`src/castrol_pipeline/orchestrator.py`](src/castrol_pipeline/orchestrator.py) | readiness, claiming, retries, the poller, and **every write to `jobs`** |
-| [`src/castrol_pipeline/seed.py`](src/castrol_pipeline/seed.py) | `castrol seed-job` — create one job by hand, register and activate a plate |
+| [`src/castrol_pipeline/seed.py`](src/castrol_pipeline/seed.py) | `castrol seed-job` and `castrol register-plate` — create one job by hand; register and activate a plate and its uniform reference |
 | [`src/castrol_pipeline/config.py`](src/castrol_pipeline/config.py) | every key, endpoint, pinned model id and feature flag, from env |
 | [`spikes/prototype.py`](spikes/prototype.py) | the standalone one-video script; no DB, no orchestrator |
 | [`scripts/apply_migration.py`](scripts/apply_migration.py) | applying a migration (the Supabase MCP server here is read-only) |
@@ -455,6 +473,9 @@ Open:
 - **Intake** is still written against the pre-CSV export schema (the real export
   returns CSV, has no `image_face_count`, and carries two phone fields). Use
   `seed-job` until it is reworked.
-- **Standard vs pro** avatar — pro doubles the total.
+- **kie returns 720x1280 whatever it is fed.** A 1152x2048 input was downscaled,
+  so plate resolution above 720p buys nothing downstream, and there is no
+  resolution or fps field to ask for more — the gateway drops unmapped fields
+  silently. Pro is the only lever on output detail.
 - **`DELIVERY_ENABLED` is false.** The deliver stage logs what it would POST and
   sends nothing until the client confirms the webhook contract.

@@ -84,7 +84,15 @@ Idempotent on (photo, phone). `--address` is what the CARD prints; what the
 voice SAYS defaults to the last segment of it, override with `--spoken-place`.
 
 ```bash
-uv run castrol seed-job --photo spikes/in/mechanic2.jpg --plate spikes/in/plate_bg2.png --name "Amit Kumar" --workshop "Ganesh Car Service" --address "Beturkar Pada, Opposite New National Hospital, Andheri" --phone 9773128990 --uniform u1_tshirt --background bg2_dark_sedan
+uv run castrol seed-job --photo spikes/in/mechanic2.jpg --plate spikes/in/plate_bg2.png --uniform-ref spikes/in/uniform_u1.png --name "Amit Kumar" --workshop "Ganesh Car Service" --address "Beturkar Pada, Opposite New National Hospital, Andheri" --phone 9773128990 --uniform u1_tshirt --background bg2_dark_sedan
+```
+
+Register plate artwork for one combination, and the uniform reference the image
+edit uses as its third input. Append-only (invariant 31): the current row is
+retired and a new one inserted. Free, runs nothing.
+
+```bash
+uv run castrol register-plate --plate plates/plate_02.png --uniform u1_tshirt --background bg2_dark_sedan --uniform-ref plates/uniform_u1.png --approved-by "final artwork 2026-09-09 - client-approved"
 ```
 
 ```bash
@@ -322,6 +330,7 @@ rules, not application code.
 | **The script text** and spoken overrides | [`prep/script.py`](src/castrol_pipeline/prep/script.py) |
 | Phone, address, numerals for speech | [`prep/normalise.py`](src/castrol_pipeline/prep/normalise.py) |
 | `outfit` + `background` → plate | [`prep/plates.py`](src/castrol_pipeline/prep/plates.py) |
+| Plate + uniform reference registration | [`seed.py:register_plate`](src/castrol_pipeline/seed.py) |
 | Export pull (**CSV, BOM**), validation, dedupe | [`intake/`](src/castrol_pipeline/intake/) |
 | Create one job by hand | [`seed.py`](src/castrol_pipeline/seed.py) |
 | Every env var and pinned model id | [`config.py`](src/castrol_pipeline/config.py) / [`.env.example`](.env.example) |
@@ -344,6 +353,7 @@ and [`docs/TECH_DESIGN.md` §3](docs/TECH_DESIGN.md).
 | Input | Source | Used for |
 |---|---|---|
 | Plate (uniform + background) | frozen, chosen by export `outfit` + `background` | the scene |
+| Uniform reference | frozen, registered on the plate row | garment detail, third input to the image edit |
 | Mechanic photo | export `image_url` | face/build swapped onto the plate |
 | Name | export `user_name` | **spoken** + card |
 | Workshop name | export `workshop_name` | **spoken** + card |
@@ -373,7 +383,7 @@ cost = $0.014 + seconds x $0.040886        (25s ~ $1.04)
 ```
 
 The video step is **96.5%** of it and bills per output second, so runtime is
-the only lever worth pulling. `ai-avatar-pro` doubles the total. kie ceils to
+the only lever worth pulling. `ai-avatar-pro` doubles the total and is **ruled out permanently** (2026-09-10) — do not propose it as a quality fix, and do not offer a standard-vs-pro comparison render. It was declined, not overlooked. kie ceils to
 whole seconds, so 24.8s bills as 25s.
 
 ## Invariants
@@ -411,10 +421,22 @@ The personalisation card is a deterministic Pillow render burned in with ffmpeg
 after video generation. Keep it that way.
 
 **6. Geometry is preserved in stage B.**
-*`stages/vendors.py:IMAGE_PROMPT`*
+*`stages/vendors.py:image_prompt()`, pinned by [`tests/test_image_prompt.py`](tests/test_image_prompt.py)*
 The card sits at a fixed pixel position. If person replacement shifts subject
 scale or the belt line, the card lands on the mechanic's hands. Change /
 Preserve / Constrain prompt structure is deliberate.
+
+The **uniform reference** is the sharpest way to break this, and the reason the
+prompt is now built rather than fixed. A second picture of the same garment,
+framed differently, is an invitation to reframe - so its clause says, in the
+clause itself, that fit, size and position come from the first image and that
+the flat shot's own framing is irrelevant. It also opens by putting the uniform
+OUTSIDE the one change: it is still one generation and one edit, and a clause
+that reads as a second instruction contradicts `Make EXACTLY ONE change` two
+paragraphs above it - the same self-argument invariant 29 records degrading the
+avatar prompt. A plate with no reference gets the
+two-image prompt, which must never mention a third image: an ordinal pointing
+at an input that was not sent is a prompt the model has to guess at.
 
 **7. Async stages submit and release.**
 *`stages/real.py` (ImageStage, VideoStage), `orchestrator.poll_once`*
@@ -558,14 +580,21 @@ A presigned URL is a bearer credential for one object; the events table is read
 by the admin panel and quoted in support threads. `_scrub()` keeps the path and
 drops the signature.
 
-**31. A plate is never edited in place.**
-*`seed.py:register_plate`*
+**31. A plate is never edited in place - and the uniform reference rides on the
+plate row for the same reason.**
+*`seed.py:register_plate`, `0009_plate_uniform_reference.sql`*
 Replacing a combination's artwork RETIRES the active row and inserts a new one.
 Updating in place looks harmless and silently rewrites history: `jobs.plate_id`
 keeps pointing at the same row, so every job built from the old artwork starts
 claiming it used the new. There is no per-job plate asset to fall back on, so
 that link is the only record of what a video was actually made from — and the
 client intends to revise this artwork.
+
+`uniform_ref_key` therefore lives on the plate row, not in a mutable table keyed
+on `uniform_id`: revising the reference would otherwise rewrite what every
+shipped job claims it was built from. Re-registering does NOT inherit the
+previous row's reference — omitting `--uniform-ref` means a plate without one,
+so the absence of a flag cannot mean two different things depending on history.
 
 **27. The card is rendered by Pillow, after generation, and is free.**
 No generative model ever touches the text. A card revision is an ffmpeg
@@ -582,10 +611,29 @@ movement and hand gesture. The inherited default was literally `"."` — correct
 lipsync, hands locked at rest for the whole take. Keep it to a few sentences in
 the model's documented shape (subject / expression / motion / style
 preservation); long, contradictory, or image-contradicting prompts measurably
-degrade output. Two clauses are ours, not the model's: gestures at **chest
-height**, because the card is an opaque overlay over 66–82% of frame height
-and a waist-level gesture happens behind it; and off the **chest logo**, which is
-what the video is for.
+degrade output.
+
+**The prompt asks for no hand GESTURES — but it does ask for calm, natural
+motion.** Three paid revisions each found a new way for this model to render
+gesturing hands badly: a looped, smeared gesture; both hands clawed across the
+chest panel; clean open palms that still rose to chest level. In the source
+image the hands already rest at ~71–78% of frame height and the card is an
+opaque overlay across 66–82%, so hands left where they are are BEHIND it and
+never on screen. `calm` is load-bearing and is not a synonym for `slow`: slow
+bounds per-frame displacement, which is what stopped r1's smear, while calm
+bounds intent. Frozen hands are their own defect — a still photograph with a
+talking head pasted on. Every hand failure
+becomes invisible rather than merely less likely, and the face carries the
+video — which is the part this model has always done well.
+
+The old objection was that a waist-level gesture "happens behind the card, so
+the viewer sees a hand enter frame and vanish". That is an objection to hands
+CROSSING the boundary. Nothing enters or vanishes if nothing moves.
+
+Two rules survive from the revisions that bought them: never pair a placement
+with an exclusion naming the same region (r2's "at chest height ... clear of the
+chest logo" is how a hand ended up on the logo), and never ask for individuated
+fingers (r2's "counting gesture" is where the claw came from).
 
 **30. The avatar prompt is hashed as TEXT, not as a version string.**
 *`stages/real.py:VideoStage._params`*
@@ -703,6 +751,18 @@ a layout rule.
 
 `address_normalized` holds the **spoken** form, not a tidied postal address.
 `address_raw` is what the card prints.
+
+**The image edit takes a third input: a plain-background shot of the uniform.**
+Added 2026-09-10, migration `0009`. Stage B was asking the model to keep the
+plate's garment while redrawing the body inside it, so fabric, seams and the
+printed marks were reconstructed rather than copied — and the chest logo is what
+the video is for. `plates.uniform_ref_key` is nullable and NONE of the six
+active rows has one yet: until the artwork is registered, every plate submits
+the two images it always did, on the prompt it always did. Switching a
+combination on is one `register-plate` call, and the reference is in the image
+stage's `input_hash`, so jobs that have not run stage B regenerate rather than
+skip. Prove a reference through `spikes/prototype.py --uniform-ref` (~$0.014)
+before registering it — the same edit, without the $1 video behind it.
 
 **All six plates are FINAL, registered and active** — 2026-09-09,
 `approved_by = "final artwork 2026-09-09 - client-approved"`, all 1536x2752.

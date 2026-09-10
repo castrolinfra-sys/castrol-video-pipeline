@@ -94,8 +94,6 @@ class Settings(BaseSettings):
     video_model_id: str = "kling/ai-avatar-standard"
     lipsync_repair_model_id: str | None = None
 
-    #: Doubles the cost of the only expensive step. Off until reviewed.
-    video_use_pro: bool = False
 
     # -------------------------------------------------------------- pipeline --
     script_version: str = "v1"
@@ -105,7 +103,11 @@ class Settings(BaseSettings):
     # with the type scaled to fit. In the composite input_hash, so bumping it
     # re-renders and re-burns every open job. That is free — the composite
     # stage is local ffmpeg only.
-    card_template_version: str = "v2"
+    # v3 (2026-09-10): not a card change. The composite now TRIMS the video to
+    # the audio stream, cutting the ~1.9s silent tail kling-avatar-v2 returns
+    # after the speech ends. This version covers the composite OUTPUT, not just
+    # the card artwork, so anything that changes what composite emits bumps it.
+    card_template_version: str = "v3"
 
     max_concurrency_audio: int = 4
     max_concurrency_image: int = 4
@@ -130,6 +132,24 @@ class Settings(BaseSettings):
     #: kie has been seen at 20 minutes; 90 is a ceiling, not an expectation.
     #: Without it a lost task sits `running` forever and never reports.
     vendor_task_timeout_s: int = 5400
+
+    @property
+    def video_is_pro(self) -> bool:
+        """Whether the avatar model actually being submitted is the pro variant.
+
+        DERIVED from `video_model_id`, never configured alongside it. This used
+        to be an independent `VIDEO_USE_PRO` flag, and nothing coupled the two:
+        the flag drove the cost reservation and the input_hash while the model
+        id alone decided what was sent. Either could be set without the other,
+        and one of those directions is silent and expensive — pointing
+        VIDEO_MODEL_ID at `kling/ai-avatar-pro` without the flag billed the
+        run at the standard rate and under-reserved 2x on the ONLY expensive
+        step, which is exactly the hole the budget cap exists to close.
+
+        The model id is the single source of truth because it is the thing
+        that leaves the process. Cost cannot disagree with what was submitted.
+        """
+        return "pro" in (self.video_model_id or "").lower()
 
     def require(self, name: str) -> str:
         """Return a setting, or fail loudly naming the env var to set."""

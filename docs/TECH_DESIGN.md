@@ -216,7 +216,7 @@ only redoes the stages whose inputs actually moved.
 |---|---|
 | prep | canonical(`submissions.raw`) + `SCRIPT_VERSION` + normalise rules version |
 | audio | script text + `TTS_VOICE_ID` + `TTS_MODEL_ID` |
-| image | plate sha256 + source photo sha256 + prompt version + `IMAGE_EDIT_MODEL_ID` |
+| image | plate sha256 + source photo sha256 + uniform-ref sha256 (`""` if none) + prompt version + `IMAGE_EDIT_MODEL_ID` |
 | video | image_edit sha256 + audio sha256 + `VIDEO_MODEL_ID` + params |
 | composite | video-in sha256 + canonical(card payload) + card template version |
 | publish | video_final sha256 |
@@ -337,6 +337,7 @@ apimart is poll-only with a 2700s ceiling and an observed 644s worst case.
 ```
 s3://<bucket>/castrol/
   plates/<uniform>_<bg>/<sha256>.png       frozen, approved
+  uniforms/<uniform>/<sha256>.png          garment detail reference, optional
   jobs/<job_id>/source.<ext>               mechanic photo, our copy
   jobs/<job_id>/audio.wav
   jobs/<job_id>/image_edit.png
@@ -457,15 +458,78 @@ chest and sleeve Castrol marks are re-rendered on a torso whose shape varies
 per person. They cannot be composited. That is why the logo check is
 load-bearing rather than nice-to-have.
 
+**The uniform reference** (migration `0009`) is the answer to that same fact. If
+the garment is going to be redrawn on every job, the model should be copying it
+from a flat shot on a plain background rather than reconstructing it off a
+figure it is simultaneously changing. It is a third `image_urls` entry —
+`[plate, mechanic, uniform]`, and the prompt addresses them by ordinal, so the
+order is load-bearing — plus one extra prompt clause, both switched on by the
+job's plate row having a `uniform_ref_key`. Three references stays well inside
+the ~4 cap, and none of them is generated (invariant 17): this is client
+artwork, exactly like the plate.
+
+It stays ONE generation and ONE change, and the clause is written to keep it
+that way. The uniform is something that must not change; the third image only
+says what it already looks like. Phrased as an instruction - "reproduce these
+details" - it contradicts `Make EXACTLY ONE change` two paragraphs above, so it
+opens by excluding itself from that change instead.
+
+The rest of the clause is defensive about geometry. A second image of the same
+garment, framed differently, is the most direct route to the reframe invariant 6
+exists to prevent, so the clause itself scopes the third image to fabric, seams,
+collar and printed marks, and says fit, size and position come from the first
+image.
+[`tests/test_image_prompt.py`](../tests/test_image_prompt.py) pins that the
+geometry constraints survive in both prompts and that the two-image prompt
+never names a third image.
+
+The reference hangs off the plate ROW rather than a `uniform_id` lookup, so
+invariant 31 covers it: `jobs.plate_id` stays the one honest record of the
+artwork a video was built from, reference included.
+
 ### C — video
 The `prompt` field is REQUIRED on kie (max 5000 chars) and is not decorative:
 it steers expression, head movement and hand gesture. `AVATAR_PROMPT` in
 [`stages/vendors.py`](../src/castrol_pipeline/stages/vendors.py) follows the
 model's documented shape — subject, expression, motion, style preservation, in
-a few sentences — and carries two constraints that come from our own pipeline
-rather than from the model: gestures stay at **chest height** so they are not
-hidden behind the card overlay (66-82% of frame height), and off the **chest
-logo**, which is the point of the video. The text is hashed directly, so
+a few sentences — and carries constraints that come from our own pipeline
+rather than from the model. The largest is that it asks for **no hand
+gestures**: hands stay at waist level exactly where the source image has them,
+moving only with calm, slow, natural motion. `calm` and `slow` are both
+required and say different things — slow bounds per-frame displacement, which
+is the mechanical cause of smear; calm bounds intent. Neither means frozen,
+which reads as a still photograph with a talking head pasted on.
+
+That is the conclusion of three paid revisions, each of which found a different
+way for this model to render moving hands badly - r1 looped and smeared one
+gesture; r2 named three at "chest height ... clear of the chest logo", a
+position and an exclusion pointing at the same region, and both hands came back
+clawed across the chest panel; r3 bounded the band on both sides and dropped the
+finger-counting, which produced clean open palms that still rose to chest level
+for no return.
+
+The card is an opaque overlay across 66-82% of frame height and the hands
+already rest at ~71-78%, so hands left alone are behind it and never on screen.
+The earlier objection - a waist-level gesture "happens behind the card, so the
+viewer sees a hand enter frame and vanish" - is an objection to hands CROSSING
+that boundary, not to hands resting below it. What carries the video is the
+face, which is the part this model has always done well: the inherited "."
+default gave correct lipsync and natural head motion, and only the hands were
+ever the problem.
+
+**Output is 720x1280 whatever the input.** A 1152x2048 image was downscaled, so
+plate resolution above 720p buys nothing downstream. There is no resolution or
+fps field to raise it: the gateway's parameter mapping is a strict allowlist and
+drops anything unmapped without erroring. The pro variant would be the only lever on
+output detail and is **ruled out permanently** (2026-09-10): it doubles the cost
+of the step that is already ~96% of the bill. So 720x1280 is the ceiling, and
+the chest `MAGNATEC` mark smearing during the avatar pass has no model-side fix
+left — every prompt-side cause was eliminated across prompt revisions r2-r5.
+
+`video_is_pro` is nonetheless derived from `VIDEO_MODEL_ID` rather than set by a
+separate flag. It is now a guard rather than a switch: if anyone ever points the
+model id at pro, the reservation follows it instead of silently under-reserving
+by 2x. The text is hashed directly, so
 editing it regenerates rather than silently skipping.
 
 `kling-avatar-v2` on kie. Async submit, `vendor_task_id` stored, poller

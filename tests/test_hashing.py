@@ -51,6 +51,27 @@ class TestModelIdIsInTheHash:
             "p", "ph", "v1", "m2"
         )
 
+    def test_image_hash_moves_when_a_uniform_reference_is_added(self):
+        # Registering the uniform reference against a plate must REGENERATE.
+        # It is a third input to the edit and it swaps the prompt for the
+        # three-image one, so a job that skipped here would ship a video made
+        # the old way while the plate row says otherwise.
+        assert hashing.image_hash("p", "ph", "v1", "m") != hashing.image_hash(
+            "p", "ph", "v1", "m", uniform_ref_sha256="u"
+        )
+
+    def test_image_hash_moves_when_the_uniform_reference_is_replaced(self):
+        assert hashing.image_hash(
+            "p", "ph", "v1", "m", uniform_ref_sha256="u1"
+        ) != hashing.image_hash("p", "ph", "v1", "m", uniform_ref_sha256="u2")
+
+    def test_no_uniform_reference_is_the_same_as_the_empty_one(self):
+        # The default and an explicit "" are the same fact - a plate with no
+        # reference - and must not be two different hashes.
+        assert hashing.image_hash("p", "ph", "v1", "m") == hashing.image_hash(
+            "p", "ph", "v1", "m", uniform_ref_sha256=""
+        )
+
     def test_video_hash_moves_with_params(self):
         assert hashing.video_hash("i", "a", "m", {"fps": 25}) != hashing.video_hash(
             "i", "a", "m", {"fps": 30}

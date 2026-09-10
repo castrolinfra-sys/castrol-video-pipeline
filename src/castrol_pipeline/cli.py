@@ -2,6 +2,7 @@
 
     doctor      config + database reachable
     seed-job    create one job by hand from local files   -> seed.py
+    register-plate  activate plate artwork + uniform ref  -> seed.py
     intake      pull an export window                     -> intake/runner.py
     cycle       pull + work everything, unattended        -> cycle.py
     schedule    enqueue ready stages                      -> orchestrator.py
@@ -122,6 +123,14 @@ def seed_job_cmd(
     plate_id: Annotated[
         str | None, typer.Option("--plate-id", help="Use an already-registered plate")
     ] = None,
+    uniform_ref: Annotated[
+        str | None,
+        typer.Option(
+            "--uniform-ref",
+            help="Plain-background shot of the uniform, handed to the image edit "
+                 "as a third input. Only read alongside --plate.",
+        ),
+    ] = None,
     spoken_place: Annotated[
         str | None,
         typer.Option(
@@ -150,6 +159,7 @@ def seed_job_cmd(
         photo=Path(photo),
         plate=Path(plate) if plate else None,
         plate_id=plate_id,
+        uniform_ref=Path(uniform_ref) if uniform_ref else None,
         name=name,
         workshop=workshop,
         address=address,
@@ -159,6 +169,60 @@ def seed_job_cmd(
         background_id=background,
     )
     typer.echo(json.dumps(out, indent=2))
+
+
+@app.command("register-plate")
+def register_plate_cmd(
+    plate: Annotated[str, typer.Option(help="Plate artwork (local file)")],
+    uniform: Annotated[str, typer.Option(help="uniform_id, e.g. u1_tshirt")],
+    background: Annotated[str, typer.Option(help="background_id, e.g. bg2_dark_sedan")],
+    uniform_ref: Annotated[
+        str | None,
+        typer.Option(
+            "--uniform-ref",
+            help="Plain-background shot of the uniform. Handed to the image edit "
+                 "as a third reference so the garment's fabric and printed marks "
+                 "are copied rather than reconstructed. Omit and this "
+                 "combination submits plate + photo only.",
+        ),
+    ] = None,
+    approved_by: Annotated[
+        str, typer.Option("--approved-by", help="Who approved this artwork")
+    ] = "register-plate",
+) -> None:
+    """Upload plate artwork for one combination and make it the active one.
+
+    Append-only: the current row for this combination is RETIRED and a new one
+    inserted, so every job keeps pointing at the artwork it was actually built
+    from (invariant 31). Registering is also how a uniform reference is
+    attached or removed — there is no in-place edit, deliberately.
+
+    The reference belongs to the uniform, not the background, so the same file
+    is normally registered against all three of that uniform's combinations. It
+    is content-addressed in S3, so doing that uploads one object.
+
+    Costs nothing and runs nothing. Existing jobs are untouched; new ones pick
+    up the new row. A job that has not yet run its image stage will regenerate
+    rather than skip, because the reference is in that stage's input_hash.
+    """
+    _boot()
+    from pathlib import Path
+
+    from .seed import register_plate
+
+    plate_id = register_plate(
+        Path(plate),
+        uniform_id=uniform,
+        background_id=background,
+        approved_by=approved_by,
+        uniform_ref=Path(uniform_ref) if uniform_ref else None,
+    )
+    typer.echo(json.dumps({
+        "plate_id": plate_id,
+        "uniform_id": uniform,
+        "background_id": background,
+        "uniform_ref": bool(uniform_ref),
+    }, indent=2))
 
 
 @app.command()
