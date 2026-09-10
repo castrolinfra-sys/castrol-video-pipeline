@@ -25,13 +25,13 @@ from .normalise import expand_for_speech
 #:     sentence, and this is the text that produced the approved audio.
 SCRIPT_TEMPLATES: dict[str, str] = {
     "v1": (
-        "Main hoon {name}, {workshop} se. Service ho, repair ho ya engine ki "
-        "dikkat, main har gaadi ka khayal rakhta hoon.\n"
+        "Mai hoon {name}, {workshop} se. Service ho, repair ho ya engine ki "
+        "dikkat, mai har gaadi ka khayal rakhta hoon.\n"
         "Gaadi start hote hi pehle 8 seconds mein engine parts ka sabse zyada "
-        "wear hota hai. Isi wear se bachane ke liye main recommend karta hoon "
+        "wear hota hai. Isi wear se bachane ke liye mai recommend karta hoon "
         "Castrol Magnatec Full Synthetic Premium Oil- jo engine start hone se "
         "pehle hi protection dena shuru karta hai.\n"
-        "Aaiye {locality} par, ya screen par diye number par call karein."
+        "Aaiye {locality} par, ya screen par diye number par call kare."
     ),
 }
 
