@@ -101,8 +101,9 @@ _PROMPT_PRESERVE = """\
 Reproduce this image EXACTLY as-is. Same camera framing, same crop, same \
 subject scale, same head position, same shoulder line, same belt line, same \
 pose, same hand position, same background, same lighting, same uniform \
-geometry, and every Castrol and MAGNATEC logo, on the cap, the chest panel, \
-the sleeve and the overhead banner, identical in placement, size and colour.
+geometry, the Castrol mark on the chest panel and the Castrol MAGNATEC \
+overhead banner, identical in placement, size and colour. The chest panel's \
+Castrol mark is the uniform's only branding, and the sleeves are plain.
 
 Make EXACTLY ONE change: replace the person with the person in the second \
 reference image. It is that person standing there, not the first person \
