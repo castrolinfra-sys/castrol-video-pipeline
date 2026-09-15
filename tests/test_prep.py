@@ -155,8 +155,51 @@ class TestSpeechExpansion:
         assert expand_for_speech("999") == "999"
         assert expand_for_speech("1000") != "1000"
 
-    def test_expands_abbreviations(self):
-        assert "Road" in expand_for_speech("MG Rd.")
+    @pytest.mark.parametrize(
+        "text,said",
+        [
+            ("MG Rd.", "MG Road"),
+            ("MG rd", "MG Road"),          # mechanics type their own addresses
+            ("MG RD.", "MG Road"),
+            ("nr station", "Near station"),
+            ("Opp. metro", "Opposite metro"),
+            ("Bldg 4 mkt road", "Building 4 Market road"),
+            ("A & B Motors", "A and B Motors"),
+        ],
+    )
+    def test_expands_abbreviations_in_any_casing(self, text, said):
+        assert expand_for_speech(text) == said
+
+    @pytest.mark.parametrize(
+        "text,said",
+        [
+            ("Shop no S8", "Shop Number S8"),   # the reported bug: read as "n o"
+            ("Shop No. 8", "Shop Number 8"),
+            ("shop no 12", "shop Number 12"),
+            ("Sec 3 Asian market", "Sector 3 Asian market"),
+        ],
+    )
+    def test_no_becomes_number_when_a_number_follows(self, text, said):
+        assert expand_for_speech(text) == said
+
+    @pytest.mark.parametrize("text", ["No Limits Motors", "no parking zone"])
+    def test_no_is_left_alone_when_it_is_the_english_word(self, text):
+        # A following number is the whole signal. Without it "no" is ordinary
+        # English and a workshop name is spoken verbatim.
+        assert expand_for_speech(text) == text
+
+    @pytest.mark.parametrize("text", ["St Xavier Road", "Mo Ibrahim Motors"])
+    def test_ambiguous_abbreviations_need_their_dot(self, text):
+        # Bare "st" and "mo" are a name far more often than Street and Mobile.
+        # The old table got this right by being case-sensitive AND dotted;
+        # making it case-insensitive is what would have broken it.
+        assert expand_for_speech(text) == text
+
+    @pytest.mark.parametrize("text", ["Nowrosjee Wadia Road", "1st floor"])
+    def test_abbreviations_match_whole_words_only(self, text):
+        # These were substring replaces: "rd" -> "Road" rewrote any word
+        # containing it. Nothing in the data had tripped it yet.
+        assert expand_for_speech(text) == text
 
     def test_is_not_applied_to_card_text(self):
         # Guard against the two paths being confused: fill_script must keep the

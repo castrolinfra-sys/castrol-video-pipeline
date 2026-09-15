@@ -14,7 +14,7 @@ import re
 
 #: Bumped whenever any rule below changes. It is part of the prep input_hash,
 #: so bumping it is what forces affected jobs to regenerate rather than skip.
-NORMALISE_RULES_VERSION = "v2"
+NORMALISE_RULES_VERSION = "v3"
 
 _WS = re.compile(r"\s+")
 
@@ -106,19 +106,74 @@ NUMERAL_WORDS: dict[str, str] = {
     "5": "paanch", "6": "chhah", "7": "saat", "8": "aath", "9": "nau",
 }
 
-#: Abbreviations that a TTS voice reliably mangles. Extend as real data shows up.
+#: Abbreviations a TTS voice reliably mangles, keyed WITHOUT the trailing dot
+#: and matched case-insensitively on whole words. Mechanics type their own
+#: addresses, so the same abbreviation arrives as `Rd.`, `rd`, `RD.` and `Rd`,
+#: and only one of those used to be caught.
+#:
+#: Matching is on word boundaries because these were plain substring replaces:
+#: `Rd` -> `Road` rewrote any word containing it, which is a mispronounced
+#: workshop name waiting for the first mechanic whose road is `Rdaway`. Nothing
+#: in the data had tripped it, which is the only reason it was not already a bug.
 ABBREVIATIONS: dict[str, str] = {
-    "&": " and ",
-    "Mo.": "Mobile",
-    "Rd.": "Road",
-    "Rd": "Road",
-    "St.": "Street",
-    "Nr.": "Near",
-    "Opp.": "Opposite",
-    "Pvt.": "Private",
-    "Ltd.": "Limited",
-    "No.": "Number",
+    "rd": "Road",
+    "nr": "Near",
+    "opp": "Opposite",
+    "pvt": "Private",
+    "ltd": "Limited",
+    "bldg": "Building",
+    "mkt": "Market",
+    "soc": "Society",
 }
+
+#: Abbreviations that are only safe WITH their dot, because the bare letters are
+#: an ordinary word or a name. Matching these case-insensitively without the dot
+#: is how `St Xavier Road` becomes `Street Xavier Road` and `Mo Ibrahim Motors`
+#: becomes `Mobile Ibrahim Motors` - both of which the old dotted-only,
+#: case-sensitive table got right by accident and are easy to break by tidying
+#: it. `St.` is left as Street rather than Saint because this is an address
+#: field; a mechanic writing a saint's name keeps the dot either way and loses.
+#: Neither has appeared in real data yet.
+ABBREVIATIONS_DOTTED: dict[str, str] = {
+    "mo": "Mobile",
+    "st": "Street",
+}
+
+#: Abbreviations that are only expanded when a NUMBER follows, because the bare
+#: word means something else. `no` is the one that matters - "Shop no S8" was
+#: read out as the letters "n o" - but it is also plain English, and a workshop
+#: called "No Limits Motors" must not become "Number Limits Motors". Requiring a
+#: following number is what separates the two, and an address is the only place
+#: these appear anyway.
+ABBREVIATIONS_BEFORE_NUMBER: dict[str, str] = {
+    "no": "Number",
+    "nos": "Number",
+    "sec": "Sector",
+    "ph": "Phase",
+    "blk": "Block",
+    "flr": "Floor",
+}
+
+#: `&` is not a word and cannot take a boundary, so it stays a plain replace.
+_AMPERSAND = "&"
+
+#: An optional dot, then whitespace, then a token that CONTAINS a digit - so
+#: "no 8", "no. 8", "no S8" and "no-8" all qualify and "no parking" does not.
+_FOLLOWED_BY_NUMBER = r"\.?(?=[\s.,-]*[A-Za-z]?\d)"
+
+_ABBR = re.compile(
+    r"\b(" + "|".join(sorted(ABBREVIATIONS, key=len, reverse=True)) + r")\b\.?",
+    re.IGNORECASE,
+)
+_ABBR_DOTTED = re.compile(
+    r"\b(" + "|".join(sorted(ABBREVIATIONS_DOTTED, key=len, reverse=True)) + r")\.",
+    re.IGNORECASE,
+)
+_ABBR_NUM = re.compile(
+    r"\b(" + "|".join(sorted(ABBREVIATIONS_BEFORE_NUMBER, key=len, reverse=True))
+    + r")\b" + _FOLLOWED_BY_NUMBER,
+    re.IGNORECASE,
+)
 
 
 #: Short runs are QUANTITIES and long runs are SEQUENCES. Four is the boundary
@@ -153,10 +208,15 @@ def expand_for_speech(text: str) -> str:
     'twenty-four'. That holds for a name and not for an address, and addresses
     are where the digits in this script actually come from - the workshop name
     is spoken verbatim and rarely carries a number at all.
+
+    Abbreviations expand first, and the number-dependent ones before the plain
+    ones: `sec` is in both tables in spirit, and "Sector 3" is only right when a
+    number follows.
     """
-    out = text
-    for abbr, full in ABBREVIATIONS.items():
-        out = out.replace(abbr, full)
+    out = text.replace(_AMPERSAND, " and ")
+    out = _ABBR_NUM.sub(lambda m: ABBREVIATIONS_BEFORE_NUMBER[m.group(1).lower()], out)
+    out = _ABBR_DOTTED.sub(lambda m: ABBREVIATIONS_DOTTED[m.group(1).lower()], out)
+    out = _ABBR.sub(lambda m: ABBREVIATIONS[m.group(1).lower()], out)
 
     def read(match: re.Match[str]) -> str:
         run = match.group()
