@@ -1,7 +1,7 @@
 import { Problem } from "../problem";
 import UsageChart, { type Day } from "./chart";
 import { db, queryDeadline } from "@/lib/db";
-import { countOf, dayLabel, duration, num, pct } from "@/lib/format";
+import { countOf, dayLabel, duration, num, pct, secs } from "@/lib/format";
 import { istDay } from "@/lib/range";
 import { BigDuration, PageHead } from "../ui";
 
@@ -73,7 +73,7 @@ export default async function Usage() {
         <div className="label">Total video delivered, all time</div>
         <BigDuration seconds={all.seconds} />
         <div className="dim">
-          {num(Math.round(all.seconds))} seconds across {countOf(all.completed, "video")}
+          {num(Math.ceil(all.seconds))} seconds across {countOf(all.completed, "video")}
         </div>
       </div>
 
@@ -89,7 +89,7 @@ export default async function Usage() {
         <Stat label="Failure rate" value={pct(all.failed, finished)} sub={`${num(all.failed)} failed`} />
         <Stat
           label="Average length"
-          value={all.completed ? `${(all.seconds / all.completed).toFixed(1)}s` : "—"}
+          value={all.completed ? secs(all.seconds / all.completed) : "—"}
           sub="per delivered video"
         />
         <Stat
@@ -138,7 +138,7 @@ export default async function Usage() {
                     {r.failed ? <span aria-hidden="true">● </span> : null}
                     {num(r.failed)}
                   </td>
-                  <td className="num">{r.seconds.toFixed(1)}</td>
+                  <td className="num">{num(Math.ceil(r.seconds))}</td>
                   <td className="num dim">{duration(r.seconds)}</td>
                 </tr>
               ))}

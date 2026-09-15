@@ -46,11 +46,21 @@ export function dayLabel(v: string | null | undefined): string {
   return DATE_ONLY.format(new Date(Date.UTC(y, m - 1, d, 12)));
 }
 
-/** One video's length. Kept in seconds, because that is the unit of the bill. */
+/**
+ * One video's length. Kept in seconds, because that is the unit of the bill.
+ *
+ * CEILED to a whole second, never rounded and never shown with a decimal
+ * (changed 2026-09-15; this used to print one decimal place). Ceiling is not a
+ * cosmetic choice - it is what the vendor does. kie bills per output second and
+ * rounds UP, so a 24.2s render is billed as 25s; printing "24.2s" showed a
+ * number the client is not charged for and that matches no invoice line.
+ * Rounding to nearest would be worse than the decimal, because it would
+ * sometimes report LESS than was billed.
+ */
 export function secs(v: number | string | null | undefined): string {
   if (v === null || v === undefined || v === "") return "—";
   const n = typeof v === "string" ? Number(v) : v;
-  return Number.isFinite(n) ? `${n.toFixed(1)}s` : "—";
+  return Number.isFinite(n) ? `${Math.ceil(n)}s` : "—";
 }
 
 /**
@@ -65,7 +75,8 @@ export function secs(v: number | string | null | undefined): string {
 export function duration(v: number | string | null | undefined): string {
   const n = typeof v === "string" ? Number(v) : (v ?? 0);
   if (!Number.isFinite(n) || n <= 0) return "0s";
-  const total = Math.round(n);
+  // Ceil, not round - same reason as secs(): the bill rounds up.
+  const total = Math.ceil(n);
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
@@ -84,7 +95,8 @@ export function durationParts(
 ): Array<[string, string]> {
   const n = typeof v === "string" ? Number(v) : (v ?? 0);
   if (!Number.isFinite(n) || n <= 0) return [["0", "s"]];
-  const total = Math.round(n);
+  // Ceil, not round - same reason as secs(): the bill rounds up.
+  const total = Math.ceil(n);
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;

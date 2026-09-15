@@ -170,9 +170,9 @@ Reads the pipeline's tables directly; the one thing it writes is `job_reports`.
 
 **It is a CLIENT-facing surface, not our operations console.** It must never
 show cost, vendor, model id, stage, retry attempts, or an internal error code —
-the metric it reports is DURATION. Specifically the **render** length, to one
-decimal, which is what kie billed us and what the client is billed on — not the
-shorter trimmed file that ships (migration `0010`). That line is held
+the metric it reports is DURATION. Specifically the **render** length, which is
+what kie billed us and what the client is billed on — not the shorter trimmed
+file that ships (migration `0010`). That line is held
 structurally rather than by care: the pages read
 [`job_usage` / `daily_usage`](supabase/migrations/0007_usage_views_for_the_panel.sql),
 views with no cost or vendor column in them, and `lib/format.ts` has no money
@@ -299,16 +299,80 @@ Two things that look like omissions and are not:
   already splits those per route. The build output is the proof: `/usage` 205 kB
   First Load, every other route 102–107 kB. recharts never leaves that page.
 
+**Every duration is CEILED to a whole second, and shown without a decimal.**
+Changed 2026-09-15, replacing the one-decimal form. Ceiling is not cosmetic: kie
+bills per output second and rounds UP, so a 24.2s render is billed as 25s and
+"24.2s" was a number the client is not charged for and that matches no invoice
+line. Rounding to NEAREST would be worse than the decimal, because it would
+sometimes report less than was billed. `lib/format.ts` is the only place this
+is decided - `secs()`, `duration()` and `durationParts()` all ceil, and the
+Usage page's three hand-rolled `toFixed(1)` call sites were folded back into it
+so they cannot drift again.
+
+**The ceiling that MATTERS is in the view, not in `format.ts`.** Migration
+[`0014`](supabase/migrations/0014_ceil_the_billed_second.sql) moved it there,
+because two ways of under-recovering could not be fixed in the panel at all:
+
+- `0010` rounded `video_seconds` to one decimal IN SQL, and rounding can cross
+  an integer boundary downward — a true 27.04s became `27.0`, which ceils to 27
+  where kie billed 28. The panel cannot recover a second SQL already discarded.
+- Totals ceiled the SUM instead of summing the ceilings. kie issues one charge
+  per render, each rounded up on its own, so the nine renders of 2026-09-14 bill
+  at 250s; ceiling their 245.1s total gave 246s, a figure matching no invoice.
+
+`daily_usage` therefore sums already-ceiled integers and its re-round from
+`0010` is gone. `Math.ceil` in `format.ts` stays as a no-op guard for the day
+someone edits that expression back.
+
 **Jobs fetches `limit(501)` and drops the 501st.** It does not use
 `{ count: "exact" }` — that makes PostgREST run a real `COUNT(*)` over the
 filtered view on every load, a second scan to print a total nobody acts on.
 "First 500" answers the only question that matters.
 
-Skeletons (`loading.tsx` per route) exist because every page is
-`force-dynamic` against Supabase, so there is always a real wait. Note that
-`<Link>` prefetch is **disabled in development** — the instant-navigation
-behaviour only appears in a production build, which is why `npm run dev` feels
-slower than the deployed panel and is not evidence of a problem.
+**Jobs STREAMS, and the page itself fetches nothing.** It returns the shell
+and the filter chips immediately and awaits the table inside a `<Suspense>`
+boundary, because awaiting the whole query first means one slow read holds up
+the entire response — which on a client-side navigation is indistinguishable
+from a broken app: the URL changes, the chip spinner turns, nothing arrives.
+
+That boundary is **keyed on `range:q`** and the key is load-bearing. A `<Link>`
+that alters only the query string re-renders the SAME route segment, so
+`loading.tsx` never mounts and no skeleton appears on a filter change; changing
+the key makes React show the fallback. The fallback renders the REAL `Filters`,
+not placeholders, so clicking another range mid-load does not hit a dead strip.
+
+**Every panel query carries a 12s deadline** — `queryDeadline()` /
+`QUERY_TIMEOUT_MS` in [`lib/db.ts`](panel/lib/db.ts), passed to
+`.abortSignal(...)`. supabase-js puts no timeout on its fetch, so a stalled
+read waits forever and so does the render above it. Past 12s the query errors
+and surfaces through `<Problem>` — a sentence and a Retry, instead of an
+indefinite hang. Measured healthy reads are 100–300ms, so this is a failure
+valve, not a budget.
+
+**Filter-chip `<Link>`s set `prefetch={false}`, measured rather than cautious.**
+Each chip otherwise fired its own RSC request on every page load — six requests,
+each running middleware and so each paying a `getUser()` round trip — to warm a
+loading-shell cache that a `searchParams` navigation never reads. `useLinkStatus`
+supplies the feedback the browser used to give for free before these became
+`<Link>` rather than `<a>`. Separately, `<Link>` prefetch is **disabled in
+development** regardless, which is why `npm run dev` feels slower than the
+deployed panel and is not evidence of a problem.
+
+Skeletons (`loading.tsx` per route, plus `pending.tsx`) exist because every page
+is `force-dynamic` against Supabase, so there is always a real wait.
+
+**The 404s are split on purpose.** The app-wide `not-found.tsx` carried
+job-specific copy, so every unknown URL was told there was no job with that
+reference; the job wording now lives in `jobs/[id]/not-found.tsx`, where
+`notFound()` actually fires.
+
+**Titles template per page and the whole app is `noindex`.** `layout.tsx` sets
+`title.template = "%s · Castrol pipeline"` and each page sets only its own half,
+which is what makes four open tabs readable. `robots: { index: false }` is a
+meta tag and NOT a `robots.txt` Disallow, deliberately: a Disallow stops a
+crawler reading the page, which stops it seeing the noindex, so the URL can
+still surface from an external link. Middleware redirects every page to
+`/login`, but `/login` itself is crawlable on a public hostname.
 
 ### Checks
 
@@ -408,7 +472,7 @@ keyed on the file's name so a re-run cannot claim a second apply. It did not
 always: 0001–0003 were registered by the Supabase tooling and 0004–0005 were
 not, and a HALF-populated ledger is worse than none, because `supabase db push`
 reads it and would treat applied migrations as pending. Both were backfilled;
-0001–0012 are now applied and registered.
+0001–0014 are now applied and registered.
 
 ### AWS
 
@@ -902,7 +966,7 @@ a deploy. The review gate that removes is real — see the Docker / CI section.
 **The pipeline runs end to end under the orchestrator** against real Supabase,
 real S3 and the real CDN. All eight stages are implemented in
 `stages/real.py`; `USE_STUB_STAGES=true` still swaps in deterministic fakes to
-exercise the DAG without spending. Migrations 0001–0012 are applied.
+exercise the DAG without spending. Migrations 0001–0014 are applied.
 
 Verified on a real job: seed → prep → composite → checks → publish → deliver,
 with the delivered CDN URL returning 200. The three paid stages are the same
