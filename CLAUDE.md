@@ -50,7 +50,7 @@ uv run python spikes/prototype.py --out spikes/out/run1 --only audio --script sp
 
 Steps are resumable via `spikes/out/<run>/_state.json`. To force a completed
 step to re-run, delete its key from that file. Never re-run the video step
-casually — it is ~$0.04 per second of output.
+casually — it is $0.036 per second of output on standard, $0.072 on pro.
 
 ### Pipeline
 
@@ -92,7 +92,7 @@ edit uses as its third input. Append-only (invariant 31): the current row is
 retired and a new one inserted. Free, runs nothing.
 
 ```bash
-uv run castrol register-plate --plate plates/plate_02.png --uniform u1_tshirt --background bg2_dark_sedan --uniform-ref plates/uniform_u1.png --approved-by "final artwork 2026-09-09 - client-approved"
+uv run castrol register-plate --plate plates/plate_02.png --uniform u1_tshirt --background bg2_dark_sedan --uniform-ref uniform/u1_tshirt.png --approved-by "new artwork 2026-09-11 - Castrol-only chest, plain sleeves"
 ```
 
 ```bash
@@ -156,7 +156,9 @@ Reads the pipeline's tables directly; the one thing it writes is `job_reports`.
 
 **It is a CLIENT-facing surface, not our operations console.** It must never
 show cost, vendor, model id, stage, retry attempts, or an internal error code —
-the metric it reports is DURATION, seconds of video delivered. That line is held
+the metric it reports is DURATION. Specifically the **render** length, to one
+decimal, which is what kie billed us and what the client is billed on — not the
+shorter trimmed file that ships (migration `0010`). That line is held
 structurally rather than by care: the pages read
 [`job_usage` / `daily_usage`](supabase/migrations/0007_usage_views_for_the_panel.sql),
 views with no cost or vendor column in them, and `lib/format.ts` has no money
@@ -268,7 +270,10 @@ curl -sS https://api.kie.ai/api/v1/chat/credit -H "Authorization: Bearer $KIE_AP
 ```
 
 apimart reports USD directly (1 apimart credit = $0.10). kie reports its own
-credits at roughly 166 per USD — inferred from a refusal, not confirmed.
+credits at roughly **207 per USD** — measured 2026-09-14, not inferred: a batch
+of nine standard renders totalling 250 billed output seconds consumed exactly
+1864 credits, which at $0.036/s is 7.456 credits per second. The older figure
+of 166 came from reading a refusal message and was wrong by a quarter.
 
 ### Client export
 
@@ -295,7 +300,7 @@ keyed on the file's name so a re-run cannot claim a second apply. It did not
 always: 0001–0003 were registered by the Supabase tooling and 0004–0005 were
 not, and a HALF-populated ledger is worse than none, because `supabase db push`
 reads it and would treat applied migrations as pending. Both were backfilled;
-0001–0008 are now applied and registered.
+0001–0010 are now applied and registered.
 
 ### AWS
 
@@ -379,12 +384,34 @@ use as one; the export's own `id` is.
 ## Cost
 
 ```
-cost = $0.014 + seconds x $0.040886        (25s ~ $1.04)
+standard   cost = $0.014 + seconds x $0.036        (25s ~ $0.91)
+pro        cost = $0.014 + seconds x $0.072        (25s ~ $1.81)
 ```
 
-The video step is **96.5%** of it and bills per output second, so runtime is
-the only lever worth pulling. `ai-avatar-pro` doubles the total and is **ruled out permanently** (2026-09-10) — do not propose it as a quality fix, and do not offer a standard-vs-pro comparison render. It was declined, not overlooked. kie ceils to
-whole seconds, so 24.8s bills as 25s.
+Full tables in [`docs/COST_PER_VIDEO.md`](docs/COST_PER_VIDEO.md), including
+rupees at ₹100 = $1. The video step is ~96% of it and bills per output second,
+so runtime is the only lever worth pulling. kie ceils to whole seconds, so
+24.8s bills as 25s — negligible at a 25s script, a 100% overcharge on a 1s clip.
+
+**`ai-avatar-pro` is the 1080p route and is NOT ruled out.** It was declined on
+2026-09-10 as too expensive, then reinstated on **2026-09-12** when the client
+asked for 1080p: `kling/ai-avatar-standard` returns 720x1280 whatever it is fed
+and `kling/ai-avatar-pro` returns 1072x1920. There is no resolution parameter on
+either endpoint — the model id is the whole switch. The earlier "720x1280 is the
+ceiling" claim measured a *standard* render and generalised it into a property
+of the model; it is a property of the TIER. Do not cite the old decision as
+standing.
+
+**`VIDEO_MODEL_ID` alone decides both what is submitted and what is reserved.**
+`Settings.video_is_pro` derives from it, so the budget cannot disagree with what
+was sent. There is no separate `VIDEO_USE_PRO` — there was, and setting one
+without the other silently under-reserved by 2x on the only expensive step.
+
+**Three different rates are written down in this repo and they do not agree.**
+`common/budget.py` pins $0.04/$0.08, which over-reserves by 11.1% — safe in
+direction (the daily cap trips early) but `job_costs` reads ~11% high and will
+not match the vendor invoice. Reconcile against the provider dashboard before
+quoting any of these to the client.
 
 ## Invariants
 
@@ -597,10 +624,29 @@ previous row's reference — omitting `--uniform-ref` means a plate without one,
 so the absence of a flag cannot mean two different things depending on history.
 
 **27. The card is rendered by Pillow, after generation, and is free.**
+*`stages/media.py:render_card`, geometry pinned by `config.card_template_version`*
 No generative model ever touches the text. A card revision is an ffmpeg
 re-encode of media we already have — which is why three rounds of client review
 on the lower-third cost nothing. `stages/media.py` is the ONE implementation;
 `spikes/prototype.py` imports it.
+
+**The rect is FIXED and the type scales to fit — not the other way round.**
+A band that grew with its content changed size job to job, and at full width
+that reads as a different template rather than as a longer address. The cost is
+paid in type size instead, and it is visible: two mechanics in one batch get
+different type when one address wraps. A content-driven height was proposed and
+rejected on 2026-09-15; it was declined, not overlooked.
+
+**v4 (2026-09-15) slid that same rect down to `y 72.27% .. 87.00%`**, 5.87% of
+frame height lower, with nothing else changed. The avatar prompt now parks the
+hands at belt height and keeps them there — measured at 60–70% of frame height
+across nine renders — which is exactly where the old top edge sat. It cut across
+the fingers. The band is now BELOW the hands, so they are visible rather than
+half-covered, and invariant 29 no longer gets to assume the card hides them.
+
+`card_template_version` covers the composite OUTPUT, not just the card artwork,
+so anything that changes what composite emits bumps it. It is in the composite
+`input_hash`, so bumping re-burns every open job — free, local ffmpeg only.
 
 **29. The avatar `prompt` steers motion — it is not decorative.**
 *[`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) `AVATAR_PROMPT`,
@@ -616,19 +662,25 @@ degrade output.
 **The prompt asks for no hand GESTURES — but it does ask for calm, natural
 motion.** Three paid revisions each found a new way for this model to render
 gesturing hands badly: a looped, smeared gesture; both hands clawed across the
-chest panel; clean open palms that still rose to chest level. In the source
-image the hands already rest at ~71–78% of frame height and the card is an
-opaque overlay across 66–82%, so hands left where they are are BEHIND it and
-never on screen. `calm` is load-bearing and is not a synonym for `slow`: slow
-bounds per-frame displacement, which is what stopped r1's smear, while calm
-bounds intent. Frozen hands are their own defect — a still photograph with a
-talking head pasted on. Every hand failure
-becomes invisible rather than merely less likely, and the face carries the
-video — which is the part this model has always done well.
+chest panel; clean open palms that still rose to chest level. `calm` is
+load-bearing and is not a synonym for `slow`: slow bounds per-frame
+displacement, which is what stopped r1's smear, while calm bounds intent. Frozen
+hands are their own defect — a still photograph with a talking head pasted on.
 
-The old objection was that a waist-level gesture "happens behind the card, so
-the viewer sees a hand enter frame and vanish". That is an objection to hands
-CROSSING the boundary. Nothing enters or vanishes if nothing moves.
+It also asks for the hands to stay **apart and clear of one another**, which the
+client asked for by name after reviewing a batch. Hands that meet are where this
+model renders fingers worst: it has to invent an occlusion. Measured on the nine
+renders of 2026-09-14, seven of nine held them apart for the whole take; the two
+that did not converged at the belt near the end.
+
+**The card no longer hides any of this, and that reasoning is retired.** Until
+2026-09-15 the argument was that hands resting at ~71–78% of frame height sat
+behind an opaque card across 66–82%, so every hand failure was invisible rather
+than merely less likely. It was never true of these renders — measured, the
+hands sit at 60–70%, so the card's top edge cut across the fingers and they read
+as severed by the panel. The card moved DOWN to 72.27% (invariant 27) and the
+hands are now on screen for the whole take. The prompt is the only thing keeping
+them presentable.
 
 Two rules survive from the revisions that bought them: never pair a placement
 with an exclusion naming the same region (r2's "at chest height ... clear of the
@@ -641,7 +693,7 @@ A version string is a thing you can forget to bump — edit the wording, leave
 the version, and every existing job skips regeneration and ships the old
 motion. Hashing the text removes the failure mode. The price is real: editing
 `AVATAR_PROMPT` re-runs the video stage on every job that has not completed, at
-$0.04 per output second. Completed jobs are never rescheduled.
+$0.036 per output second on standard. Completed jobs are never rescheduled.
 
 **28. `DELIVERY_ENABLED` gates the only irreversible action.**
 *`stages/real.py:DeliverStage`, `config.py:delivery_enabled`*
@@ -696,7 +748,7 @@ repeat post is harmless where a missed one is a video nobody ever gets.
 **The pipeline runs end to end under the orchestrator** against real Supabase,
 real S3 and the real CDN. All eight stages are implemented in
 `stages/real.py`; `USE_STUB_STAGES=true` still swaps in deterministic fakes to
-exercise the DAG without spending. Migrations 0001–0008 are applied.
+exercise the DAG without spending. Migrations 0001–0010 are applied.
 
 Verified on a real job: seed → prep → composite → checks → publish → deliver,
 with the delivered CDN URL returning 200. The three paid stages are the same
@@ -756,19 +808,41 @@ a layout rule.
 Added 2026-09-10, migration `0009`. Stage B was asking the model to keep the
 plate's garment while redrawing the body inside it, so fabric, seams and the
 printed marks were reconstructed rather than copied — and the chest logo is what
-the video is for. `plates.uniform_ref_key` is nullable and NONE of the six
-active rows has one yet: until the artwork is registered, every plate submits
-the two images it always did, on the prompt it always did. Switching a
-combination on is one `register-plate` call, and the reference is in the image
+the video is for. `plates.uniform_ref_key` is nullable, and **all six active
+rows now carry one** — `uniform/u1_tshirt.png` on plates 01–03 and
+`uniform/u2_uniform.png` on 04–06. A plate without one submits the two images it
+always did, on the two-image prompt (invariant 6). The reference is in the image
 stage's `input_hash`, so jobs that have not run stage B regenerate rather than
-skip. Prove a reference through `spikes/prototype.py --uniform-ref` (~$0.014)
-before registering it — the same edit, without the $1 video behind it.
+skip. Prove a new reference through `spikes/prototype.py --uniform-ref`
+(~$0.014) before registering it — the same edit, without the $1 video behind it.
 
-**All six plates are FINAL, registered and active** — 2026-09-09,
-`approved_by = "final artwork 2026-09-09 - client-approved"`, all 1536x2752.
-Each combination now has two rows, one retired and one active, and the four
-existing jobs still point at the RETIRED `plate_02`, which is correct: that is
-what they were built from (invariant 31 doing its job).
+It works. At stage B the chest panel comes back pixel-crisp where the plate
+alone produced a smear, and that survives the avatar model too.
+
+**The artwork was REPLACED on 2026-09-11 and re-registered on 2026-09-15** —
+`approved_by = "new artwork 2026-09-11 - Castrol-only chest, plain sleeves"`,
+all six at **1152x2048**, which is exactly 9:16. The previous set was 1536x2752
+(0.5581) and logged `seed.plate_not_1080x1920` six times; the new set still logs
+it, still harmlessly, because the warning is about resolution and the card
+geometry is expressed as FRACTIONS of the frame.
+
+What changed in the artwork, and why the prompt had to follow: the new uniforms
+have **no cap and no sleeve logo, and the chest panel reads `Castrol` alone** —
+not `Castrol MAGNATEC` on two lines. `IMAGE_PROMPT`'s preserve clause used to
+name all four marks, so it was asking the model to keep branding the garment no
+longer has, and the model duly invented a garbled sleeve patch.
+`image_prompt_version` is therefore **v2**. Unlike the avatar prompt (invariant
+30) that one is hashed by VERSION, so it must be bumped by hand or open jobs
+skip stage B and ship the old inventory.
+
+A second, unlooked-for win: the single-word chest mark survives the avatar
+model's per-frame redraw where the two-line one never did. Nine of nine renders
+on 2026-09-14 read a clean `Castrol`; every earlier render smeared
+`Castrol MAGNAT..`. Months of that was blamed on hand motion and on tier
+resolution. It was the artwork.
+
+Each combination now has three rows, one active and two retired, and older jobs
+still point at the artwork they were built from (invariant 31 doing its job).
 
 **To check the repo and the database agree, hash the NORMALISED file, not the
 raw one.** `register_plate` stores `sha256(normalise_for_apimart(file))`, and
@@ -782,12 +856,15 @@ norm = media.normalise_for_apimart(path, tmp)     # what actually gets uploaded
 hashing.sha256_hex(norm.read_bytes()) == row["sha256"]
 ```
 
-One consequence worth knowing: the plates are 1536x2752, which is 0.5581 rather
-than 9:16's 0.5625, so `register_plate` logs `seed.plate_not_1080x1920` six
-times. That warning is expected and harmless here — 21px of extra height — and
-the card geometry is expressed as FRACTIONS of the frame, so plate resolution
-does not move it. A plate at a genuinely different ASPECT would matter; a
-different resolution does not.
+One consequence worth knowing: `register_plate` logs `seed.plate_not_1080x1920`
+six times whatever you feed it, because the check is on RESOLUTION. Expected and
+harmless — the card geometry is expressed as FRACTIONS of the frame, so plate
+resolution does not move it. A plate at a genuinely different ASPECT would
+matter; a different resolution does not. (The 2026-09-11 set is 1152x2048, a
+true 9:16; the 2026-09-09 set was 1536x2752, or 0.5581 against 9:16's 0.5625.)
+
+**The plate the model returns is 720x1280 or 1072x1920 regardless**, because
+that is the tier's output size, not the plate's — see the cost section.
 
 **Spike 0.1 is answered — do not rewrite the script.** `kling-avatar-v2` has
 completed in prod at 39s via kie and 60s via fal; the ~80-word script at 30–40s

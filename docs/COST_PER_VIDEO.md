@@ -45,11 +45,30 @@
   `Settings.video_is_pro` derives the billing rate from it.
 - Measured render times on the same 27s input: standard ~7 min, Pro ~11.5 min.
 
+## What the client is billed on
+
+The **render** length, not the trimmed file. `kling-avatar-v2` takes no duration
+parameter and returns fixed-length blocks, so it hands back up to ~2s of silence
+after the speech ends; the composite cuts that off. kie charges per output
+second and those frames were generated either way, so the trim is a free
+presentation choice made afterwards and must not reduce what we recover.
+
+`job_usage.video_seconds` names `kind = 'video_raw'` explicitly for that reason
+(migration `0010`) and rounds to one decimal. It used to take `max()` across raw
+and final, which got the same answer only because raw happens to be longer.
+
+## kie credits
+
+**~207 credits per USD**, measured 2026-09-14: nine standard renders totalling
+250 billed output seconds consumed exactly 1864 credits, i.e. 7.456 credits per
+second, which at $0.036/s gives 207. `CLAUDE.md` used to say 166, read off a
+refusal message — wrong by a quarter, and the kind of number worth re-measuring
+after any batch.
+
 ## Known discrepancy
 
 `common/budget.py` pins `$0.04/s` standard and `$0.08/s` Pro, so every reservation
 over-estimates by **11.1%** against the rates above. The direction is safe — the
 daily cap trips early rather than late — but `job_costs` will read ~11% high and
-will not match the vendor invoice. `CLAUDE.md` quotes a third figure again,
-`$0.014 + seconds × $0.040886`. All three need reconciling against the provider
-dashboard before these numbers are quoted to anyone.
+will not match the vendor invoice. Reconcile against the provider dashboard
+before these numbers are quoted to anyone.

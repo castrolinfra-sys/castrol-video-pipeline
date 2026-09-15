@@ -97,16 +97,23 @@ already have — not a regenerated second.
 default was literally `"."`, which produced correct lipsync with the hands
 locked at rest. `AVATAR_PROMPT` in
 [`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) deliberately asks
-for **no hand gestures**: hands stay at waist level exactly where the source
-image has them, moving only with calm, slow, natural motion. Three paid revisions each found a new way for this model
-to render moving hands badly, and the card is an opaque overlay across 66-82% of
-frame height while the hands already rest at ~71-78% — so hands left alone are
-behind it and never on screen. The failure mode stops being visible rather than
-merely less likely, and the face carries the video.
+for **no hand gestures**: hands stay low, one on each side, apart and clear of
+one another, moving only with calm, slow, natural motion. Three paid revisions
+each found a new way for this model to render moving hands badly, and "apart and
+clear of one another" is the client's own phrasing after a batch review — hands
+that meet are where this model renders fingers worst, because it has to invent
+an occlusion.
+
+The card used to hide the hands and no longer does. The old argument — an opaque
+overlay across 66-82% of frame height against hands resting at ~71-78% — did not
+survive measurement: the hands sit at 60-70%, so that top edge cut across the
+fingers. The card moved down to 72.27% (template v4), the hands are on screen
+throughout, and the prompt is the only thing keeping them presentable. The face
+still carries the video.
 
 The prompt text is part of the video `input_hash`, not a version string you can
-forget to bump. Editing it therefore regenerates — at $0.04 per output second
-for every job that has not completed.
+forget to bump. Editing it therefore regenerates — at $0.036 per output second
+on standard, for every job that has not completed.
 
 ### Storage and URLs
 
@@ -412,26 +419,39 @@ Every path is real. If you are hunting for where something happens, start here.
 
 ## Cost
 
-Measured, at 25s of runtime:
+Full tables, in dollars and rupees, are in
+[`docs/COST_PER_VIDEO.md`](docs/COST_PER_VIDEO.md).
 
 ```
-cost = $0.014  +  seconds x $0.040886
-       ↑ one image          ↑ video $0.0400 + audio $0.000886
+standard  cost = $0.014  +  seconds x $0.0360        (25s ≈ $0.94)
+pro       cost = $0.014  +  seconds x $0.0720        (25s ≈ $1.82)
+                 ↑ one image        ↑ video + audio $0.00087
 ```
 
-| Runtime | Total | All-in $/sec |
+| Runtime | Standard | Pro |
 |---:|---:|---:|
-| 20s | $0.832 | $0.0416 |
-| 25s | $1.036 | $0.0414 |
-| 30s | $1.241 | $0.0414 |
+| 20s | $0.751 | $1.471 |
+| 25s | $0.936 | $1.836 |
+| 30s | $1.120 | $2.200 |
 
-The video step is **96.5%** of it and bills per output second, so **runtime is
-the only lever that matters**. Audio and image together are 3.5%. Using
-`kling/ai-avatar-pro` instead of standard doubles the total.
+The video step is **~96%** of it and bills per output second, so **runtime is
+the only lever that matters**. Audio and image together are ~4%. kie ceils to
+whole seconds: 24.8s bills as 25s.
 
-Rates: apimart `gpt-image-2` $0.014/image @2K; kie `kling/ai-avatar-standard`
-$0.04/output second; Cartesia 1 credit per **character** at 100K credits per $5
+`kling/ai-avatar-pro` doubles the total and is the **only way to get 1080p** —
+standard returns 720x1280 whatever it is fed, pro returns 1072x1920, and there
+is no resolution parameter on either. `VIDEO_MODEL_ID` is the whole switch, and
+`Settings.video_is_pro` derives the billing rate from it.
+
+Rates: apimart `gpt-image-2` $0.014/image @2K; kie $0.036/output second standard
+and $0.072 pro; Cartesia 1 credit per **character** at 100K credits per $5
 ($0.00005/char, no block rounding).
+
+**`common/budget.py` pins $0.04/$0.08, not these.** Reservations therefore
+over-estimate by 11.1% — safe in direction, since the daily cap trips early
+rather than late, but `job_costs` reads ~11% high and will not match the vendor
+invoice. Reconcile against the provider dashboard before quoting a number to
+anyone.
 
 Spend is recorded per **attempt** on `stage_runs`, not per job — a job that
 retried the video step really did pay twice, and a per-job total that hides

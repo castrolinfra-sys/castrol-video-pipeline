@@ -508,29 +508,48 @@ clawed across the chest panel; r3 bounded the band on both sides and dropped the
 finger-counting, which produced clean open palms that still rose to chest level
 for no return.
 
-The card is an opaque overlay across 66-82% of frame height and the hands
-already rest at ~71-78%, so hands left alone are behind it and never on screen.
-The earlier objection - a waist-level gesture "happens behind the card, so the
-viewer sees a hand enter frame and vanish" - is an objection to hands CROSSING
-that boundary, not to hands resting below it. What carries the video is the
-face, which is the part this model has always done well: the inherited "."
-default gave correct lipsync and natural head motion, and only the hands were
-ever the problem.
+It also asks the hands to stay apart and clear of one another - the client's
+words after reviewing a batch. Hands that meet are where this model renders
+fingers worst, because it has to invent an occlusion. Seven of nine renders on
+2026-09-14 held them apart for the whole take; two converged at the belt near
+the end. What carries the video is the face, which is the part this model has
+always done well: the inherited "." default gave correct lipsync and natural
+head motion, and only the hands were ever the problem.
 
-**Output is 720x1280 whatever the input.** A 1152x2048 image was downscaled, so
-plate resolution above 720p buys nothing downstream. There is no resolution or
-fps field to raise it: the gateway's parameter mapping is a strict allowlist and
-drops anything unmapped without erroring. The pro variant would be the only lever on
-output detail and is **ruled out permanently** (2026-09-10): it doubles the cost
-of the step that is already ~96% of the bill. So 720x1280 is the ceiling, and
-the chest `MAGNATEC` mark smearing during the avatar pass has no model-side fix
-left — every prompt-side cause was eliminated across prompt revisions r2-r5.
+**The card used to hide all of this. It no longer does.** The argument was that
+hands resting at ~71-78% of frame height sat behind an opaque overlay across
+66-82%, so hand failures were invisible rather than merely less likely. Measured
+on real renders, the hands are at **60-70%** - so the overlay's top edge cut
+across the fingers and they read as severed by the panel. The card moved down to
+72.27% on 2026-09-15 and the hands are on screen throughout. The prompt is now
+the only thing keeping them presentable.
 
-`video_is_pro` is nonetheless derived from `VIDEO_MODEL_ID` rather than set by a
-separate flag. It is now a guard rather than a switch: if anyone ever points the
-model id at pro, the reservation follows it instead of silently under-reserving
-by 2x. The text is hashed directly, so
-editing it regenerates rather than silently skipping.
+**Output resolution is set by the TIER, and by nothing else.**
+`kling/ai-avatar-standard` returns 720x1280 whatever it is fed;
+`kling/ai-avatar-pro` returns 1072x1920. There is no resolution or fps field on
+either endpoint - the gateway's parameter mapping is a strict allowlist and
+drops anything unmapped without erroring - so `VIDEO_MODEL_ID` is the whole
+control. Plate resolution above the tier's output buys nothing downstream.
+
+Pro was **ruled out on 2026-09-10** as too expensive and **reinstated on
+2026-09-12** when the client asked for 1080p. Do not cite the old decision as
+standing. The mistake in between is worth recording: "kie outputs 720x1280
+regardless of input resolution" was measured on a *standard* render and
+generalised into a limit of the model. It is a limit of the tier, and that error
+sent five prompt revisions chasing a chest-logo smear that resolution was never
+going to fix.
+
+Nor, as it turned out, was resolution the cause. The `MAGNATEC` mark stopped
+smearing when the **artwork** changed: the new uniforms carry a single-word
+`Castrol` chest mark, which survives the avatar model's per-frame redraw where
+the two-line one never did. Nine of nine renders on 2026-09-14 came back clean.
+
+`video_is_pro` is derived from `VIDEO_MODEL_ID` rather than set by a separate
+flag, so the reservation always follows what was actually submitted. There was a
+standalone `VIDEO_USE_PRO`, and setting either without the other either
+over-reserved or - worse - under-reserved by 2x on the only expensive step, in
+silence. The prompt text is hashed directly, so editing it regenerates rather
+than silently skipping.
 
 `kling-avatar-v2` on kie. Async submit, `vendor_task_id` stored, poller
 reconciles. The bottleneck, and 93–96% of the money.
@@ -662,10 +681,22 @@ Andheri, Mumbai | Mo. 9898989898   locality/city and the whatsapp number
 
 **Template v2** (`card_template_version` in [`config.py`](../src/castrol_pipeline/config.py))
 runs the panel to the **full frame width** — the client asked for the contact
-details on one full-width line — while keeping v1's vertical rect, which is
-the position that survived client review: `y 66.40% .. 81.13%`, top edge just
-below the belt and clear of the hands. Identical across all six plates (every
-plate shares framing and subject placement). Full video duration.
+details on one full-width line — while keeping v1's vertical rect. Identical
+across all six plates (every plate shares framing and subject placement). Full
+video duration.
+
+**v3** is not a card change at all: the composite now trims the video to its own
+audio stream, cutting the silent tail `kling-avatar-v2` leaves after the speech
+ends. The version covers the composite OUTPUT, not just the artwork, so anything
+changing what composite emits bumps it.
+
+**v4 (2026-09-15) slides the same rect down to `y 72.27% .. 87.00%`** — 5.87% of
+frame height lower, nothing else changed. v1's position (`66.40% .. 81.13%`,
+"top edge just below the belt and clear of the hands") was chosen against a
+plate whose subject stood with folded arms. The avatar prompt now parks the
+hands at belt height and keeps them there, at a measured 60-70% of frame height,
+which is exactly where that top edge sat: it cut across the fingers. The band
+now starts below them.
 
 The rect is FIXED and the type adapts, which is the opposite of v1. A panel
 that grew with its content changed size from job to job, and at full width
@@ -673,6 +704,11 @@ that reads as a different template rather than as a longer address. Content
 that does not fit is scaled down as a block — every size and gap by the same
 factor — so the proportions hold too. `MIN_SCALE` floors that at 0.55 and the
 renderer logs `media.card_overflows` rather than shrinking past legibility.
+
+A content-driven height was built and rejected on 2026-09-15. It does fix the
+one real cost of the fixed rect — two mechanics in a batch getting visibly
+different type because one address wrapped — but a band that changes size
+between jobs is the louder fault. Declined, not overlooked.
 
 Text fitting is rule-based and degrades predictably, as a unit per field. The
 contact block goes: one line → address and phone on separate lines → address
