@@ -1,18 +1,30 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { Filters } from "./filters";
 import { PageHead } from "./ui";
 import { Problem } from "./problem";
-import { db } from "@/lib/db";
+import { Bar, Loading, SkeletonRows } from "./skeleton";
+import { db, queryDeadline } from "@/lib/db";
 import { duration, num, pill, secs, ts } from "@/lib/format";
 import { bounds, isRange, type RangeKey } from "@/lib/range";
 
+export const metadata = { title: "Jobs" };
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 500;
 
-// Reads job_usage (migration 0007), not `jobs` joined to anything. That view
-// carries no cost, vendor, model or stage column, so nothing on this page can
-// grow one by accident.
+// The page itself fetches nothing, and that is the point.
+//
+// It used to await the whole query before returning a single byte, so a slow or
+// stalled Supabase read held up the ENTIRE response — on a client-side
+// navigation that shows as a URL that changed, a chip spinner that turns, and a
+// page that never arrives. Now the shell and the filter chips are sent
+// immediately and only the table waits.
+//
+// The `key` is what makes this work for a filter change. A Link that alters
+// only the query string re-renders the SAME route segment, so `loading.tsx`
+// never mounts; changing the key makes React treat it as a new subtree and show
+// the fallback. That is the skeleton you get when you click a range.
 export default async function Jobs({
   searchParams,
 }: {
@@ -21,6 +33,36 @@ export default async function Jobs({
   const params = await searchParams;
   const q = (params.q ?? "").trim();
   const range: RangeKey = isRange(params.range) ? params.range : "7d";
+
+  return (
+    <Suspense key={`${range}:${q}`} fallback={<JobsPending q={q} range={range} />}>
+      <JobsTable q={q} range={range} />
+    </Suspense>
+  );
+}
+
+/**
+ * The waiting state.
+ *
+ * The REAL Filters, not a placeholder for them: the chips have to stay live
+ * while the table loads, or clicking "30 days" mid-load hits a dead strip and
+ * the range you just picked stops looking selected. Only the heading's count
+ * and the rows are unknown, so only those are bars.
+ */
+function JobsPending({ q, range }: { q: string; range: RangeKey }) {
+  return (
+    <Loading>
+      <PageHead title="Jobs" meta={<Bar width="220px" />} />
+      <Filters action="/" q={q} range={range} />
+      <SkeletonRows cols={8} />
+    </Loading>
+  );
+}
+
+// Reads job_usage (migration 0007), not `jobs` joined to anything. That view
+// carries no cost, vendor, model or stage column, so nothing on this page can
+// grow one by accident.
+async function JobsTable({ q, range }: { q: string; range: RangeKey }) {
   const { from, to } = bounds(range);
 
   let query = db
@@ -35,7 +77,9 @@ export default async function Jobs({
     // PostgREST run a real COUNT(*) over the filtered view on every page load
     // — a second scan, to print a number nobody acts on. "First 500" answers
     // the only question that matters: am I seeing everything?
-    .limit(PAGE_SIZE + 1);
+    .limit(PAGE_SIZE + 1)
+    // Without this the fetch has no deadline and a stalled read waits forever.
+    .abortSignal(queryDeadline());
 
   if (from) query = query.gte("created_at", from);
   if (to) query = query.lt("created_at", to);

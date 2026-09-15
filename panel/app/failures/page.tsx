@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { db } from "@/lib/db";
+import { db, queryDeadline } from "@/lib/db";
 import { Problem } from "../problem";
 import { ts } from "@/lib/format";
 import { failureText } from "@/lib/reasons";
 import { ReportButton } from "./report-button";
 import { PageHead } from "../ui";
 
+export const metadata = { title: "Failures" };
 export const dynamic = "force-dynamic";
 
 // What did not get made, and for whom.
@@ -25,11 +26,13 @@ export default async function Failures() {
           "whatsapp_number, user_name, workshop_name",
       )
       .eq("status", "failed")
-      .order("created_at", { ascending: false }),
+      .order("created_at", { ascending: false })
+      .abortSignal(queryDeadline()),
     db
       .from("job_reports")
       .select("id, job_id, reported_by, note, created_at")
-      .order("created_at", { ascending: false }),
+      .order("created_at", { ascending: false })
+      .abortSignal(queryDeadline()),
   ]);
 
   if (error) return <Problem what="failed jobs" message={error.message} />;

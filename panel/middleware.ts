@@ -76,6 +76,12 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
+// icon.svg is excluded for a reason, not for tidiness: the app-router icon is
+// served from a normal route, so without this it is gated like a page — and the
+// only page a signed-out browser renders is /login, which is exactly where the
+// favicon would be missing. A redirect to an HTML page is not an image.
+//
+// Anything else added to this list must be a static asset with nothing to leak.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg).*)"],
 };

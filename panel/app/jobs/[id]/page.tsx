@@ -1,10 +1,11 @@
 import { notFound } from "next/navigation";
-import { db } from "@/lib/db";
+import { db, queryDeadline } from "@/lib/db";
 import { Problem } from "../../problem";
 import { pill, secs, ts } from "@/lib/format";
 import { failureText } from "@/lib/reasons";
 import { PageHead } from "../../ui";
 
+export const metadata = { title: "Job" };
 export const dynamic = "force-dynamic";
 
 // One mechanic's video.
@@ -22,12 +23,12 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
   // awaited on its own first, which made this page three sequential Supabase
   // round trips instead of two (async-parallel).
   const [job, delivery, link] = await Promise.all([
-    db.from("job_usage").select("*").eq("job_id", id).maybeSingle(),
-    db.from("deliveries").select("phone_e164, posted_at").eq("job_id", id).maybeSingle(),
+    db.from("job_usage").select("*").eq("job_id", id).abortSignal(queryDeadline()).maybeSingle(),
+    db.from("deliveries").select("phone_e164, posted_at").eq("job_id", id).abortSignal(queryDeadline()).maybeSingle(),
     // job_usage does not carry the raw client row - it is a wide jsonb blob and
     // most pages have no use for it - so the submission id is fetched here and
     // the blob read separately.
-    db.from("jobs").select("submission_id").eq("id", id).maybeSingle(),
+    db.from("jobs").select("submission_id").eq("id", id).abortSignal(queryDeadline()).maybeSingle(),
   ]);
 
   if (job.error) return <Problem what="this job" message={job.error.message} />;
@@ -38,7 +39,12 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
   const j = job.data;
 
   const submission = link.data?.submission_id
-    ? await db.from("submissions").select("raw").eq("id", link.data.submission_id).maybeSingle()
+    ? await db
+        .from("submissions")
+        .select("raw")
+        .eq("id", link.data.submission_id)
+        .abortSignal(queryDeadline())
+        .maybeSingle()
     : null;
 
   // From the view, not from `assets` directly. Publishing writes a new asset row

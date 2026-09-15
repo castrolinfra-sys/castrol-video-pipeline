@@ -1,8 +1,9 @@
-import { db } from "@/lib/db";
+import { db, queryDeadline } from "@/lib/db";
 import { Problem } from "../problem";
 import { ts } from "@/lib/format";
 import { PageHead } from "../ui";
 
+export const metadata = { title: "Submissions" };
 export const dynamic = "force-dynamic";
 
 // Every submission, exactly as the client's own API returned it.
@@ -17,7 +18,8 @@ export default async function Submissions() {
     .from("export_rows")
     .select("id, row_index, raw, submission_id, created_at, pull_id")
     .order("id", { ascending: false })
-    .limit(500);
+    .limit(500)
+    .abortSignal(queryDeadline());
   if (error) return <Problem what="client export rows" message={error.message} />;
 
   if (!rows?.length) {

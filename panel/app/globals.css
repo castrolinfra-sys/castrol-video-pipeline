@@ -498,6 +498,34 @@ a.range[aria-current="true"] {
 }
 a.btn { text-decoration: none; display: inline-block; }
 
+/* The in-flight marker on a filter chip.
+   ----------------------------------------------------------------------------
+   A searchParams-only Link re-renders the same route segment, so loading.tsx
+   never mounts and the old table stays on screen for the whole wait. Without
+   this there is no feedback at all between the click and the new rows.
+
+   Zero width until pending, so a chip never changes size and never shoves the
+   row of chips along as one of them is clicked. */
+.link-spin {
+  display: inline-block;
+  width: 0;
+  height: 9px;
+  overflow: hidden;
+  vertical-align: -1px;
+  transition: width 120ms ease, margin-left 120ms ease;
+}
+.link-spin[data-pending] {
+  width: 9px;
+  margin-left: 6px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  box-sizing: border-box;
+  animation: spin 700ms linear infinite;
+}
+/* An active chip is white-on-green and a resting one is grey; currentColor
+   means the ring follows whichever it is without a second rule. */
+
 /* ---- usage -----------------------------------------------------------------
    The headline number is what this product is for, so it is the one place that
    gets a typographic treatment rather than a size. Numerals in the body face,

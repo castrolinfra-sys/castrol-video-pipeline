@@ -5,6 +5,8 @@
 import { signIn } from "./actions";
 import { PasswordField } from "./password-field";
 
+export const metadata = { title: "Sign in" };
+
 export default async function Login({
   searchParams,
 }: {

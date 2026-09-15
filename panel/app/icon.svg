@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- The favicon is the header's brand mark, inverted onto a filled tile.
+
+       A 4px bar on a transparent ground is what .brand-mark draws next to the
+       wordmark; at 16px in a browser tab that is four grey-green pixels against
+       whatever colour the tab strip happens to be. Filled, it holds its shape
+       on a light tab strip and a dark one alike.
+
+       #00843d is the accent-mark token, the FILL green, not the accent ink
+       green. Same reason the chart bars use it: the dark ink green reads as
+       slate once it covers area.
+
+       Two things broke this file while it was being written, neither of which
+       any build step or typecheck reports as what it is:
+
+       1. This comment sits INSIDE the root element on purpose. Next's metadata
+          image loader sniffs only the first bytes of the file for the svg root
+          in order to read its dimensions, so a comment this long ABOVE it
+          fails the build with "not a valid image file".
+       2. XML forbids a double hyphen inside a comment, which is why the
+          palette tokens are named here without their leading dashes. Served as
+          image/svg+xml that is a fatal parse error, and the favicon simply
+          disappears.
+
+       SVG only, no .ico and no .png. Every browser this panel is opened in
+       supports an SVG favicon (Safari since 16.4), and one file means the mark
+       cannot drift from itself. If it ever has to work in an older Safari, add
+       app/icon.png alongside; Next emits links for both. -->
+  <rect width="32" height="32" rx="7" fill="#00843d"/>
+  <rect x="13.5" y="7" width="5" height="18" rx="2.5" fill="#ffffff"/>
+</svg>

@@ -1,10 +1,11 @@
 import { Problem } from "../problem";
 import UsageChart, { type Day } from "./chart";
-import { db } from "@/lib/db";
+import { db, queryDeadline } from "@/lib/db";
 import { countOf, dayLabel, duration, num, pct } from "@/lib/format";
 import { istDay } from "@/lib/range";
 import { BigDuration, PageHead } from "../ui";
 
+export const metadata = { title: "Usage" };
 export const dynamic = "force-dynamic";
 
 // Usage, measured in seconds of video delivered.
@@ -22,7 +23,8 @@ export default async function Usage() {
   const { data: days, error } = await db
     .from("daily_usage")
     .select("day, jobs, completed, failed, seconds")
-    .order("day", { ascending: false });
+    .order("day", { ascending: false })
+    .abortSignal(queryDeadline());
   if (error) return <Problem what="usage" message={error.message} />;
 
   const rows = (days ?? []).map((d: any) => ({

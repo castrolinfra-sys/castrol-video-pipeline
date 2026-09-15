@@ -41,7 +41,27 @@ const mono = IBM_Plex_Mono({
   display: "swap",
 });
 
-export const metadata = { title: "Castrol pipeline — admin" };
+export const metadata = {
+  // The template is what makes a tab readable when four of them are open, which
+  // is how this panel actually gets used: "Failures · Castrol pipeline" beats
+  // four identical tabs. Pages set only their own half.
+  title: {
+    default: "Castrol pipeline — admin",
+    template: "%s · Castrol pipeline",
+  },
+  description: "Video delivery status for the Castrol MAGNATEC mechanic campaign.",
+
+  // Deliberate: the panel is on a public Vercel hostname, and while middleware
+  // redirects every page to /login, the LOGIN page itself is crawlable and
+  // would otherwise be indexable — a public search result advertising where the
+  // client's data lives.
+  //
+  // A robots.txt Disallow would be the wrong tool and is not here on purpose:
+  // it stops a crawler READING the page, which stops it seeing this noindex, so
+  // the URL can still surface from an external link. The meta tag is the one
+  // that actually removes it.
+  robots: { index: false, follow: false },
+};
 
 // Matches --bg, so the mobile browser chrome continues the page rather than
 // framing it in a different colour.

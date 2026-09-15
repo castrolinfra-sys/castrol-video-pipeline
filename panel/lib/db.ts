@@ -47,6 +47,26 @@ export function getDb(): Db {
   return _db;
 }
 
+/**
+ * Every query gets a deadline.
+ *
+ * supabase-js puts no timeout on its fetch, so a stalled connection does not
+ * fail — it waits forever, and so does the page render sitting on top of it.
+ * On a client-side navigation that is indistinguishable from a broken app: the
+ * URL changes, the spinner turns, and nothing ever arrives.
+ *
+ * Twelve seconds is well past a healthy read (measured: 100-300ms for every
+ * range on this page) and well short of a person's patience. Past it the query
+ * returns an error, which the pages already render through <Problem> — a
+ * sentence and a Retry beats an indefinite wait.
+ */
+export const QUERY_TIMEOUT_MS = 12_000;
+
+/** `AbortSignal.timeout(QUERY_TIMEOUT_MS)`, for `.abortSignal(...)`. */
+export function queryDeadline(): AbortSignal {
+  return AbortSignal.timeout(QUERY_TIMEOUT_MS);
+}
+
 /** Proxy so callers keep writing `db.from(...)` without eager construction. */
 export const db = new Proxy({} as Db, {
   get: (_t, prop) => (getDb() as any)[prop],

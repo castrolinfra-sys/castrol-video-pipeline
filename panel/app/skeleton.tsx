@@ -25,6 +25,35 @@ export function Loading({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Just the rows.
+ *
+ * Split out from TableSkeleton because the two callers need different things
+ * above the table. A route-level `loading.tsx` replaces the entire page, so it
+ * wants the heading and filter placeholders too. A Suspense boundary INSIDE a
+ * page keeps the real filter chips mounted and swaps only the table, so it must
+ * not draw a second set.
+ */
+export function SkeletonRows({ cols, rows = 12 }: { cols: number; rows?: number }) {
+  return (
+    <div className="scroll">
+      <table>
+        <tbody>
+          {Array.from({ length: rows }, (_, r) => (
+            <tr key={r}>
+              {Array.from({ length: cols }, (_, c) => (
+                <td key={c}>
+                  <Bar width={WIDTHS[(r + c) % WIDTHS.length]} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 /** A table-shaped placeholder: heading, optional filter bar, then rows. */
 export function TableSkeleton({
   cols,
@@ -53,21 +82,7 @@ export function TableSkeleton({
         </div>
       )}
 
-      <div className="scroll">
-        <table>
-          <tbody>
-            {Array.from({ length: rows }, (_, r) => (
-              <tr key={r}>
-                {Array.from({ length: cols }, (_, c) => (
-                  <td key={c}>
-                    <Bar width={WIDTHS[(r + c) % WIDTHS.length]} />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <SkeletonRows cols={cols} rows={rows} />
     </Loading>
   );
 }
