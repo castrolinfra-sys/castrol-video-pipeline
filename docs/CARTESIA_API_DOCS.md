@@ -1,5 +1,5 @@
 
-> **Where this is used.** The HTTP call is `cartesia_tts()` in
+> **Where this is used.** The HTTP call is `voice_tts()` in
 > [`stages/vendors.py`](../src/castrol_pipeline/stages/vendors.py); the stage that
 > calls it is `AudioStage` in [`stages/real.py`](../src/castrol_pipeline/stages/real.py).
 > Model id, voice id, version header and base URL are settings in

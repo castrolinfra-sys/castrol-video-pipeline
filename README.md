@@ -489,8 +489,7 @@ pro       cost = $0.014  +  seconds x $0.0720        (25s ≈ $1.82)
 
 The video step is **~96%** of it and bills per output second, so **runtime is
 the only lever that matters**. Audio and image together are ~4%. The provider
-ceils to
-whole seconds: 24.8s bills as 25s.
+ceils to whole seconds: 24.8s bills as 25s.
 
 `kling/ai-avatar-pro` doubles the total and is the **only way to get 1080p** —
 standard returns 720x1280 whatever it is fed, pro returns 1072x1920, and there

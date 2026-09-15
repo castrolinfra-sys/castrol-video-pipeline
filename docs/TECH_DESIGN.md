@@ -183,7 +183,8 @@ the raw export copy),
 [`0010`](../supabase/migrations/0010_bill_on_the_render_not_the_trim.sql) (bill on the
 render, not the trim) and
 [`0014`](../supabase/migrations/0014_ceil_the_billed_second.sql) (ceil that
-render to a whole second, per row, because the provider rounds up and charges per job),
+render to a whole second per row, because the provider rounds up and charges
+per job),
 [`0011`](../supabase/migrations/0011_raise_the_daily_cost_caps.sql) /
 [`0012`](../supabase/migrations/0012_raise_the_call_caps_to_match.sql) (the daily caps)
 and [`0013`](../supabase/migrations/0013_refunded_runs.sql) (`stage_runs.refunded`).
@@ -361,15 +362,16 @@ Every outbound paid call goes through `common/budget.py`, which calls
 
 Measured over 11 real renders on 2026-09-15, not modelled. The earlier row
 (`$0.012` / `$0.100` billed as a 1k block / `$1.400` at $0.04/s) predated both
-the rate correction in `cf00e4a` and the discovery that the voice provider bills per
-character with no block rounding.
+the rate correction in `cf00e4a` and the discovery that the voice provider
+bills per character with no block rounding.
 
 A call-count cap bounds volume but bounds *spend* only within ~3× (script
 length) × ~2× (standard vs pro), which is why `vendor_limits` carries both.
 That reasoning stands, and `0011`/`0012` (2026-09-15) reasserted it after a
 brief inversion. `0011` raised `daily_cost_cap_usd` to $5000 on `kie_video` and
 $500 on the other two but left the call caps at 200/600/600 — which made THOSE
-the ceiling (~$211/day on video) while the number anyone would read said $5000.
+the ceiling (~$211/day on the video lane) while the number anyone would read
+said $5000.
 `0012` lifted the call caps to 5000 / 40000 / 25000 so the cost cap trips first
 for every vendor again:
 
@@ -381,7 +383,8 @@ for every vendor again:
 
 The two cheap vendors had to move as well, and not because they were given a
 budget: every video costs one image call and one TTS call, so a 600-call cap on
-either would have halted the pipeline at 600 videos — under video's ~4 732 — and
+either would have halted the pipeline at 600 videos — under the video lane's
+~4 732 — and
 relocated the binding constraint to stage A or stage B without announcing it.
 A cap is only a guard if it is the one you think it is.
 
@@ -519,7 +522,8 @@ dimensions, and the vendor metadata to record. Stages do not write to `jobs`;
 the orchestrator does. Stages do not decide retries; the orchestrator does.
 
 ### A — audio
-**The voice provider, direct API.** The one deliberate exception to "the two gateways only",
+**The voice provider, direct API.** The one deliberate exception to "the two
+gateways only",
 taken because that intersection has no voice-cloning Hindi lane at all. Hindi
 and Gujarati are both prod-verified on this provider with a cloned voice.
 
@@ -543,7 +547,8 @@ Two things this stage owns beyond the call, both mandatory:
 
 1. **Emit MP3.** The avatar model's `"Audio size is too large"` is a byte
    limit, not a duration limit, and every observed failure was a WAV.
-   The provider's default `pcm_f32le` @44.1kHz is ~176 KB/s — 40s is ~7 MB against
+   The provider's default `pcm_f32le` @44.1kHz is ~176 KB/s — 40s is ~7 MB
+   against
    ~640 KB as MP3. Request an MP3 container if it will emit one;
    otherwise transcode before handing off. Either way stage C never sees a WAV.
 2. **Probe the duration with ffmpeg and record it.** The provider returns no
@@ -614,7 +619,8 @@ invariant 31 covers it: `jobs.plate_id` stays the one honest record of the
 artwork a video was built from, reference included.
 
 ### C — video
-The `prompt` field is REQUIRED on the video provider (max 5000 chars) and is not decorative:
+The `prompt` field is REQUIRED on the video provider (max 5000 chars) and is
+not decorative:
 it steers expression, head movement and hand gesture. `AVATAR_PROMPT` in
 [`stages/vendors.py`](../src/castrol_pipeline/stages/vendors.py) follows the
 model's documented shape — subject, expression, motion, style preservation, in
@@ -659,7 +665,8 @@ control. Plate resolution above the tier's output buys nothing downstream.
 
 Pro was **ruled out on 2026-09-10** as too expensive and **reinstated on
 2026-09-12** when the client asked for 1080p. Do not cite the old decision as
-standing. The mistake in between is worth recording: "the provider outputs 720x1280
+standing. The mistake in between is worth recording: "the provider outputs
+720x1280
 regardless of input resolution" was measured on a *standard* render and
 generalised into a limit of the model. It is a limit of the tier, and that error
 sent five prompt revisions chasing a chest-logo smear that resolution was never
@@ -677,7 +684,8 @@ over-reserved or - worse - under-reserved by 2x on the only expensive step, in
 silence. The prompt text is hashed directly, so editing it regenerates rather
 than silently skipping.
 
-`kling-avatar-v2` on the video provider. Async submit, `vendor_task_id` stored, poller
+`kling-avatar-v2`, on the video provider. Async submit, `vendor_task_id` stored,
+poller
 reconciles. The bottleneck, and 93–96% of the money.
 
 Latency is measured, not guessed: ~256s at 16s of audio, ~607s at 30s,
@@ -939,6 +947,17 @@ and 32. Neither is an error; both mean something upstream was interrupted.
 ([`0013`](../supabase/migrations/0013_refunded_runs.sql)), so the gap between
 what was reserved and what was billed is auditable rather than invisible. Note
 `castrol costs` does not yet select `refunded_usd`.
+
+**The panel's `job_usage.video_seconds` is CEILED per row, in the view**
+([`0014`](../supabase/migrations/0014_ceil_the_billed_second.sql)) — not rounded,
+and not ceiled afterwards in the panel. Both of those under-recovered: `round(x, 1)`
+can cross an integer boundary downward (27.04 → 27.0 → ceils to 27 where the
+provider billed 28, a second SQL had already thrown away), and ceiling a SUM is
+not the sum of the ceilings (nine renders billing 250s totalled 246s). The
+provider charges per output second and rounds UP, per render, so the view has to
+match that shape row by row. `format.ts` ceils as well and is now a no-op on
+anything this view returns — kept as the guard for the day someone edits the
+expression back.
 
 No alerting this release, by decision.
 

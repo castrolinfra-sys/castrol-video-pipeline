@@ -1,7 +1,8 @@
 # Cost per video — Castrol MAGNATEC pipeline
 
 **Rates:** video $0.036/s (standard) · $0.072/s (Pro) · image $0.014 flat · TTS $0.00005/char
-**Assumptions:** ₹100 = $1 · 17.4 chars/sec of speech · the provider ceils to whole seconds
+**Assumptions:** ₹100 = $1 · 17.4 chars/sec of speech · the video provider
+ceils to whole seconds
 
 ## Standard — `kling/ai-avatar-standard`, 720x1280
 
@@ -37,8 +38,8 @@
   is no volume discount in making videos longer. Runtime is the only lever.
 - TTS is ~2% of the total at 25s standard, ~1% on Pro.
 - Composite, card render and publish are local ffmpeg/Pillow — free.
-- The avatar step bills per OUTPUT second and the provider ceils to whole seconds, so
-  24.8s bills as 25s. Negligible at our ~25s scripts; a 100% overcharge on a 1s clip.
+- The avatar step bills per OUTPUT second and the provider ceils to whole
+  seconds, so 24.8s bills as 25s. Negligible at our ~25s scripts; a 100% overcharge on a 1s clip.
 - Pro is the resolution switch. `kling/ai-avatar-standard` returns 720x1280 whatever
   it is fed; `kling/ai-avatar-pro` returns 1072x1920. There is no resolution
   parameter on either endpoint — `VIDEO_MODEL_ID` is the whole control, and
@@ -49,21 +50,21 @@
 
 The **render** length, not the trimmed file. `kling-avatar-v2` takes no duration
 parameter and returns fixed-length blocks, so it hands back up to ~2s of silence
-after the speech ends; the composite cuts that off. The provider charges per output
-second and those frames were generated either way, so the trim is a free
+after the speech ends; the composite cuts that off. The provider charges per
+output second and those frames were generated either way, so the trim is a free
 presentation choice made afterwards and must not reduce what we recover.
 
 `job_usage.video_seconds` names `kind = 'video_raw'` explicitly for that reason
 (migration `0010`). It used to take `max()` across raw and final, which got the
 same answer only because raw happens to be longer.
 
-**And it is CEILED per render, not rounded** (migration `0014`). The provider charges per
-output second and rounds up, so 24.2s is billed as 25s, and the panel must show
+**And it is CEILED per render, not rounded** (migration `0014`). The provider
+charges per output second and rounds up, so 24.2s is billed as 25s, and the panel must show
 that number and no other. Two things the old one-decimal shape got wrong, both
 fixable only in the view: `round(27.04, 1)` is `27.0`, which ceils to 27 where
-the provider billed 28 — a second SQL had already discarded; and `daily_usage` ceiled the
-SUM instead of summing the ceilings, so nine renders billed at 250s showed as
-246s, a total matching no invoice. `format.ts` still calls `Math.ceil`, now a
+the provider billed 28 — a second SQL had already discarded; and `daily_usage`
+ceiled the SUM instead of summing the ceilings, so nine renders billed at 250s
+showed as 246s, a total matching no invoice. `format.ts` still calls `Math.ceil`, now a
 no-op, kept as the guard for the day someone changes the view back.
 
 ## Video provider credits

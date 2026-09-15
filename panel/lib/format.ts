@@ -51,9 +51,10 @@ export function dayLabel(v: string | null | undefined): string {
  *
  * CEILED to a whole second, never rounded and never shown with a decimal
  * (changed 2026-09-15; this used to print one decimal place). Ceiling is not a
- * cosmetic choice - it is what the vendor does. kie bills per output second and
- * rounds UP, so a 24.2s render is billed as 25s; printing "24.2s" showed a
- * number the client is not charged for and that matches no invoice line.
+ * cosmetic choice - it is what the vendor does. The video provider bills per
+ * output second and rounds UP, so a 24.2s render is billed as 25s; printing
+ * "24.2s" showed a number the client is not charged for and that matches no
+ * invoice line.
  * Rounding to nearest would be worse than the decimal, because it would
  * sometimes report LESS than was billed.
  */

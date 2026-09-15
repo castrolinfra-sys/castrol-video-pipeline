@@ -177,8 +177,8 @@ Reads the pipeline's tables directly; the one thing it writes is `job_reports`.
 **It is a CLIENT-facing surface, not our operations console.** It must never
 show cost, vendor, model id, stage, retry attempts, or an internal error code —
 the metric it reports is DURATION. Specifically the **render** length, which is
-what the provider billed us and what the client is billed on — not the shorter trimmed
-file that ships (migration `0010`). That line is held
+what the provider billed us and what the client is billed on — not the shorter
+trimmed file that ships (migrations `0010` and `0014`). That line is held
 structurally rather than by care: the pages read
 [`job_usage` / `daily_usage`](supabase/migrations/0007_usage_views_for_the_panel.sql),
 views with no cost or vendor column in them, and `lib/format.ts` has no money
@@ -306,8 +306,9 @@ Two things that look like omissions and are not:
   First Load, every other route 102–107 kB. recharts never leaves that page.
 
 **Every duration is CEILED to a whole second, and shown without a decimal.**
-Changed 2026-09-15, replacing the one-decimal form. Ceiling is not cosmetic: the provider
-bills per output second and rounds UP, so a 24.2s render is billed as 25s and
+Changed 2026-09-15, replacing the one-decimal form. Ceiling is not cosmetic:
+the provider bills per output second and rounds UP, so a 24.2s render is billed
+as 25s and
 "24.2s" was a number the client is not charged for and that matches no invoice
 line. Rounding to NEAREST would be worse than the decimal, because it would
 sometimes report less than was billed. `lib/format.ts` is the only place this
@@ -323,8 +324,9 @@ because two ways of under-recovering could not be fixed in the panel at all:
   an integer boundary downward — a true 27.04s became `27.0`, which ceils to 27
   where the provider billed 28. The panel cannot recover a second SQL already
   discarded.
-- Totals ceiled the SUM instead of summing the ceilings. The provider issues one charge
-  per render, each rounded up on its own, so the nine renders of 2026-09-14 bill
+- Totals ceiled the SUM instead of summing the ceilings. The provider issues
+  one charge per render, each rounded up on its own, so the nine renders of
+  2026-09-14 bill
   at 250s; ceiling their 245.1s total gave 246s, a figure matching no invoice.
 
 `daily_usage` therefore sums already-ceiled integers and its re-round from
@@ -449,8 +451,8 @@ curl -sS https://api.kie.ai/api/v1/chat/credit -H "Authorization: Bearer $KIE_AP
 ```
 
 The image gateway reports USD directly (1 credit = $0.10). The video gateway
-reports its own
-credits at roughly **207 per USD** — measured 2026-09-14, not inferred: a batch
+reports its own credits at roughly **207 per USD** — measured 2026-09-14, not
+inferred: a batch
 of nine standard renders totalling 250 billed output seconds consumed exactly
 1864 credits, which at $0.036/s is 7.456 credits per second. The older figure
 of 166 came from reading a refusal message and was wrong by a quarter.
@@ -584,8 +586,8 @@ pro        cost = $0.014 + seconds x $0.072        (25s ~ $1.81)
 
 Full tables in [`docs/COST_PER_VIDEO.md`](docs/COST_PER_VIDEO.md), including
 rupees at ₹100 = $1. The video step is ~96% of it and bills per output second,
-so runtime is the only lever worth pulling. The provider ceils to whole seconds, so
-24.8s bills as 25s — negligible at a 25s script, a 100% overcharge on a 1s clip.
+so runtime is the only lever worth pulling. The provider ceils to whole
+seconds, so 24.8s bills as 25s — negligible at a 25s script, a 100% overcharge on a 1s clip.
 
 **`ai-avatar-pro` is the 1080p route and is NOT ruled out.** It was declined on
 2026-09-10 as too expensive, then reinstated on **2026-09-12** when the client
@@ -615,15 +617,17 @@ Raised 2026-09-15 by migrations `0011` (cost) and `0012` (calls) to **$5000 on
 `kie_video`, $500 on the other two**, with the call caps lifted to match so the
 cost cap trips first everywhere — 5000 / 40000 / 25000 respectively. 0011 alone
 had inverted this: it left the call caps at 200/600/600, which made *those* the
-real ceiling at ~$211/day on video while the number anyone would read said $5000.
+real ceiling at ~$211/day on the video lane while the number anyone would read
+said $5000.
 0012 restored 0002's design. Both cheap vendors had to move too, because every
 video costs one image call and one TTS call — a 600-call cap on either would
-have halted the pipeline at 600 videos, well under video's ~4,732, and moved the
-binding constraint to stage A or B without saying so.
+have halted the pipeline at 600 videos, well under the video lane's ~4,732, and
+moved the binding constraint to stage A or B without saying so.
 
 Worst case is now **$6000/day** against an observed ~40 videos (~$44). These
 caps are a runaway guard and nothing else; what actually keeps spend honest is
-invariant 3, `require_cost_estimate` on video, and per-attempt cost recording.
+invariant 3, `require_cost_estimate` on the video vendor, and per-attempt cost
+recording.
 The cap day is **IST**, and both timer cycles fall inside one — a heavy 00:00
 run starves the 12:00 one.
 
@@ -736,9 +740,11 @@ HTTP call; never blind-retry a submit that may have landed. Reconcile instead.
 **14. Check the body, not the HTTP status.**
 *`stages/vendors.py`, `stages/real.py:webhook_accepted`, pinned by [`tests/test_deliver_webhook.py`](tests/test_deliver_webhook.py)*
 Both gateways return HTTP 200 with `code != 200` on error. Also: the video
-gateway's `resultJson` is a JSON *string* — parse before indexing. The image
-gateway's video
-result is `result.videos[0].url[0]` — `url` is a list.
+gateway's `resultJson` is a JSON *string* — parse before indexing, then take
+`resultUrls[0]`. On the image gateway the result is nested and `url` may be a
+LIST rather than a string: `result.images[0].url`, and its sibling VIDEO
+endpoint spells the same shape `result.videos[0].url[0]` — which is invariant 19
+in miniature, two endpoints on one gateway disagreeing.
 
 The client's delivery webhook is the same shape and the stakes are higher: it
 answers 200 and puts the verdict in `success`, which arrives as the STRING
@@ -998,6 +1004,31 @@ an insert that `ON CONFLICT` may have skipped.
   other way: [`spikes/prototype.py`](spikes/prototype.py) imports
   [`stages/media.py`](src/castrol_pipeline/stages/media.py), so the card has a
   single implementation rather than two that drift.
+- **Providers are named by ROLE, not by vendor** — the image provider, the
+  video provider, the voice provider. Renamed throughout in `14cfc2e`
+  (2026-09-15), so `cartesia_tts` → `voice_tts`, `apimart_submit/_poll` →
+  `image_submit/_poll`, `kie_submit/_poll` → `video_submit/_poll`,
+  `KIE_PROMPT_MAX_CHARS` → `VIDEO_PROMPT_MAX_CHARS`, `normalise_for_apimart` →
+  `normalise_for_image_provider`. In [`config.py`](src/castrol_pipeline/config.py)
+  the FIELD is the role and `validation_alias` carries the env var name.
+
+  Five places a vendor name still belongs, and they are not oversights:
+
+  | where | why |
+  |---|---|
+  | env var names (`KIE_API_KEY`, `APIMART_API_KEY`, `CARTESIA_API_KEY`, `CARTESIA_VERSION`) | a deployment contract — the `.env` on the worker and in CI would break |
+  | hosts, endpoints and the `Cartesia-Version` header | the actual HTTP call has to reach a real vendor |
+  | `kie_video` / `apimart_image` in `vendor_limits` | live primary keys. Renaming needs a migration and a coordinated deploy, so the budget constants and the docs quoting them stay accurate rather than tidy |
+  | `supabase/migrations/**` | applied and immutable; `apply_migration.py` keys the ledger on the FILENAME, so `0003_cartesia_tts_no_repair.sql` cannot be renamed without re-applying it |
+  | [`docs/CARTESIA_API_DOCS.md`](docs/CARTESIA_API_DOCS.md), [`docs/TALKING_HEAD_PIPELINE_REFERENCE.md`](docs/TALKING_HEAD_PIPELINE_REFERENCE.md) | upstream API reference and another stack's measurements — quoted material, not our prose |
+
+  `require()` reports the **alias**, not the field name, for exactly this
+  reason: building the variable name from a renamed field would have told
+  whoever hit a missing key to set `VIDEO_API_KEY`, which does not exist.
+
+  Note this is naming, not secrecy — a role name in prose and a real host in a
+  curl command are both correct. Nothing in `_params()` or any `input_hash`
+  carries a vendor name, which is why the rename re-rendered nothing.
 - RLS is deny-all with no policies.
 - **Supabase keys are the new style only** — `sb_secret_…` / `sb_publishable_…`,
   never the legacy `anon` / `service_role` JWTs. Those are deprecated by end of
@@ -1147,16 +1178,15 @@ true 9:16; the 2026-09-09 set was 1536x2752, or 0.5581 against 9:16's 0.5625.)
 that is the tier's output size, not the plate's — see the cost section.
 
 **Spike 0.1 is answered — do not rewrite the script.** `kling-avatar-v2` has
-completed in prod at 39s via the video provider and 60s elsewhere; the ~80-word
-script at 30–40s
-is comfortably inside proven range. The original 18–25s assumption was too
+completed in prod at 39s on our video provider and 60s on another; the ~80-word
+script at 30–40s is comfortably inside proven range. The original 18–25s assumption was too
 conservative by about half. Budget **8–20 minutes** of wall clock per render,
 not two.
 
 **Stage A is the voice provider, direct API** — the one deliberate exception to
 "the two gateways only", because that intersection has no voice-cloning Hindi
-lane. The voice is created by hand in that provider's dashboard and referenced by
-id: **there is no cloning call in the pipeline.**
+lane. The voice is created by hand in that provider's dashboard and referenced
+by id: **there is no cloning call in the pipeline.**
 
 **There is no repair pass.** A second lipsync pass was considered and dropped
 — quality is solved in the main flow. If stage C output is unacceptable the
