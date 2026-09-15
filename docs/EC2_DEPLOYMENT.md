@@ -82,7 +82,7 @@ differ in RAM and credit accrual, not core count, so a render takes the same
 wall-clock on any of them. `t3.medium` earns ~576 credit-minutes/day against
 ~42 vCPU-minutes of work, two orders of magnitude of headroom.
 
-Revisit only if the kie cap rises a long way. Even the `$200` example in the
+Revisit only if the video cap rises a long way. Even the `$200` example in the
 runbook (~190 videos/day) is about an hour and a half of ffmpeg. If composite ever really
 does bind, the answer is more workers — claiming is `SKIP LOCKED` — not a
 bigger box.
@@ -265,7 +265,7 @@ midnight.
   higher. The 2026-09-15 pull bore that out: **44 rows in the 14-day window, 42
   valid, ~$46 all-in**, which would have hit the original $50 cap with one
   retry to spare. That is what prompted migration `0011`. The ceiling is now
-  the $5000/day kie COST cap (~4,732 renders), with the call caps raised by
+  the $5000/day video COST cap (~4,732 renders), with the call caps raised by
   `0012` to match so the money limit is what trips.
 
 - **Root was used for provisioning.** Switch to `castrol-server` for

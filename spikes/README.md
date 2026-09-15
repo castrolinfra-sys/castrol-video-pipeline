@@ -27,12 +27,12 @@ the client reviewed — three times, on the lower-third alone.
 | 0.3 | Stage B person replacement on 3 real photos — sharp, soft, glasses | build/age/skin-tone transfer works with geometry locked | **still the top open question** — never run as a controlled spike, though stage B has now run for real on 11 jobs |
 | 0.4 | Inspect stage C output for the Castrol marks | brand marks survive two generative passes | **answered in production** — 9/9 renders on 2026-09-14 read a clean chest `Castrol`. Note there are two marks now, not four: the 2026-09-11 artwork dropped the cap and the sleeve logo |
 | 0.5 | Fetch 5 Azure SAS URLs verbatim through the real HTTP client | nothing in the stack re-encodes the signature | **answered in production** — intake has fetched real SAS urls since 2026-09-08 and landed them in S3 |
-| 0.6 | TTS one real address + the `8 seconds` numeral | normalisation rules are sufficient | **answered** — Cartesia chosen, rules built and unit-tested (`tests/test_prep.py`) |
+| 0.6 | TTS one real address + the `8 seconds` numeral | normalisation rules are sufficient | **answered** — the voice provider chosen, rules built and unit-tested (`tests/test_prep.py`) |
 
 ## What changed
 
 `docs/TALKING_HEAD_PIPELINE_REFERENCE.md` answered 0.1 outright from prod job
-rows: `kling-avatar-v2` has completed at 39s via kie and 60s via fal, so a
+rows: `kling-avatar-v2` has completed at 39s via the video provider and 60s elsewhere, so a
 30–40s script needs no rewrite. It also gave 0.2's latency half, since confirmed
 on our own renders.
 
@@ -43,10 +43,10 @@ it needed is now known — plates are 1152x2048, the card rect is
 `y 72.27%..87.00%`, and the hands measure 60–70% of frame height — but the drift
 itself has never been measured per job, and no check looks for it.
 
-0.6 is closed by the provider decision: **Cartesia, direct API**, with the voice
+0.6 is closed by the provider decision: **the voice provider, direct API**, with the voice
 created by hand in the dashboard. The ElevenLabs note that used to sit here —
 that its built-in `apply_text_normalization` might make the numeral table
-redundant — does not apply to Cartesia, and the table is built and tested.
+redundant — does not apply to this provider, and the table is built and tested.
 
 ## Files
 

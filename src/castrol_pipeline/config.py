@@ -74,19 +74,30 @@ class Settings(BaseSettings):
     export_timezone: str = "Asia/Kolkata"
 
     # ----------------------------------------------------------- ai provider --
-    # Stage B (image) goes through apimart, stage C (video) through kie, and
-    # stage A (audio) direct to Cartesia — the one deliberate exception,
-    # because the apimart+kie intersection has no voice-cloning Hindi lane.
-    apimart_api_key: str | None = None
-    apimart_base_url: str | None = None
+    # Stage B (image) goes through the image provider, stage C (video) through
+    # the video provider, and stage A (audio) direct to the voice provider —
+    # the one deliberate exception, because the image+video gateway
+    # intersection has no voice-cloning Hindi lane.
+    #
+    # Field names are the ROLE; `validation_alias` carries the env var name,
+    # which is a deployment contract and does not change. Keep the two
+    # decoupled: renaming a field must never rename what `.env` has to say.
+    # `require()` reports the alias, so a missing value still names the exact
+    # variable to set.
+    image_api_key: str | None = Field(default=None, validation_alias="APIMART_API_KEY")
+    image_base_url: str | None = Field(
+        default=None, validation_alias="APIMART_BASE_URL"
+    )
     image_edit_resolution: str = "2K"
 
-    kie_api_key: str | None = None
-    kie_base_url: str | None = None
+    video_api_key: str | None = Field(default=None, validation_alias="KIE_API_KEY")
+    video_base_url: str | None = Field(default=None, validation_alias="KIE_BASE_URL")
 
-    cartesia_api_key: str | None = None
+    voice_api_key: str | None = Field(default=None, validation_alias="CARTESIA_API_KEY")
     tts_base_url: str | None = None
-    cartesia_version: str = "2026-05-11"
+    voice_api_version: str = Field(
+        default="2026-05-11", validation_alias="CARTESIA_VERSION"
+    )
 
     tts_model_id: str = "sonic-3.6"
     tts_voice_id: str | None = None
@@ -145,7 +156,8 @@ class Settings(BaseSettings):
     delivery_enabled: bool = False
 
     #: Seconds an in-flight vendor task may run before the poller fails it.
-    #: kie has been seen at 20 minutes; 2h is a ceiling, not an expectation.
+    #: The video provider has been seen at 20 minutes; 2h is a ceiling, not an
+    #: expectation.
     #: Without it a lost task sits `running` forever and never reports.
     #:
     #: Raised 90m -> 2h on 2026-09-15, ahead of the first real batch. Failing a
@@ -176,11 +188,20 @@ class Settings(BaseSettings):
         return "pro" in (self.video_model_id or "").lower()
 
     def require(self, name: str) -> str:
-        """Return a setting, or fail loudly naming the env var to set."""
+        """Return a setting, or fail loudly naming the env var to set.
+
+        The env var is the field's `validation_alias` where it has one, and
+        the upper-cased field name otherwise. Deriving it from the field name
+        alone would name a variable that does not exist for every aliased
+        field, sending whoever hits this to edit the wrong line of `.env`.
+        """
         value = getattr(self, name, None)
         if value is None or value == "":
+            field = type(self).model_fields.get(name)
+            alias = getattr(field, "validation_alias", None) if field else None
+            env_var = alias if isinstance(alias, str) else name.upper()
             raise MissingConfig(
-                f"{name.upper()} is not set. Add it to .env — see .env.example."
+                f"{env_var} is not set. Add it to .env — see .env.example."
             )
         return str(value)
 

@@ -190,7 +190,7 @@ def expand_for_speech(text: str) -> str:
     A run of 1-3 digits is LEFT ALONE for the TTS to read as a quantity. `K 68`
     is a house number and is said "K aṭṭhaasaṭh", not "K chhah aath" - which is
     what this function used to produce, and what a mechanic heard in his own
-    address. The digits are handed to Cartesia as Latin numerals rather than
+    address. The digits are handed to the voice provider as Latin numerals rather than
     spelled into Hindi words here, because Hindi numerals are irregular (68 is
     `aṭṭhaasaṭh`, not a compound of 6 and 8) and a table of 99 of them typed out
     by hand is 99 chances to put a wrong word in a client's video.

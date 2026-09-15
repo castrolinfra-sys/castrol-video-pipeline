@@ -30,7 +30,7 @@ job at **~32 seconds per video**, nearly all of it the ffmpeg composite:
 
 At 8 hours that is roughly 900 videos per cycle, so the deadline is never what
 stops a realistic batch. The binding limit is `vendor_limits`, specifically
-`daily_cost_cap_usd`: $5000 on kie after migrations 0011 and 0012, about 4732
+`daily_cost_cap_usd`: $5000 on video after migrations 0011 and 0012, about 4732
 videos a day at the measured ~$1.06 each. The call caps were raised alongside
 it so the cost cap is what trips. That is a runaway guard rather than a budget
 - observed volume is ~40 videos a day - and it fails closed, as does the call

@@ -13,7 +13,7 @@ motion while the code says otherwise.
 from __future__ import annotations
 
 from castrol_pipeline.common import hashing
-from castrol_pipeline.stages.vendors import AVATAR_PROMPT, KIE_PROMPT_MAX_CHARS
+from castrol_pipeline.stages.vendors import AVATAR_PROMPT, VIDEO_PROMPT_MAX_CHARS
 
 
 class TestPromptIsInTheHash:
@@ -46,8 +46,8 @@ class TestPromptShape:
     def test_not_the_inherited_placeholder(self):
         assert AVATAR_PROMPT.strip() not in {"", "."}
 
-    def test_within_kie_limit(self):
-        assert len(AVATAR_PROMPT) <= KIE_PROMPT_MAX_CHARS
+    def test_within_video_provider_limit(self):
+        assert len(AVATAR_PROMPT) <= VIDEO_PROMPT_MAX_CHARS
 
     def test_stays_short(self):
         # The model's guidance is about COMPLEXITY, not raw characters: long or

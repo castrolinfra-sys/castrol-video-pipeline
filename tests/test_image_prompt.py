@@ -107,13 +107,13 @@ class TestSubmitOrdering:
                 return _Resp()
 
         monkeypatch.setattr(vendors.httpx, "Client", _Client)
-        monkeypatch.setattr(vendors, "_apimart_headers", lambda: {})
-        monkeypatch.setattr(vendors, "_apimart_base", lambda: "https://x")
+        monkeypatch.setattr(vendors, "_image_headers", lambda: {})
+        monkeypatch.setattr(vendors, "_image_base", lambda: "https://x")
         return sent
 
     def test_uniform_reference_is_third(self, monkeypatch):
         sent = self._capture(monkeypatch)
-        vendors.apimart_submit(
+        vendors.image_submit(
             "PLATE", "PHOTO", model_id="m", uniform_ref_url="UNIFORM"
         )
         assert sent["image_urls"] == ["PLATE", "PHOTO", "UNIFORM"]
@@ -121,6 +121,6 @@ class TestSubmitOrdering:
 
     def test_without_one_only_two_urls_go_out(self, monkeypatch):
         sent = self._capture(monkeypatch)
-        vendors.apimart_submit("PLATE", "PHOTO", model_id="m")
+        vendors.image_submit("PLATE", "PHOTO", model_id="m")
         assert sent["image_urls"] == ["PLATE", "PHOTO"]
         assert "third" not in sent["prompt"].lower()

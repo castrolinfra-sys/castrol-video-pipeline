@@ -81,9 +81,9 @@ What is serial is only our own work. Measured end to end on a real completed job
 | stage | time | note |
 |---|---|---|
 | prep | 1s | |
-| audio | <1s | Cartesia, synchronous but fast |
+| audio | <1s | voice provider, synchronous but fast |
 | image | <1s | submit only |
-| video | <1s | submit only — the 8.6 min render happens at kie |
+| video | <1s | submit only — the 8.6 min render happens at the provider |
 | **composite** | **28s** | ffmpeg burn-in, local, CPU-bound — the real bottleneck |
 | checks / publish / deliver | 1s each | |
 

@@ -6,11 +6,11 @@ by hand is what the pipeline will later do properly.
 
     plate.png + mechanic.jpg
             |
-      [1] image   apimart gpt-image-2   person replacement on the plate
+      [1] image   gpt-image-2           person replacement on the plate
             |
-      [2] audio   Cartesia sonic-3.6    Hindi script -> mp3 + probed duration
+      [2] audio   sonic-3.6             Hindi script -> mp3 + probed duration
             |
-      [3] video   kie kling-avatar-v2   avatar lipsync   (8-20 MINUTES)
+      [3] video   kling-avatar-v2       avatar lipsync   (8-20 MINUTES)
             |
       [4] card    Pillow + ffmpeg       burn in the lower-third
             |
@@ -44,7 +44,7 @@ from castrol_pipeline.stages.media import (
     composite as _composite,
 )
 from castrol_pipeline.stages.media import (
-    normalise_for_apimart as _normalise_for_apimart,
+    normalise_for_image_provider as _normalise_for_image_provider,
 )
 from castrol_pipeline.stages.media import (
     probe_dimensions,
@@ -122,8 +122,8 @@ def to_mp3(
     return _to_mp3(src, dst, seconds=seconds)
 
 
-def normalise_for_apimart(src: pathlib.Path, dst: pathlib.Path) -> pathlib.Path:
-    return _normalise_for_apimart(src, dst)
+def normalise_for_image_provider(src: pathlib.Path, dst: pathlib.Path) -> pathlib.Path:
+    return _normalise_for_image_provider(src, dst)
 
 
 def sniff_is_image(b: bytes) -> bool:
@@ -150,7 +150,7 @@ def download(url: str, dst: pathlib.Path, expect_image: bool = False) -> pathlib
 def publish(path: pathlib.Path) -> str:
     """Return a URL the providers can fetch `path` from.
 
-    Both apimart and kie fetch inputs BY URL - not base64, not upload-then-
+    Both gateways fetch inputs BY URL - not base64, not upload-then-
     reference. The URL must return bytes on the first GET; a CDN transform path
     that 202s on a cold miss makes the provider's fetcher bail.
 
@@ -160,8 +160,8 @@ def publish(path: pathlib.Path) -> str:
     if not bucket:
         die(
             "S3_BUCKET is not set, so there is nowhere to host the audio and "
-            "image for kie to fetch.\n"
-            "        apimart's image result is already a public URL, but the "
+            "image for the video provider to fetch.\n"
+            "        The image result is already a public URL, but the "
             "MP3 has no home.\n"
             "        Either set up the S3 bucket, or pass --audio-url / "
             "--image-url pointing at\n"
@@ -197,7 +197,7 @@ def publish(path: pathlib.Path) -> str:
     return url
 
 
-# ------------------------------------------------------ [1] image (apimart) --
+# ----------------------------------------------- [1] image (provider) --
 
 # Kept in step with stages/vendors.py by hand - unlike the card, the prompt is
 # duplicated here rather than imported, because the point of the spike is to try
@@ -275,7 +275,7 @@ def step_image(
         "n": 1,
         "official_fallback": False,
     }
-    # 60s, not 15s: a short timeout orphans jobs - apimart accepts and starts,
+    # 60s, not 15s: a short timeout orphans jobs - the provider accepts and starts,
     # the client raises, and the result is keyed to a task_id nobody recorded.
     with httpx.Client(timeout=60.0) as c:
         r = c.post(
@@ -286,7 +286,7 @@ def step_image(
         j = r.json()
         # HTTP 200 with code != 200 is an error on both gateways.
         if j.get("code") != 200:
-            die(f"apimart submit rejected: {json.dumps(j)[:400]}")
+            die(f"image provider submit rejected: {json.dumps(j)[:400]}")
         data = j["data"]
         task_id = (data[0] if isinstance(data, list) else data)["task_id"]
         say("image", f"submitted task {task_id}; avg ~83s, worst seen 644s")
@@ -314,13 +314,13 @@ def step_image(
             if status in {"failed", "cancelled"}:
                 err = json.dumps(d.get("error", d))[:400]
                 # 11 of 20 observed failures on this model were content safety.
-                die(f"apimart {status}: {err}")
+                die(f"image provider {status}: {err}")
             say("image", f"  {status}...")
-    die("apimart poll timed out after 45 minutes")
+    die("image provider poll timed out after 45 minutes")
     return ""
 
 
-# ------------------------------------------------------ [2] audio (Cartesia) --
+# ----------------------------------------------- [2] audio (provider) --
 
 
 # Pronunciation overrides applied to the SPOKEN text only. The card still
@@ -366,7 +366,7 @@ def step_audio(script_text: str, out_dir: pathlib.Path) -> tuple[pathlib.Path, f
             },
         )
         if r.status_code != 200:
-            die(f"cartesia {r.status_code}: {r.text[:400]}")
+            die(f"voice provider {r.status_code}: {r.text[:400]}")
         raw.write_bytes(r.content)
 
     mp3 = to_mp3(raw, out_dir / "audio.mp3")
@@ -374,11 +374,11 @@ def step_audio(script_text: str, out_dir: pathlib.Path) -> tuple[pathlib.Path, f
     say("audio", f"{len(script_text)} chars -> {dur:.1f}s, "
                  f"{raw.stat().st_size // 1024}KB wav -> {mp3.stat().st_size // 1024}KB mp3")
     if dur > 60:
-        say("audio", f"WARNING: {dur:.0f}s exceeds the longest proven kie render (39s)")
+        say("audio", f"WARNING: {dur:.0f}s exceeds the longest proven render (39s)")
     return mp3, dur
 
 
-# --------------------------------------------------------- [3] video (kie) --
+# ----------------------------------------------- [3] video (provider) --
 
 
 def step_video(image_url: str, audio_url: str, out: pathlib.Path) -> str:
@@ -397,7 +397,7 @@ def step_video(image_url: str, audio_url: str, out: pathlib.Path) -> str:
         )
         j = r.json()
         if j.get("code") != 200:
-            die(f"kie submit rejected: {json.dumps(j)[:400]}")
+            die(f"video provider submit rejected: {json.dumps(j)[:400]}")
         task_id = j["data"]["taskId"]
         say("video", f"submitted task {task_id}. THIS TAKES 8-20 MINUTES.")
 
@@ -417,9 +417,9 @@ def step_video(image_url: str, audio_url: str, out: pathlib.Path) -> str:
                 return url
             if state in {"fail", "FAILED", "failed", "error", "ERROR"}:
                 msg = d.get("failMsg") or d.get("errorReason") or d.get("msg")
-                die(f"kie {state}: {d.get('failCode', '')} {msg}")
+                die(f"video provider {state}: {d.get('failCode', '')} {msg}")
             say("video", f"  {state}... ({int(time.time() - deadline + 3600)}s elapsed)")
-    die("kie poll timed out after 60 minutes")
+    die("video provider poll timed out after 60 minutes")
     return ""
 
 
@@ -478,16 +478,16 @@ def main() -> int:
         # No plate yet: drive the avatar straight from the source photo so the
         # audio -> video -> card path can be proven before the plates land.
         st.set("image_url", publish(
-            normalise_for_apimart(pathlib.Path(args.photo), out / "photo_norm.png")))
+            normalise_for_image_provider(pathlib.Path(args.photo), out / "photo_norm.png")))
         say("image", "no --plate given; using the source photo as the avatar image")
     if only in (None, "image") and not st.get("image_url"):
         if not (args.plate and args.photo):
             die("--plate and --photo are required for the image step")
         plate_url = args.plate_url or publish(
-            normalise_for_apimart(pathlib.Path(args.plate), out / "plate_norm.png"))
+            normalise_for_image_provider(pathlib.Path(args.plate), out / "plate_norm.png"))
         photo_url = args.photo_url or publish(
-            normalise_for_apimart(pathlib.Path(args.photo), out / "photo_norm.png"))
-        uniform_ref_url = publish(normalise_for_apimart(
+            normalise_for_image_provider(pathlib.Path(args.photo), out / "photo_norm.png"))
+        uniform_ref_url = publish(normalise_for_image_provider(
             pathlib.Path(args.uniform_ref), out / "uniform_ref_norm.png"),
         ) if args.uniform_ref else None
         st.set("image_url", step_image(

@@ -45,10 +45,10 @@ a video that gets shared around.
       prep    fill the script, pick the spoken locality        free
         ├───────────────┐
   [A] audio        [B] image                                   $0.02 / $0.014
-  Cartesia         apimart gpt-image-2 @2K
+  voice provider   image provider, gpt-image-2 @2K
   sonic-3.6        person replacement on the plate
         └───────┬───────┘
-  [C] video    kie kling-avatar-standard    (8-20 MINUTES)     $0.036 / second
+  [C] video    kling-avatar-standard       (8-20 MINUTES)     $0.036 / second
         │
   [D] composite  Pillow + ffmpeg, burn in the lower-third      free
         │
@@ -71,9 +71,9 @@ local and free.
 | Stage | Class | Provider call | Local work | Cost |
 |---|---|---|---|---|
 | `prep` | `PrepStage` | — | [`prep/script.py`](src/castrol_pipeline/prep/script.py), [`prep/normalise.py`](src/castrol_pipeline/prep/normalise.py) | free |
-| `audio` **A** | `AudioStage` | [`vendors.py`](src/castrol_pipeline/stages/vendors.py) `cartesia_tts` | [`media.py`](src/castrol_pipeline/stages/media.py) `to_mp3`, `probe_duration_seconds` | $0.00005/char |
-| `image` **B** | `ImageStage` | [`vendors.py`](src/castrol_pipeline/stages/vendors.py) `apimart_submit` / `apimart_poll` | — | $0.014 |
-| `video` **C** | `VideoStage` | [`vendors.py`](src/castrol_pipeline/stages/vendors.py) `kie_submit` / `kie_poll` | — | $0.036/s |
+| `audio` **A** | `AudioStage` | [`vendors.py`](src/castrol_pipeline/stages/vendors.py) `voice_tts` | [`media.py`](src/castrol_pipeline/stages/media.py) `to_mp3`, `probe_duration_seconds` | $0.00005/char |
+| `image` **B** | `ImageStage` | [`vendors.py`](src/castrol_pipeline/stages/vendors.py) `image_submit` / `image_poll` | — | $0.014 |
+| `video` **C** | `VideoStage` | [`vendors.py`](src/castrol_pipeline/stages/vendors.py) `video_submit` / `video_poll` | — | $0.036/s |
 | `composite` **D** | `CompositeStage` | — | [`media.py`](src/castrol_pipeline/stages/media.py) `render_card`, `composite` | free |
 | `checks` | `ChecksStage` | — | — | free |
 | `publish` | `PublishStage` | — | [`common/s3.py`](src/castrol_pipeline/common/s3.py) `copy`, `cdn_url` | free |
@@ -130,7 +130,7 @@ Two kinds of read, and the difference is not cosmetic:
 
 | | For | Lifetime |
 |---|---|---|
-| **Presigned GET** | handing a working artefact to a vendor — apimart and kie fetch inputs by URL | 6h, method-bound, private |
+| **Presigned GET** | handing a working artefact to a vendor — the gateways fetch inputs by URL | 6h, method-bound, private |
 | **CDN URL** | the delivered video only | until the object is **deleted** at 180 days |
 
 Delivered links are never presigned: SigV4 caps expiry at 7 days and the client
@@ -162,7 +162,7 @@ Fill [`.env`](.env.example) — every variable is documented there. Then apply
 own Supabase instance, with
 [`scripts/apply_migration.py`](scripts/apply_migration.py).
 
-> GitHub, Supabase, Vercel, apimart, kie and Cartesia are **dedicated
+> GitHub, Supabase, Vercel and the three AI providers are **dedicated
 > accounts**, separate from other BeHooked projects. **AWS is not** —
 > `castrol-local` lives in the shared BeHooked account `872515254882`; only the
 > IAM user and the bucket are dedicated. See [`CLAUDE.md`](CLAUDE.md).
@@ -403,7 +403,7 @@ Every path is real. If you are hunting for where something happens, start here.
 |---|---|
 | [`stages/base.py`](src/castrol_pipeline/stages/base.py) | the `Stage` protocol, the DAG, `JobContext`, `StageResult`, `AsyncSubmission` |
 | [`stages/real.py`](src/castrol_pipeline/stages/real.py) | all eight real stages, one class each, and the `REAL_STAGES` registry |
-| [`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) | **everything that talks to a provider** — apimart, kie, Cartesia; submit and poll |
+| [`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) | **everything that talks to a provider** — image, video, voice; submit and poll |
 | [`stages/media.py`](src/castrol_pipeline/stages/media.py) | **everything local and free** — ffprobe, mp3, the Pillow card, the ffmpeg composite |
 | [`stages/stubs.py`](src/castrol_pipeline/stages/stubs.py) | no-spend doubles for the same protocol (`USE_STUB_STAGES=true`) |
 
@@ -434,7 +434,7 @@ Every path is real. If you are hunting for where something happens, start here.
 |---|---|
 | [`0001_init.sql`](supabase/migrations/0001_init.sql) | every table, the enums, the idempotency indexes, RLS deny-all |
 | [`0002_budget_and_seed.sql`](supabase/migrations/0002_budget_and_seed.sql) | USD budget caps, `reserve_vendor_call()`, the six plate rows |
-| [`0003_cartesia_tts_no_repair.sql`](supabase/migrations/0003_cartesia_tts_no_repair.sql) | Cartesia enabled; the repair pass deleted |
+| [`0003_cartesia_tts_no_repair.sql`](supabase/migrations/0003_cartesia_tts_no_repair.sql) | voice lane enabled; the repair pass deleted |
 | [`0004_runtime_observability.sql`](supabase/migrations/0004_runtime_observability.sql) | per-attempt cost, `assets.cdn_url`, `job_events`, the `job_costs` view |
 | [`0005_admin_review_and_export_copy.sql`](supabase/migrations/0005_admin_review_and_export_copy.sql) | `job_reports` (the panel's only write) and the raw export copy |
 | [`0006_real_export_schema.sql`](supabase/migrations/0006_real_export_schema.sql) | the real CSV columns — `card_phone_e164`, `mechanic_id_verified`, the client's own row `id` |
@@ -488,7 +488,8 @@ pro       cost = $0.014  +  seconds x $0.0720        (25s ≈ $1.82)
 | 30s | $1.120 | $2.200 |
 
 The video step is **~96%** of it and bills per output second, so **runtime is
-the only lever that matters**. Audio and image together are ~4%. kie ceils to
+the only lever that matters**. Audio and image together are ~4%. The provider
+ceils to
 whole seconds: 24.8s bills as 25s.
 
 `kling/ai-avatar-pro` doubles the total and is the **only way to get 1080p** —
@@ -496,8 +497,8 @@ standard returns 720x1280 whatever it is fed, pro returns 1072x1920, and there
 is no resolution parameter on either. `VIDEO_MODEL_ID` is the whole switch, and
 `Settings.video_is_pro` derives the billing rate from it.
 
-Rates: apimart `gpt-image-2` $0.014/image @2K; kie $0.036/output second standard
-and $0.072 pro; Cartesia 1 credit per **character** at 100K credits per $5
+Rates: `gpt-image-2` $0.014/image @2K; video $0.036/output second standard
+and $0.072 pro; voice 1 credit per **character** at 100K credits per $5
 ($0.00005/char, no block rounding).
 
 `common/budget.py` pins exactly these — corrected in `cf00e4a`, so a
@@ -537,7 +538,7 @@ the two disagreeing on *cost* is just refunds, and expected.
 | [`docs/TECH_DESIGN.md`](docs/TECH_DESIGN.md) | how it is built — modules, state machine, invariants |
 | [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) | scope, client decisions, risks |
 | [`docs/TALKING_HEAD_PIPELINE_REFERENCE.md`](docs/TALKING_HEAD_PIPELINE_REFERENCE.md) | prod-measured evidence from the existing BeHooked backend — the source of most invariants |
-| [`docs/CARTESIA_API_DOCS.md`](docs/CARTESIA_API_DOCS.md) | Cartesia reference — implemented in [`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) |
+| [`docs/CARTESIA_API_DOCS.md`](docs/CARTESIA_API_DOCS.md) | Voice provider API reference — implemented in [`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) |
 | [`docs/COST_PER_VIDEO.md`](docs/COST_PER_VIDEO.md) | the per-video arithmetic, in dollars and rupees |
 | [`deploy/README.md`](deploy/README.md) | **the EC2 runbook** — provision, install, operate, read the logs |
 | [`docs/EC2_DEPLOYMENT.md`](docs/EC2_DEPLOYMENT.md) | **the deployment as built** — resource ids, decisions taken, what was verified |

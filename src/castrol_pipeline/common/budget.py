@@ -27,7 +27,7 @@ log = get_logger(__name__)
 #: column in vendor_limits exactly — a name that is not a row there is an
 #: unknown vendor, and reserve_vendor_call denies it. That is the correct
 #: failure direction, but it fails the whole stage, so keep them in sync.
-VENDOR_TTS = "tts"  # Cartesia, direct API — billed per 1000 chars, ceiled
+VENDOR_TTS = "tts"  # voice provider, direct API — billed per 1000 chars, ceiled
 VENDOR_IMAGE = "apimart_image"  # gpt-image-2-max — billed per call
 VENDOR_VIDEO = "kie_video"  # kling-avatar-v2 — billed PER OUTPUT SECOND
 
@@ -43,11 +43,11 @@ VENDOR_VIDEO = "kie_video"  # kling-avatar-v2 — billed PER OUTPUT SECOND
 #: quote is built from, and a number that is knowingly 11% wrong in the
 #: forgiving direction is still a number nobody can use. `docs/COST_PER_VIDEO.md`
 #: holds the full tables.
-USD_PER_IMAGE_2K = Decimal("0.014")               # apimart gpt-image-2 @ 2K
-USD_PER_VIDEO_SECOND_STANDARD = Decimal("0.036")  # kie kling/ai-avatar-standard
+USD_PER_IMAGE_2K = Decimal("0.014")               # image provider, gpt-image-2 @ 2K
+USD_PER_VIDEO_SECOND_STANDARD = Decimal("0.036")  # video provider, kling/ai-avatar-standard
 USD_PER_VIDEO_SECOND_PRO = Decimal("0.072")       # kling/ai-avatar-pro
 
-#: Cartesia bills 1 credit per CHARACTER, 100K credits per $5. Per character,
+#: The voice provider bills 1 credit per CHARACTER, 100K credits per $5. Per character,
 #: not per block: there is no kilochar rounding to apply. An earlier $0.10 per
 #: 1000 chars figure came from another stack's internal credit conversion and
 #: overstated TTS by 2x.

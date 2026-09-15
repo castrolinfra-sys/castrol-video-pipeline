@@ -116,7 +116,7 @@ src/castrol_pipeline/
     base.py            Stage protocol, the DAG, JobContext, StageResult
     real.py            ALL EIGHT real stages + REAL_STAGES registry
     stubs.py           deterministic fakes (USE_STUB_STAGES=true), no spend
-    vendors.py         apimart / kie / Cartesia HTTP clients, submit + poll
+    vendors.py         image / video / voice HTTP clients, submit + poll
     media.py           ffprobe, mp3, the Pillow card, the ffmpeg composite
 scripts/
   apply_migration.py   the write path for migrations — one file per invocation,
@@ -145,9 +145,9 @@ everything local and free.
 | Stage | Implementation | Talks to | Costs |
 |---|---|---|---|
 | `prep` | `stages/real.py` → `PrepStage`, using `prep/script.py` | — | free |
-| `audio` (A) | `stages/real.py` → `AudioStage`, via `stages/vendors.py:cartesia_tts` | Cartesia | $0.00005/char |
-| `image` (B) | `stages/real.py` → `ImageStage`, via `vendors.py:apimart_submit/_poll` | apimart | $0.014 |
-| `video` (C) | `stages/real.py` → `VideoStage`, via `vendors.py:kie_submit/_poll` | kie | $0.036/s |
+| `audio` (A) | `stages/real.py` → `AudioStage`, via `stages/vendors.py:voice_tts` | voice provider | $0.00005/char |
+| `image` (B) | `stages/real.py` → `ImageStage`, via `vendors.py:image_submit/_poll` | image provider | $0.014 |
+| `video` (C) | `stages/real.py` → `VideoStage`, via `vendors.py:video_submit/_poll` | video provider | $0.036/s |
 | `composite` (D) | `stages/real.py` → `CompositeStage`, using `stages/media.py` | — | free |
 | `checks` | `stages/real.py` → `ChecksStage` | — | free |
 | `publish` | `stages/real.py` → `PublishStage`, using `common/s3.py` | S3 + CDN | free |
@@ -168,7 +168,7 @@ Spikes are otherwise allowed to be ugly.
 
 Defined in [`0001_init.sql`](../supabase/migrations/0001_init.sql), extended by
 [`0002`](../supabase/migrations/0002_budget_and_seed.sql) (USD budget caps),
-[`0003`](../supabase/migrations/0003_cartesia_tts_no_repair.sql) (Cartesia, no repair
+[`0003`](../supabase/migrations/0003_cartesia_tts_no_repair.sql) (voice lane, no repair
 pass), [`0004`](../supabase/migrations/0004_runtime_observability.sql) (per-attempt
 cost, `assets.cdn_url`, `job_events`, the `job_costs` view),
 [`0005`](../supabase/migrations/0005_admin_review_and_export_copy.sql) (`job_reports`,
@@ -183,7 +183,7 @@ the raw export copy),
 [`0010`](../supabase/migrations/0010_bill_on_the_render_not_the_trim.sql) (bill on the
 render, not the trim) and
 [`0014`](../supabase/migrations/0014_ceil_the_billed_second.sql) (ceil that
-render to a whole second, per row, because kie rounds up and charges per job),
+render to a whole second, per row, because the provider rounds up and charges per job),
 [`0011`](../supabase/migrations/0011_raise_the_daily_cost_caps.sql) /
 [`0012`](../supabase/migrations/0012_raise_the_call_caps_to_match.sql) (the daily caps)
 and [`0013`](../supabase/migrations/0013_refunded_runs.sql) (`stage_runs.refunded`).
@@ -353,15 +353,15 @@ Every outbound paid call goes through `common/budget.py`, which calls
 
 | Step | Model / lane | Cost | Share |
 |---|---|---:|---:|
-| Image edit | `gpt-image-2-max`, apimart, 2K | $0.0140 | 1.3% |
+| Image edit | `gpt-image-2-max`, image provider, 2K | $0.0140 | 1.3% |
 | TTS | ~450 chars, per character | $0.0226 | 2.1% |
-| Avatar | `kling-avatar-v2` standard, kie, 29.4s | **$1.0567** | **96.7%** |
+| Avatar | `kling-avatar-v2` standard, video provider, 29.4s | **$1.0567** | **96.7%** |
 | | **all-in per video** | **$1.093** | |
 | | `pro` variant instead | $2.150 total | avatar = 98% |
 
 Measured over 11 real renders on 2026-09-15, not modelled. The earlier row
 (`$0.012` / `$0.100` billed as a 1k block / `$1.400` at $0.04/s) predated both
-the rate correction in `cf00e4a` and the discovery that Cartesia bills per
+the rate correction in `cf00e4a` and the discovery that the voice provider bills per
 character with no block rounding.
 
 A call-count cap bounds volume but bounds *spend* only within ~3× (script
@@ -369,7 +369,7 @@ length) × ~2× (standard vs pro), which is why `vendor_limits` carries both.
 That reasoning stands, and `0011`/`0012` (2026-09-15) reasserted it after a
 brief inversion. `0011` raised `daily_cost_cap_usd` to $5000 on `kie_video` and
 $500 on the other two but left the call caps at 200/600/600 — which made THOSE
-the ceiling (~$211/day on kie) while the number anyone would read said $5000.
+the ceiling (~$211/day on video) while the number anyone would read said $5000.
 `0012` lifted the call caps to 5000 / 40000 / 25000 so the cost cap trips first
 for every vendor again:
 
@@ -381,7 +381,7 @@ for every vendor again:
 
 The two cheap vendors had to move as well, and not because they were given a
 budget: every video costs one image call and one TTS call, so a 600-call cap on
-either would have halted the pipeline at 600 videos — under kie's ~4 732 — and
+either would have halted the pipeline at 600 videos — under video's ~4 732 — and
 relocated the binding constraint to stage A or stage B without announcing it.
 A cap is only a guard if it is the one you think it is.
 
@@ -407,7 +407,7 @@ within the same day. This is a hard stop, not a throttle.
 ### Reserving is not the same as not double-charging
 
 **Neither gateway supports an idempotency key on submit.** No such field exists
-on kie or apimart. A network-level retry of a submit creates a second provider
+on either gateway. A network-level retry of a submit creates a second provider
 job and a second charge, and the budget function cannot see it — it reserved
 once. Dedupe before the HTTP call, and on an ambiguous submit *reconcile*
 rather than resubmit.
@@ -418,7 +418,7 @@ longest a worker can legitimately hold a claim. Only `is_async = False` stages
 hold one — async stages submit, store `vendor_task_id`, and release to
 `running`, which the reaper does not touch. **The image stage is currently
 `is_async = False` and should become async when the real stage lands**, since
-apimart is poll-only with a 2700s ceiling and an observed 644s worst case.
+The image gateway is poll-only with a 2700s ceiling and an observed 644s worst case.
 
 These are two different clocks and they are often confused:
 
@@ -519,11 +519,11 @@ dimensions, and the vendor metadata to record. Stages do not write to `jobs`;
 the orchestrator does. Stages do not decide retries; the orchestrator does.
 
 ### A — audio
-**Cartesia, direct API.** The one deliberate exception to "apimart + kie only",
+**The voice provider, direct API.** The one deliberate exception to "the two gateways only",
 taken because that intersection has no voice-cloning Hindi lane at all. Hindi
-and Gujarati are both prod-verified on Cartesia with a cloned voice.
+and Gujarati are both prod-verified on this provider with a cloned voice.
 
-The voice is **created by hand in the Cartesia dashboard** and referenced by
+The voice is **created by hand in the provider's dashboard** and referenced by
 id. There is no cloning call in the pipeline — no `/voices/clone`, no
 per-render clone latency, no voice lifecycle to manage. `TTS_VOICE_ID` is
 config, pinned like a model id.
@@ -543,10 +543,10 @@ Two things this stage owns beyond the call, both mandatory:
 
 1. **Emit MP3.** The avatar model's `"Audio size is too large"` is a byte
    limit, not a duration limit, and every observed failure was a WAV.
-   Cartesia's default `pcm_f32le` @44.1kHz is ~176 KB/s — 40s is ~7 MB against
-   ~640 KB as MP3. Request an MP3 container if Cartesia will emit one;
+   The provider's default `pcm_f32le` @44.1kHz is ~176 KB/s — 40s is ~7 MB against
+   ~640 KB as MP3. Request an MP3 container if it will emit one;
    otherwise transcode before handing off. Either way stage C never sees a WAV.
-2. **Probe the duration with ffmpeg and record it.** Cartesia returns no
+2. **Probe the duration with ffmpeg and record it.** The provider returns no
    duration, and stage C bills per output second — this probe is a billing
    input, not a convenience. Fail closed to the cap, never to zero.
 
@@ -614,7 +614,7 @@ invariant 31 covers it: `jobs.plate_id` stays the one honest record of the
 artwork a video was built from, reference included.
 
 ### C — video
-The `prompt` field is REQUIRED on kie (max 5000 chars) and is not decorative:
+The `prompt` field is REQUIRED on the video provider (max 5000 chars) and is not decorative:
 it steers expression, head movement and hand gesture. `AVATAR_PROMPT` in
 [`stages/vendors.py`](../src/castrol_pipeline/stages/vendors.py) follows the
 model's documented shape — subject, expression, motion, style preservation, in
@@ -659,7 +659,7 @@ control. Plate resolution above the tier's output buys nothing downstream.
 
 Pro was **ruled out on 2026-09-10** as too expensive and **reinstated on
 2026-09-12** when the client asked for 1080p. Do not cite the old decision as
-standing. The mistake in between is worth recording: "kie outputs 720x1280
+standing. The mistake in between is worth recording: "the provider outputs 720x1280
 regardless of input resolution" was measured on a *standard* render and
 generalised into a limit of the model. It is a limit of the tier, and that error
 sent five prompt revisions chasing a chest-logo smear that resolution was never
@@ -677,14 +677,14 @@ over-reserved or - worse - under-reserved by 2x on the only expensive step, in
 silence. The prompt text is hashed directly, so editing it regenerates rather
 than silently skipping.
 
-`kling-avatar-v2` on kie. Async submit, `vendor_task_id` stored, poller
+`kling-avatar-v2` on the video provider. Async submit, `vendor_task_id` stored, poller
 reconciles. The bottleneck, and 93–96% of the money.
 
 Latency is measured, not guessed: ~256s at 16s of audio, ~607s at 30s,
 **~1191s (~20 min) at 39s**. Budget 8–20 minutes for a 30–40s render and size
 every timeout above it.
 
-kie's response shape has two traps worth restating: HTTP 200 with `code != 200`
+The response shape has two traps worth restating: HTTP 200 with `code != 200`
 is an error, and `resultJson` is a JSON *string* that must be parsed before
 indexing `resultUrls[0]`. Copy the result to our storage inside the handler —
 the provider URL's TTL is unmeasured and unrelied-upon.
@@ -955,7 +955,7 @@ No alerting this release, by decision.
 | object storage | AWS S3, private |
 | delivery links | CDN in front of S3 |
 | admin panel | Vercel — live at <https://castrol-pipeline-admin-panel.vercel.app> |
-| AI providers | apimart (image edit), kie (avatar), Cartesia (TTS, direct) |
+| AI providers | image edit gateway, avatar gateway, voice TTS (direct) |
 | worker image | Docker Hub, `gethooked/castrol-video-pipeline`, built by CI |
 
 The worker runs `castrol cycle` under a systemd timer at 00:00 and 12:00 IST,
@@ -1064,12 +1064,12 @@ at template v4. What remains open is not build order — see §19.
 
 **Closed, with the answer, so they are not reopened by accident:**
 
-- ~~**TTS provider for stage A.**~~ **Cartesia, direct API**, voice created by
+- ~~**TTS provider for stage A.**~~ **the voice provider, direct API**, voice created by
   hand in the dashboard and referenced by id. A deliberate exception to
-  "apimart + kie only" — that intersection has no voice-cloning Hindi lane. No
+  "the two gateways only" — that intersection has no voice-cloning Hindi lane. No
   cloning call ships. See §10 A.
 - ~~**Script runtime vs model max input duration.**~~ `kling-avatar-v2` has
-  completed at 39s via kie and 60s via fal; the ~80-word script at 30–40s is
+  completed at 39s via the video provider and 60s elsewhere; the ~80-word script at 30–40s is
   comfortably inside proven range and **does not need rewriting**. The real
   ceiling is *bytes, not seconds* — invariant 11.
 - ~~**Timestamp format.**~~ **ISO 8601** (`2026-09-07T10:13:49.681Z`, with and

@@ -7,8 +7,8 @@ credentials — the same reason the stub stages exist.
 The bucket is private and stays private. Reads happen two ways, and the
 difference is not cosmetic:
 
-  * **Presigned GET** — for handing a working artefact to a vendor. apimart and
-    kie fetch inputs BY URL, so the mp3 and the edited image must be reachable
+  * **Presigned GET** — for handing a working artefact to a vendor. The image and
+    video gateways fetch inputs BY URL, so the mp3 and the edited image must be reachable
     for the length of a render. Short-lived, unlisted, method-bound.
   * **CDN URL** — for the delivered video only. SigV4 caps presign expiry at 7
     days and the client link must live 6 months, so a delivered link is a plain
@@ -160,7 +160,7 @@ class LocalBackend:
     def presigned_get_url(self, key: str, *, expires_in: int = 21600) -> str:
         raise NotImplementedError(
             "The local backend cannot produce a URL a vendor can fetch. "
-            "apimart and kie pull inputs over HTTP, so any stage that reaches a "
+            "The gateways pull inputs over HTTP, so any stage that reaches a "
             "real vendor needs STORAGE_BACKEND=s3."
         )
 

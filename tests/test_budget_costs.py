@@ -44,7 +44,7 @@ class TestVideoCost:
 
 
 class TestTtsCost:
-    """Cartesia bills 1 credit per CHARACTER, 100K credits per $5.
+    """The voice provider bills 1 credit per CHARACTER, 100K credits per $5.
 
     Per character, with no block rounding. An earlier model here ceiled to
     $0.10 per 1000 chars — that figure came from another stack's internal

@@ -64,13 +64,13 @@ def register_plate(
     switched off.
     """
     with tempfile.TemporaryDirectory() as tmp:
-        norm = media.normalise_for_apimart(path, Path(tmp) / "plate.png")
+        norm = media.normalise_for_image_provider(path, Path(tmp) / "plate.png")
         width, height = _size(norm)
         if (width, height) != (1080, 1920):
             log.warning(
                 "seed.plate_not_1080x1920",
                 size=f"{width}x{height}",
-                note="apimart reframes non-9:16 plates by inventing new ceiling "
+                note="the image provider reframes non-9:16 plates by inventing new ceiling "
                      "and floor; the card position is calibrated for 1080x1920",
             )
         digest = hashing.sha256_hex(norm.read_bytes())
@@ -83,9 +83,9 @@ def register_plate(
             if not uniform_ref.exists():
                 raise SeedError(f"Uniform reference not found: {uniform_ref}")
             # Same normalisation as the plate, and the sha is of the NORMALISED
-            # bytes: that is what apimart is handed, and what the image stage
+            # bytes: that is what the provider is handed, and what the image stage
             # hashes. The sha of the file on disk will never equal this.
-            ref_norm = media.normalise_for_apimart(
+            ref_norm = media.normalise_for_image_provider(
                 uniform_ref, Path(tmp) / "uniform_ref.png"
             )
             ref_digest = hashing.sha256_hex(ref_norm.read_bytes())
@@ -271,10 +271,10 @@ def seed_job(
     job_id = str(job["id"])  # type: ignore[index]
 
     # The photo lands under the job so every artefact for one video shares a
-    # prefix. Normalised on the way in: apimart rejects either axis outside
+    # prefix. Normalised on the way in: the provider rejects either axis outside
     # [300, 6000] px, and finding that out costs a paid submit.
     with tempfile.TemporaryDirectory() as tmp:
-        norm = media.normalise_for_apimart(photo, Path(tmp) / "source_photo.png")
+        norm = media.normalise_for_image_provider(photo, Path(tmp) / "source_photo.png")
         stored = get_storage().put_file(
             job_key(job_id, "source_photo.png"), norm, content_type="image/png"
         )

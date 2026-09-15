@@ -464,7 +464,7 @@ card prints.
 | Card position | Fixed, same across all plates, full duration. **Template v4: `y 72.27%..87.00%`** — moved below the hands 2026-09-15, not "just below the belt". |
 | Uniform / background mapping | Mapped in `prep/plates.py` against the client's own combination map (2026-09-09). Uniform ids are `u1_tshirt` / `u2_uniform`. |
 | Repair pass | Dropped (`0003`). Quality is solved in the main flow; if stage C output is unacceptable the fix is its inputs. |
-| TTS provider | Cartesia, direct API — the one exception to "apimart + kie only". Voice created by hand in the dashboard, referenced by id; no cloning call ships. |
+| TTS provider | The voice provider, direct API — the one exception to "the two gateways only". Voice created by hand in the dashboard, referenced by id; no cloning call ships. |
 | Video tier | `VIDEO_MODEL_ID` is the only resolution switch. Standard returns 720x1280, pro 1072x1920. Pro was declined 2026-09-10 and **reinstated 2026-09-12** when the client asked for 1080p; production still runs standard, which is a cost decision. |
 | Run cadence | Twice daily, 00:00 and 12:00 IST, `castrol cycle` under a systemd timer on EC2. |
 | Failed vendor calls | Refunded by the vendor, always. `job_costs` counts what was billed (`0013`); the daily caps still count failed attempts. |
@@ -492,7 +492,7 @@ card prints.
 
 **Closed, with the answer:**
 
-1. ~~**Script runtime.**~~ `kling-avatar-v2` has completed at 39s via kie and
+1. ~~**Script runtime.**~~ `kling-avatar-v2` has completed at 39s via the video provider and
    60s via fal. The ~80-word script at 30–40s is comfortably inside proven range
    and **needs no rewriting**; the original 18–25s assumption was conservative by
    about half. The real ceiling is *bytes, not seconds* — ship MP3, never WAV.

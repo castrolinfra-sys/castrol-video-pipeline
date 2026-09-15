@@ -192,7 +192,7 @@ class PrepStage:
 
 
 class AudioStage:
-    """Cartesia TTS. Synchronous — the API returns bytes on the call.
+    """Voice provider TTS. Synchronous — the API returns bytes on the call.
 
     Safe to keep synchronous: it returns in seconds, well inside
     STAGE_CLAIM_TIMEOUT_S, so the reaper cannot double-charge it.
@@ -213,7 +213,7 @@ class AudioStage:
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
             with budget.vendor_call(budget.VENDOR_TTS, cost_usd=cost):
-                raw = vendors.cartesia_tts(
+                raw = vendors.voice_tts(
                     text,
                     voice_id=ctx.voice_id,
                     model_id=s.tts_model_id,
@@ -245,7 +245,7 @@ class AudioStage:
                 stage=str(self.name),
                 level="warning",
                 seconds=round(duration, 2),
-                note="longest proven kie render is 39s",
+                note="longest proven video-provider render is 39s",
             )
 
         return StageResult(
@@ -268,7 +268,7 @@ class AudioStage:
 
 
 class ImageStage:
-    """apimart person replacement on the plate. Async: submit and release."""
+    """Image provider person replacement on the plate. Async: submit and release."""
 
     name = PipelineStage.IMAGE
     is_async = True
@@ -291,7 +291,7 @@ class ImageStage:
         plate = _plate_row(ctx)
         photo = _asset(ctx, AssetKind.SOURCE_PHOTO)
 
-        # apimart fetches inputs BY URL. Presigned, not CDN: these are working
+        # The image provider fetches inputs BY URL. Presigned, not CDN: these are working
         # artefacts and must stay private and short-lived.
         plate_url = store.presigned_get_url(str(plate["s3_key"]))
         photo_url = store.presigned_get_url(str(photo["s3_key"]))
@@ -308,7 +308,7 @@ class ImageStage:
 
         cost = budget.image_cost_usd()
         with budget.vendor_call(budget.VENDOR_IMAGE, cost_usd=cost):
-            task_id = vendors.apimart_submit(
+            task_id = vendors.image_submit(
                 plate_url,
                 photo_url,
                 model_id=s.image_edit_model_id,
@@ -341,7 +341,7 @@ class ImageStage:
         )
 
     def poll(self, vendor_task_id: str, ctx: JobContext) -> StageResult | None:
-        url = vendors.apimart_poll(vendor_task_id)
+        url = vendors.image_poll(vendor_task_id)
         if url is None:
             return None
 
@@ -385,7 +385,7 @@ def _image_size(path: Path) -> tuple[int, int]:
 
 
 class VideoStage:
-    """kie avatar lipsync. Async, 8-20 minutes, and 96% of the bill."""
+    """Video provider avatar lipsync. Async, 8-20 minutes, and 96% of the bill."""
 
     name = PipelineStage.VIDEO
     is_async = True
@@ -427,7 +427,7 @@ class VideoStage:
 
         duration_ms = ctx.upstream[str(PipelineStage.AUDIO)].get("duration_ms")
         if not duration_ms:
-            # Never reserve without a probed duration. kie's fallback_duration
+            # Never reserve without a probed duration. The model's fallback_duration
             # is 5s, so a missed probe bills 5s for a 35s video and the daily
             # cap never notices. vendor_limits.require_cost_estimate refuses a
             # zero reservation for exactly this reason; fail here, louder.
@@ -448,7 +448,7 @@ class VideoStage:
         with budget.vendor_call(
             budget.VENDOR_VIDEO, cost_usd=cost, seconds=billed
         ):
-            task_id = vendors.kie_submit(
+            task_id = vendors.video_submit(
                 image_url,
                 audio_url,
                 model_id=s.video_model_id,
@@ -475,7 +475,7 @@ class VideoStage:
         )
 
     def poll(self, vendor_task_id: str, ctx: JobContext) -> StageResult | None:
-        url = vendors.kie_poll(vendor_task_id)
+        url = vendors.video_poll(vendor_task_id)
         if url is None:
             return None
 

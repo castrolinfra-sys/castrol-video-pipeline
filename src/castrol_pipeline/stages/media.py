@@ -74,7 +74,7 @@ def to_mp3(src: Path, dst: Path, *, seconds: float | None = None) -> Path:
 
     NOT optional. The avatar model's "Audio size is too large" is a BYTE limit,
     not a duration limit — a 37s WAV has failed while a 53s WAV succeeded.
-    Cartesia's pcm_f32le is ~176 KB/s, so 40s is ~7 MB against ~640 KB as MP3.
+    The voice provider's pcm_f32le is ~176 KB/s, so 40s is ~7 MB against ~640 KB as MP3.
 
     `seconds` exists for prompt work, and only the spike passes it. The avatar
     model bills per OUTPUT second and the output is as long as the audio, so a
@@ -96,8 +96,8 @@ def to_mp3(src: Path, dst: Path, *, seconds: float | None = None) -> Path:
     return dst
 
 
-def normalise_for_apimart(src: Path, dst: Path) -> Path:
-    """apimart rejects images outside [300, 6000] px on EITHER axis."""
+def normalise_for_image_provider(src: Path, dst: Path) -> Path:
+    """The image provider rejects images outside [300, 6000] px on EITHER axis."""
     from PIL import Image
 
     with Image.open(src) as im:
@@ -124,7 +124,7 @@ def normalise_for_apimart(src: Path, dst: Path) -> Path:
 #: line — but the vertical rect is v1's, which is the position that survived
 #: client review: top edge just below the belt, clear of the hands. The v1
 #: reference mockup measured 80.95% for the top edge, but that plate was framed
-#: waist-up; once apimart reframes to 9:16 the subject sits higher and that
+#: waist-up; once the provider reframes to 9:16 the subject sits higher and that
 #: lands the card over the knees.
 #:
 #: v4 (2026-09-15) slides the SAME rect down by 5.87% of frame height. Nothing

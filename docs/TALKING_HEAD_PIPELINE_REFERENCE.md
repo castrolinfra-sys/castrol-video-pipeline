@@ -1,4 +1,4 @@
-# Talking-Head Pipeline — Integration Reference (apimart + kie)
+# Talking-Head Pipeline — Integration Reference (the two gateways)
 
 > **Where these lessons landed.** This document is prod-measured evidence from
 > the existing BeHooked backend and is the source of invariants 11-19 in
@@ -11,7 +11,7 @@
 > [`0002_budget_and_seed.sql`](../supabase/migrations/0002_budget_and_seed.sql).
 
 > One figure here does NOT apply: the TTS price is an internal credit conversion
-> from that stack. Cartesia bills $0.00005/character with no block rounding.
+> from that stack. the voice provider bills $0.00005/character with no block rounding.
 
 
 **Compiled:** 2026-09-07
@@ -26,14 +26,14 @@
 | **[PROD]** | Measured from prod job rows. Authoritative for "does this actually work". |
 | **[GAP]** | We do not have this. Stated as a gap, not guessed. |
 
-Where this document says "we", "our", "prod" — it means the existing BeHooked Studio backend and its live database, which is the body of evidence being mined. It does **not** mean the talking-head pipeline being built. Those are separate systems; this is a transfer of hard-won knowledge from one to the other.
+Where this document says "we", "our", "prod" — it means the existing BeHooked Studio backend and its live database, which is the body of evidence being mined. It does **not** methe talking-head pipeline being built. Those are separate systems; this is a transfer of hard-won knowledge from one to the other.
 
 ### Contents
 
 | § | | |
 |---|---|---|
 | **0** | **Read this first** | pipeline table, spike 0.1 answer, design-changing findings, end-to-end call sequence, cost, known unknowns |
-| 1 | Gateway basics | kie + apimart envelopes, status enums, idempotency, webhook auth |
+| 1 | Gateway basics | gateway envelopes, status enums, idempotency, webhook auth |
 | 2 | TTS | what's proven, cloning flow, length limits, duration, digit handling, billing |
 | 3 | Video / avatar lipsync | duration evidence, payload, latency, result-URL lifetime |
 | 4 | Image edit / person replacement | model, URL passing, prod failure profile, prompt structure, drift |
@@ -52,33 +52,33 @@ Where this document says "we", "our", "prod" — it means the existing BeHooked 
 
 | # | Step | Model | Lane | Cost | Latency | Confidence |
 |---|---|---|---|---:|---|---|
-| 1 | Person/plate edit | `gpt-image-2-max` (apimart endpoint `gpt-image-2`) | **apimart** | $0.012 @2K | ~83 s avg, 644 s worst | **High** — 787 completed in prod, still in daily use |
+| 1 | Person/plate edit | `gpt-image-2-max` (image endpoint `gpt-image-2`) | **image** | $0.012 @2K | ~83 s avg, 644 s worst | **High** — 787 completed in prod, still in daily use |
 | 2 | Voice | **unresolved** — see §0.3 | — | $0.06–$0.10 / 1k chars | seconds (sync) | **Low** — the constraint has no solution as stated |
-| 3 | Avatar lipsync | `kling-avatar-v2` (`kling/ai-avatar-standard\|pro`) | **kie** | $0.04/s std · $0.08/s pro | **8–20 min** at 30–40 s | **High** — proven at 39 s on kie, 60 s on fal |
+| 3 | Avatar lipsync | `kling-avatar-v2` (`kling/ai-avatar-standard\|pro`) | **video** | $0.04/s std · $0.08/s pro | **8–20 min** at 30–40 s | **High** — proven at 39 s on video, 60 s on fal |
 | 4 | Repair (optional) | `sync-lipsync-v2` | **fal only** | $0.04/s std · $0.06/s pro | ~12 min | **Medium** — 40 completed, but no trigger signal exists |
 
 Steps 1 and 3 land cleanly on your preferred gateways. Step 2 does not. Step 4 has no gateway lane at all.
 
 ### 0.2 Spike 0.1 answered: **do not rewrite the script**
 
-`kling-avatar-v2` has completed in prod at **39 s / 30 s / 26 s / 25 s / 24 s / 21 s / 20 s / 19 s / 16 s via kie**, and up to **60 s via fal**. The v1 sibling has gone to **113 s**. Your ~80-word script at 30–40 s is comfortably inside proven territory — the original 18–25 s assumption was too conservative by roughly half.
+`kling-avatar-v2` has completed in prod at **39 s / 30 s / 26 s / 25 s / 24 s / 21 s / 20 s / 19 s / 16 s vithe video provider**, and up to **60 s via fal**. The v1 sibling has gone to **113 s**. Your ~80-word script at 30–40 s is comfortably inside proven territory — the original 18–25 s assumption was too conservative by roughly half.
 
 **The real ceiling is bytes, not seconds.** Every `"Audio size is too large"` failure in the entire history was a `.wav`. A 37 s WAV failed while a 53 s WAV succeeded; a 116 s WAV failed while the *same user's* 113 s MP3 succeeded four days earlier. The threshold is a byte count that moves with sample rate, bit depth and channel count.
 
-> **Decision: encode the TTS output to MP3 before the avatar step.** This removes the entire failure class. Note that our own Cartesia path *emits* `pcm_f32le` WAV at ~176 KB/s (~7 MB for 40 s, against ~640 KB as MP3) — so if you use Cartesia, the transcode is mandatory, not optional. Full evidence in §3.2.
+> **Decision: encode the TTS output to MP3 before the avatar step.** This removes the entire failure class. Note that our own the voice provider path *emits* `pcm_f32le` WAV at ~176 KB/s (~7 MB for 40 s, against ~640 KB as MP3) — so if you use the voice provider, the transcode is mandatory, not optional. Full evidence in §3.2.
 
 **Budget 8–20 minutes** of wall clock for a 30–40 s render. The 39 s job took ~1191 s. Do not build a UI or an SLA that promises two minutes.
 
 ### 0.3 Three findings that should change the design
 
-**(a) Neither gateway supports an idempotency key on submit.** Not kie, not apimart — no such field exists on either. A network-level retry of a submit creates a second provider job and a second charge. Retry safety must be built application-side *before* the HTTP call. Our implementation (`core_idempotency_keys`, `UNIQUE (user_id, idempotency_key)`, three-branch record-or-replay, plus an independent duplicate-completion guard at the webhook) is described in §1.3 and is the shape worth copying.
+**(a) Neither gateway supports an idempotency key on submit.** Not the video provider, not the image provider — no such field exists on either. A network-level retry of a submit creates a second provider job and a second charge. Retry safety must be built application-side *before* the HTTP call. Our implementation (`core_idempotency_keys`, `UNIQUE (user_id, idempotency_key)`, three-branch record-or-replay, plus an independent duplicate-completion guard at the webhook) is described in §1.3 and is the shape worth copying.
 
-**(b) TTS never returns duration.** Nothing in any TTS response — ElevenLabs, Cartesia, MiniMax — carries a duration. It must be probed with ffmpeg. Because the avatar model bills **per output second**, that probe sits directly in your charge path, which makes it a security and billing surface, not a convenience: a client-supplied duration is an untrusted billing input. Our resolution ladder is *probe wins -> plausible client hint -> fail closed to the cap*, never to zero (a broken probe returning 0 becomes free generations). And note the trap: `kling-avatar-v2`'s `fallback_duration` is **5 seconds** — miss the probe and you bill 5 s for a 35 s video. Full detail in §2.5.
+**(b) TTS never returns duration.** Nothing in any TTS response — ElevenLabs, the voice provider, MiniMax — carries a duration. It must be probed with ffmpeg. Because the avatar model bills **per output second**, that probe sits directly in your charge path, which makes it a security and billing surface, not a convenience: a client-supplied duration is an untrusted billing input. Our resolution ladder is *probe wins -> plausible client hint -> fail closed to the cap*, never to zero (a broken probe returning 0 becomes free generations). And note the trap: `kling-avatar-v2`'s `fallback_duration` is **5 seconds** — miss the probe and you bill 5 s for a 35 s video. Full detail in §2.5.
 
-**(c) The TTS requirement as stated has no solution.** "apimart or kie" ∩ "clone from a client reference" ∩ "Hindi/Hinglish male" is currently an empty set:
+**(c) The TTS requirement as stated has no solution.** "either gateway" ∩ "clone from a client reference" ∩ "Hindi/Hinglish male" is currently an empty set:
 
-- The only ElevenLabs TTS configured on kie (`elevenlabs-tts-multilingual-v2`) has **zero successful generations, ever**, and exposes **no cloning parameter at all** — only 20 English presets.
-- The only thing verified on Hindi *and* Gujarati *with a clone* is **Cartesia**, which runs on a direct API with **no kie or apimart lane**.
+- The only ElevenLabs TTS configured on the video provider (`elevenlabs-tts-multilingual-v2`) has **zero successful generations, ever**, and exposes **no cloning parameter at all** — only 20 English presets.
+- The only thing verified on Hindi *and* Gujarati *with a clone* is **the voice provider**, which runs on a direct API with **no lane on either gateway**.
 - No male-Hindi preset exists in any lane we have configured.
 
 This is question 1 of the open questions at the end, and it blocks step 2. Everything else in this document is buildable today.
@@ -133,7 +133,7 @@ Authorization: Bearer $KIE_API_KEY
 
 STEP 4 — repair, only if you decide a trigger                         [§5]
 fal-ai/sync-lipsync/v2  { video_url, audio_url, sync_mode: "cut_off" }
-No kie or apimart lane exists for this. No quality signal exists to trigger it.
+No either gateway lane exists for this. No quality signal exists to trigger it.
 ```
 
 ### 0.5 What this costs, and what that means for the cap
@@ -142,9 +142,9 @@ One 35 s talking head:
 
 | Step | Choice | Provider cost | Share |
 |---|---|---:|---:|
-| Image edit | `gpt-image-2-max` @ 2K, apimart | $0.012 | 0.8 % |
-| TTS | Cartesia clone, 550 chars -> 1k billed | $0.100 | 6.6 % |
-| Avatar | `kling-avatar-v2` **standard**, kie, 35 s | **$1.400** | **92.6 %** |
+| Image edit | `gpt-image-2-max` @ 2K, image | $0.012 | 0.8 % |
+| TTS | voice clone, 550 chars -> 1k billed | $0.100 | 6.6 % |
+| Avatar | `kling-avatar-v2` **standard**, video, 35 s | **$1.400** | **92.6 %** |
 | **Total** | | **$1.512** | |
 | Same with `pro` | | $2.912 | avatar = 96 % |
 | Same with `pro` + unconditional repair | | $4.312 | video steps = 97 % |
@@ -165,7 +165,7 @@ Three things this document cannot answer, stated plainly so nobody builds on a g
 
 ### 0.7 The most transferable lesson
 
-§8.11 is the one to read even if you skip everything else. An ElevenLabs lane on kie returned **422 on every single request for months** — because we copied parameter names from a *sibling endpoint on the same gateway* that happened to accept them. Our fallback chain classified the 422 as retryable, silently fell through to a lane costing **3× more**, and left **no trace in the database**. The config advertised the dead lane as priority 1 the entire time.
+§8.11 is the one to read even if you skip everything else. An ElevenLabs lane on the video provider returned **422 on every single request for months** — because we copied parameter names from a *sibling endpoint on the same gateway* that happened to accept them. Our fallback chain classified the 422 as retryable, silently fell through to a lane costing **3× more**, and left **no trace in the database**. The config advertised the dead lane as priority 1 the entire time.
 
 Two structural rules come out of it, and both apply directly to a new multi-gateway pipeline:
 
@@ -176,7 +176,7 @@ Two structural rules come out of it, and both apply directly to a new multi-gate
 
 ## 1. Gateway basics
 
-### 1.1 kie.ai
+### 1.1 The video gateway
 
 | Item | Value |
 |---|---|
@@ -219,19 +219,19 @@ Poll / callback body:
 
 Hard-won parsing rules **[CODE]**:
 
-- `state` progression: `waiting -> queuing -> generating -> success | fail`. Our failure set is `{"fail","FAILED","failed","error","ERROR"}` — kie has used more than one casing.
+- `state` progression: `waiting -> queuing -> generating -> success | fail`. Our failure set is `{"fail","FAILED","failed","error","ERROR"}` — the video provider has used more than one casing.
 - **`resultJson` is a JSON *string*, not an object.** Parse it, then read `resultUrls[]`.
 - **HTTP 200 with `code != 200` is an error.** Always check the body code, not just the status line.
 - Error text priority we settled on: `failMsg` -> `errorReason` -> `msg`, prefixed with `failCode` when present.
 
-Type coercions kie requires that cost us real submits **[CODE]** (`KieClient.submit`):
+Type coercions the video provider requires that cost us real submits **[CODE]** (`KieClient.submit`):
 
 - `num_images` must be a **string** (`"1"`), not an int.
 - `image_input` must **always be present** — an empty array `[]` for text-to-image, not omitted.
 - `image_urls` / `video_urls` / `input_urls` must be **arrays** even for one item.
 - `duration` is an **int** for most models but a **string** for wan-2.5. We carry a per-provider `kie_string_duration` flag. Expect more of this class.
 
-### 1.2 apimart.ai
+### 1.2 The image gateway
 
 | Item | Value |
 |---|---|
@@ -272,13 +272,13 @@ Polling parameters we converged on after production incidents **[CODE]**:
 
 | Knob | Value | Why |
 |---|---|---|
-| Submit timeout | **60 s** | 15 s produced orphaned jobs: apimart accepts and starts, our submit raises, no DB row, the eventual result is keyed to a task_id we never recorded. Seedance video submits regularly take 20-45 s to return a task_id. |
+| Submit timeout | **60 s** | 15 s produced orphaned jobs: image accepts and starts, our submit raises, no DB row, the eventual result is keyed to a task_id we never recorded. Seedance video submits regularly take 20-45 s to return a task_id. |
 | Poll interval | 4 s initial, ×1.5 backoff, 60 s cap | |
 | Max poll time | 2700 s (45 min) | |
 | Own-webhook POST timeout | 60 s | Our handler downloads provider media and uploads to S3 before responding. A 10 s budget read a *working* handler as a failure and re-fired every 60 s. |
 | Own-webhook attempts | 3, then hand off to a reconciliation worker | Retrying delivery *inside the poll loop* re-POSTs the same terminal result every 60 s for the rest of the 45 min window. Self-inflicted webhook storm. |
 
-Image input constraints **[CODE]** (`apimart_client.py:21-24`, derived from live apimart errors like *"Width must be between 300px and 6000px"*):
+Image input constraints **[CODE]** (`apimart_client.py:21-24`, derived from live provider errors like *"Width must be between 300px and 6000px"*):
 
 - Both axes must land in **[300, 6000] px**. We normalize (Lanczos up, then down) and re-upload before submit.
 - Accepted formats: JPEG / PNG / WebP. We re-encode WebP to PNG as the safe portable choice.
@@ -305,13 +305,13 @@ Image input constraints **[CODE]** (`apimart_client.py:21-24`, derived from live
 
 | Model id | Route | Cloning | Prod evidence |
 |---|---|---|---|
-| `elevenlabs-tts-multilingual-v2` | **kie** `elevenlabs/text-to-speech-multilingual-v2` | No | **Zero generations, ever.** Unproven. |
-| `elevenlabs-tts-v3` | fal `fal-ai/elevenlabs/tts/eleven-v3` (kie lane deliberately removed — see §8.10) | No | 15 completed. **Hindi verified** 2026-09-01. |
-| `elevenlabs-tts-turbo-v2.5` | kie lane removed 2026-08-20 | No | 2 attempts, both **failed**. |
-| `cartesia-sonic` | **direct** `api.cartesia.ai` — no kie, no apimart | **Yes, instant clone** | 22 completed. **Hindi + Gujarati verified** 2026-09-02/03. |
+| `elevenlabs-tts-multilingual-v2` | **video** `elevenlabs/text-to-speech-multilingual-v2` | No | **Zero generations, ever.** Unproven. |
+| `elevenlabs-tts-v3` | fal `fal-ai/elevenlabs/tts/eleven-v3` (video lane deliberately removed — see §8.10) | No | 15 completed. **Hindi verified** 2026-09-01. |
+| `elevenlabs-tts-turbo-v2.5` | video lane removed 2026-08-20 | No | 2 attempts, both **failed**. |
+| `cartesia-sonic` | **direct** `api.cartesia.ai` — neither gateway | **Yes, instant clone** | 22 completed. **Hindi + Gujarati verified** 2026-09-02/03. |
 | `minimax-voice-clone` | fal `fal-ai/minimax/voice-clone` | Yes | 0 completed. |
 
-**Blunt read:** your stated preference (apimart + kie only) and your requirement (clone from a client-supplied reference) do not currently intersect. The only voice-cloning TTS we have ever gotten Hindi out of is Cartesia, on a direct API, with no gateway lane. See the questions at the end.
+**Blunt read:** your stated preference (the two gateways only) and your requirement (clone from a client-supplied reference) do not currently intersect. The only voice-cloning TTS we have ever gotten Hindi out of is the voice provider, on a direct API, with no gateway lane. See the questions at the end.
 
 ### 2.2 Hindi / Hinglish — what actually ran **[PROD]**
 
@@ -323,11 +323,11 @@ Image input constraints **[CODE]** (`apimart_client.py:21-24`, derived from live
 
 Notes:
 - `language_code` was **null on every one of these**. Devanagari worked without it.
-- Cartesia's clone call hardcodes `language: "en"` in our live path **[CODE]** `audio_executor.py:604` — and still produced Hindi and Gujarati output. The clone language field evidently does not gate synthesis language.
+- the voice provider's clone call hardcodes `language: "en"` in our live path **[CODE]** `audio_executor.py:604` — and still produced Hindi and Gujarati output. The clone language field evidently does not gate synthesis language.
 - **[GAP]** No male-Hindi preset exists in our config. The 20 ElevenLabs voices we expose (`Aria, Roger, Sarah, Laura, Charlie, George, Callum, River, Liam, Charlotte, Alice, Matilda, Will, Jessica, Eric, Chris, Brian, Daniel, Lily, Bill`) are the English default library. Every verified Hindi run used `River` (a preset, gender-neutral-ish) or a clone.
 - **[GAP]** "Completed" means the job returned audio and was charged. Nobody recorded whether the Hindi *pronunciation* was acceptable or how the digits were read. The DB cannot tell you that.
 
-### 2.3 Cloning flow — Cartesia **[CODE]**
+### 2.3 Cloning flow — voice provider **[CODE]**
 
 Two variants exist in-tree. **You want the second one.**
 
@@ -372,11 +372,11 @@ There is also a **WebSocket** path (`wss://api.cartesia.ai/tts/websocket?api_key
 ### 2.4 Max input length
 
 - **Our guard:** 10,000 characters, enforced for every per-1000-char-priced model **[CODE]** `audio_executor.py:698`. Over that returns `"Text is too long. Maximum 10,000 characters."`
-- **[GAP]** Provider-side limits are not encoded anywhere in our config. Longest thing we have actually pushed through in prod is 1,938 chars (Cartesia) and 1,534 chars (ElevenLabs v3). Your ~80-word script is ~450–600 chars — comfortably inside everything we have tested.
+- **[GAP]** Provider-side limits are not encoded anywhere in our config. Longest thing we have actually pushed through in prod is 1,938 chars (the voice provider) and 1,534 chars (ElevenLabs v3). Your ~80-word script is ~450–600 chars — comfortably inside everything we have tested.
 
 ### 2.5 Duration in the response — **no**
 
-**[CODE]** Nothing in any TTS response carries a duration. Not ElevenLabs, not Cartesia, not MiniMax. The audio executor returns `{request_id, audio_key, content_type, file_size, pricing}` and that is all.
+**[CODE]** Nothing in any TTS response carries a duration. Not ElevenLabs, not the voice provider, not MiniMax. The audio executor returns `{request_id, audio_key, content_type, file_size, pricing}` and that is all.
 
 Duration must be **probed**. Our probe ladder **[CODE]** (`studio_core/backends/studio/media_duration.py`), which exists because a client-supplied duration is a billing input and therefore untrusted:
 
@@ -394,7 +394,7 @@ with an 8 s ceiling on the whole gather (each individual probe is separately bou
 
 So: **for ElevenLabs your `NUMERAL_WORDS` table is probably redundant** — set `apply_text_normalization: "on"` and test. The one Hindi row we have with a Latin digit (`"1000 साल"`) completed on `auto`, but **[GAP]** nobody listened to how it read the number.
 
-Cartesia exposes no equivalent in our config or our client. **[GAP]** If you go Cartesia, assume you need your own expansion until proven otherwise.
+the voice provider exposes no equivalent in our config or our client. **[GAP]** If you go the voice provider, assume you need your own expansion until proven otherwise.
 
 ### 2.7 Billing shape
 
@@ -410,11 +410,11 @@ Every row below is a real prod job **[PROD]** (`behooked_studio`, `model in ('kl
 
 **`kling-avatar-v2` — completed:**
 
-| via kie | 39 s · 30 s · 26 s · 25 s · 25 s · 24 s · 21 s · 20 s · 19 s · 16 s |
+| via video | 39 s · 30 s · 26 s · 25 s · 25 s · 24 s · 21 s · 20 s · 19 s · 16 s |
 |---|---|
 | **via fal** | 60 s · 60 s · 58 s · 50 s · 48 s · 46 s · 33 s · 21 s |
 
-**`kling-ai-avatar` (v1) — completed:** 113 s · 95 s · 82 s · 82 s · 73 s · 71 s · **66 s (kie)** · 60 s · 53 s · 52 s · 50 s · 43 s · 38 s …
+**`kling-ai-avatar` (v1) — completed:** 113 s · 95 s · 82 s · 82 s · 73 s · 71 s · **66 s (the video provider)** · 60 s · 53 s · 52 s · 50 s · 43 s · 38 s …
 
 ### 3.2 The real failure mode is **bytes, not seconds**
 
@@ -429,7 +429,7 @@ Every `"Audio size is too large"` failure we have ever recorded was a **`.wav`**
 | 37 s | `.wav` | **failed** | — |
 | 53 s / 50 s / 48 s / 46 s / 39 s | `.wav` | **completed** | — |
 
-A 37 s WAV failed while a 53 s WAV succeeded, so the threshold is a **byte count that depends on encoding** (sample rate / bit depth / channels), not a duration. Our own Cartesia output is `pcm_f32le` @ 44.1 kHz ≈ **176 KB/s** — a 40 s clip is ~7 MB. The same content as MP3 is ~640 KB.
+A 37 s WAV failed while a 53 s WAV succeeded, so the threshold is a **byte count that depends on encoding** (sample rate / bit depth / channels), not a duration. Our own the voice provider output is `pcm_f32le` @ 44.1 kHz ≈ **176 KB/s** — a 40 s clip is ~7 MB. The same content as MP3 is ~640 KB.
 
 > **Ship MP3 to the avatar model.** This single decision removes the entire failure class. **[GAP]** I cannot give you the exact byte threshold from these rows — nobody logged file sizes. If you want it pinned, that is a cheap binary-search spike.
 
@@ -445,10 +445,10 @@ optional        prompt          (our default is literally ".")
 
 | Provider | Endpoint (standard) | Endpoint (pro) |
 |---|---|---|
-| **kie** (priority 1) | `kling/ai-avatar-standard` | `kling/ai-avatar-pro` |
+| **video** (priority 1) | `kling/ai-avatar-standard` | `kling/ai-avatar-pro` |
 | fal (fallback) | `fal-ai/kling-video/ai-avatar/v2/standard` | `.../pro` |
 
-kie submit body:
+the video provider submit body:
 
 ```json
 {
@@ -464,9 +464,9 @@ kie submit body:
 
 ### 3.4 Async contract
 
-Identical to §1.1 — kie `createTask` / `state` / `resultJson.resultUrls[0]`. Terminal on `success` or any of `{fail, FAILED, failed, error, ERROR}`. Intermediate states must be ignored, not treated as failures (our webhook returns `{"status":"processing"}` and drops them).
+Identical to §1.1 — the video provider `createTask` / `state` / `resultJson.resultUrls[0]`. Terminal on `success` or any of `{fail, FAILED, failed, error, ERROR}`. Intermediate states must be ignored, not treated as failures (our webhook returns `{"status":"processing"}` and drops them).
 
-### 3.5 Latency **[PROD]**, kie lane
+### 3.5 Latency **[PROD]**, video lane
 
 | Input audio | Wall clock |
 |---|---|
@@ -481,7 +481,7 @@ Identical to §1.1 — kie `createTask` / `state` / `resultJson.resultUrls[0]`. 
 
 ### 3.6 Result URL lifetime
 
-**[GAP]** We have never measured kie's result-URL TTL, because we never depend on it.
+**[GAP]** We have never measured the video provider's result-URL TTL, because we never depend on it.
 
 **[CODE]** Every terminal webhook immediately downloads the provider URL and re-uploads to our own S3/CDN (`utils/media_ingestion.py:ingest_video_output` -> `download_url_to_new_bucket`). The raw provider URL is stored **only as a fallback when that download fails**, with an explicit inline comment that it *may expire*. That is the posture I would keep: treat the provider URL as valid for the duration of your webhook handler and nothing longer.
 
@@ -493,7 +493,7 @@ Note the mirror-image constraint on the **input** side: our presigned S3 URLs ex
 
 ### 4.1 Model
 
-"GPT Max 2 Image" maps to **`gpt-image-2-max`** **[CODE]** (`models/config/image_models.json`) — **apimart-only**, endpoint `gpt-image-2`, `api_path: /images/generations`. Distinct from `gpt-image-2` (which has fal / apimart-official / kie lanes at very different prices — see §6).
+"GPT Max 2 Image" maps to **`gpt-image-2-max`** **[CODE]** (`models/config/image_models.json`) — **the image provider-only**, endpoint `gpt-image-2`, `api_path: /images/generations`. Distinct from `gpt-image-2` (which has fal / the image provider-official / the video provider lanes at very different prices — see §6).
 
 ### 4.2 How images are passed: **public URL. Not base64. Not upload-then-reference.**
 
@@ -518,16 +518,16 @@ Wire payload after mapping (`aspect_ratio -> size`, `num_images -> n`):
 | `size` (from `aspect_ratio`) | `1:1`, `4:3`, `3:4`, `16:9`, `9:16` | |
 | `resolution` | `1K`, `2K`, `4K` | drives cost |
 | `n` | 1–4 | |
-| `quality` | **locked to `high`** | apimart's `gpt-image-2` endpoint does not accept a quality param. Our UI shows the pill disabled for parity. Sending it is pointless. |
+| `quality` | **locked to `high`** | image's `gpt-image-2` endpoint does not accept a quality param. Our UI shows the pill disabled for parity. Sending it is pointless. |
 
 Reference-image hygiene, both mandatory **[CODE]**:
 
 1. **Both axes in [300, 6000] px.** We normalize with Lanczos before submit and re-upload to a sibling S3 key (never overwrite the original — Saved Kits and past job rows reference it).
-2. **Serve from `/source/`, never `/transform/`.** The transform path does on-the-fly resize and **202s on a cold-cache miss**; apimart's reference fetcher has a tight timeout and bails. We rewrite `media.behooked.co/transform/{key}?...` -> `/source/{key}` before every submit. The same class of bug bit the element-sheet path on fal, where the fix was to presign against the source bucket so the downloader gets bytes immediately.
+2. **Serve from `/source/`, never `/transform/`.** The transform path does on-the-fly resize and **202s on a cold-cache miss**; the image provider's reference fetcher has a tight timeout and bails. We rewrite `media.behooked.co/transform/{key}?...` -> `/source/{key}` before every submit. The same class of bug bit the element-sheet path on fal, where the fix was to presign against the source bucket so the downloader gets bytes immediately.
 
 ### 4.3 Prod reality **[PROD]**
 
-`gpt-image-2-max` via apimart: **787 completed**, 21 deleted, 14 archived, **20 failed**. Avg latency **83 s**, max **644 s**. Last used 2026-09-07 — this is a hot path, not a museum piece.
+`gpt-image-2-max` vithe image provider: **787 completed**, 21 deleted, 14 archived, **20 failed**. Avg latency **83 s**, max **644 s**. Last used 2026-09-07 — this is a hot path, not a museum piece.
 
 Failure breakdown (all 20):
 
@@ -536,14 +536,14 @@ Failure breakdown (all 20):
 | Content-safety rejection (input prompt) | 5 |
 | Content-safety filter (generated output) | 3 + 1 |
 | `safety_violation: chatgpt upstream 400` | 2 |
-| apimart timeout / `context deadline exceeded` | 2 + 1 |
+| image timeout / `context deadline exceeded` | 2 + 1 |
 | "requested option isn't supported by the provider" | 2 |
 | `no_available_account: scheduler` | 1 |
 | `rate_limited: upload reference 0: chatgpt upstream 429: create file failed` | 1 |
 | `4k服务繁忙` (4K service busy) | 1 |
 | our own credit check | 1 |
 
-**11 of 20 failures are content safety.** A pipeline that swaps a real person into a branded plate will hit this. Budget a retry-with-softened-prompt path and a human-visible terminal failure. The `rate_limited: upload reference 0` line also confirms apimart *uploads your reference URL upstream* — reference count and size affect the failure surface.
+**11 of 20 failures are content safety.** A pipeline that swaps a real person into a branded plate will hit this. Budget a retry-with-softened-prompt path and a human-visible terminal failure. The `rate_limited: upload reference 0` line also confirms the image provider *uploads your reference URL upstream* — reference count and size affect the failure surface.
 
 ### 4.4 Prompt structure that actually worked
 
@@ -583,7 +583,7 @@ The nearest usable tool is a **separate model**:
 ```
 model id     sync-lipsync-v2                     (video-to-video, re-syncs an existing video to audio)
 endpoint     fal-ai/sync-lipsync/v2  |  .../v2/pro
-providers    fal only — no kie, no apimart lane
+providers    fal only — neither gateway lane
 required     video_url, audio_url
 optional     sync_mode ∈ { cut_off, loop, bounce, silence, remap }   default cut_off
 pricing      standard $0.04/s · pro $0.06/s   (154 / 255 credits per second)
@@ -604,21 +604,21 @@ House conversion: **1 credit ≈ USD 1/3062 ≈ $0.000327** (`credits = ceil(pro
 
 | Model | Lane | Provider $ / image | Credits |
 |---|---|---:|---:|
-| **`gpt-image-2-max`** | **apimart `gpt-image-2`** | **1K $0.006 · 2K $0.012 · 4K $0.018** | 19 / 37 / 55 |
-| `gpt-image-2` | apimart `gpt-image-2-official` | low+1K $0.006 · high $0.169 | 507 (t2i/i2i) |
-| `gpt-image-2` | kie `gpt-image-2-image-to-image` | $0.02 (high) | 507 |
+| **`gpt-image-2-max`** | **image `gpt-image-2`** | **1K $0.006 · 2K $0.012 · 4K $0.018** | 19 / 37 / 55 |
+| `gpt-image-2` | image `gpt-image-2-official` | low+1K $0.006 · high $0.169 | 507 (t2i/i2i) |
+| `gpt-image-2` | video `gpt-image-2-image-to-image` | $0.02 (high) | 507 |
 | `gpt-image-2` | fal `openai/gpt-image-2/edit` | $0.01 (low/1K) … **$3.52 (high/4K)** | — |
-| `nano-banana-pro` | kie `nano-banana-pro` | 1K/2K $0.09 · 4K $0.12 | 121 |
-| `nano-banana` | apimart `nano-banana-ext` | $0.0125 | 61 |
-| `nano-banana` | kie `google/nano-banana` | $0.02 | 61 |
+| `nano-banana-pro` | video `nano-banana-pro` | 1K/2K $0.09 · 4K $0.12 | 121 |
+| `nano-banana` | image `nano-banana-ext` | $0.0125 | 61 |
+| `nano-banana` | video `google/nano-banana` | $0.02 | 61 |
 
-> `gpt-image-2-max` on apimart is **flat across quality** and 1–2 orders of magnitude cheaper than the fal `gpt-image-2/edit` lane. At 2K it is $0.012 against fal's $0.24 for the comparable medium/2K tier. That price gap is the single biggest reason to keep this on apimart.
+> `gpt-image-2-max` on the image provider is **flat across quality** and 1–2 orders of magnitude cheaper ththe fal `gpt-image-2/edit` lane. At 2K it is $0.012 against fal's $0.24 for the comparable medium/2K tier. That price gap is the single biggest reason to keep this on the image provider.
 
 ### 6.2 TTS (per 1,000 chars, billed `ceil(chars/1000)`)
 
 | Model | Lane | Provider $ / 1k | Credits |
 |---|---|---:|---:|
-| `elevenlabs-tts-multilingual-v2` | **kie** | **$0.06** | 181 |
+| `elevenlabs-tts-multilingual-v2` | **video** | **$0.06** | 181 |
 | `elevenlabs-tts-multilingual-v2` | fal | $0.1996 | 181 |
 | `elevenlabs-tts-v3` | fal | $0.1996 | 211 |
 | `cartesia-sonic` | direct | $0.10 | 91 |
@@ -628,8 +628,8 @@ House conversion: **1 credit ≈ USD 1/3062 ≈ $0.000327** (`credits = ceil(pro
 
 | Model | Lane | Provider $/s | Credits/s | VIP credits/s |
 |---|---|---:|---:|---:|
-| **`kling-avatar-v2` standard** | **kie `kling/ai-avatar-standard`** | **$0.04** | 123 | 169 |
-| **`kling-avatar-v2` pro** | **kie `kling/ai-avatar-pro`** | **$0.08** | 245 | 346 |
+| **`kling-avatar-v2` standard** | **video `kling/ai-avatar-standard`** | **$0.04** | 123 | 169 |
+| **`kling-avatar-v2` pro** | **video `kling/ai-avatar-pro`** | **$0.08** | 245 | 346 |
 | `kling-avatar-v2` standard | fal | $0.0562 | 123 | 169 |
 | `kling-avatar-v2` pro | fal | $0.115 | 245 | 346 |
 | `sync-lipsync-v2` standard | fal | $0.04 | 154 | — |
@@ -641,9 +641,9 @@ Duration is **ceiled to the next whole second** before the rate is applied **[CO
 
 | Step | Choice | Provider cost |
 |---|---|---:|
-| Image edit | `gpt-image-2-max` @ 2K, apimart | $0.012 |
-| TTS | Cartesia clone, 550 chars -> 1k billed | $0.100 |
-| Avatar | `kling-avatar-v2` **standard**, kie, 35 s | **$1.400** |
+| Image edit | `gpt-image-2-max` @ 2K, image | $0.012 |
+| TTS | voice clone, 550 chars -> 1k billed | $0.100 |
+| Avatar | `kling-avatar-v2` **standard**, video, 35 s | **$1.400** |
 | **Total** | | **$1.512** |
 | Same, `pro` | | **$2.912** |
 | Same, `pro` + unconditional `sync-lipsync-v2` repair | | **$4.312** |
@@ -658,36 +658,36 @@ Duration is **ceiled to the next whole second** before the rate is applied **[CO
 
 **Gateway / transport**
 
-1. **Apimart submit timeout must be 60 s, not 15 s.** Short timeouts produce *orphaned jobs*: apimart accepts and starts, our client raises, no DB row is created, and the eventual result is keyed to a task_id we have no record of. Silent money loss.
-2. **Apimart has no webhooks — you own the poller.** Keep a **strong reference** to the polling task: `asyncio` holds only a weak ref to a bare `create_task()` result, so the poller gets garbage-collected mid-flight and the job hangs forever. Add a reconciliation worker (ours runs every 45 s) as a backstop for process restarts, and an in-process active-poll registry so the worker skips rows a live poller already owns.
+1. **the image provider submit timeout must be 60 s, not 15 s.** Short timeouts produce *orphaned jobs*: the image provider accepts and starts, our client raises, no DB row is created, and the eventual result is keyed to a task_id we have no record of. Silent money loss.
+2. **the image provider has no webhooks — you own the poller.** Keep a **strong reference** to the polling task: `asyncio` holds only a weak ref to a bare `create_task()` result, so the poller gets garbage-collected mid-flight and the job hangs forever. Add a reconciliation worker (ours runs every 45 s) as a backstop for process restarts, and an in-process active-poll registry so the worker skips rows a live poller already owns.
 3. **Never retry webhook delivery inside the poll loop.** A delivery failure on a terminal result re-POSTs the same result every 60 s for the remaining 45 minutes. Bounded attempts (3), then hand off.
 4. **Order of operations in your own webhook handler:** parse -> create job row -> **idempotency return** -> do the expensive work. An idempotency guard placed *after* the download/upload, combined with a delivery timeout that the sender reads as a poll error, is a self-inflicted webhook storm.
 5. **HTTP 200 + `code != 200` is an error on both gateways.** Check the body.
-6. **kie `resultJson` is a JSON string.** Parse before indexing.
-7. **Apimart video result is `result.videos[0].url[0]`** — `url` is a list.
+6. **the video provider `resultJson` is a JSON string.** Parse before indexing.
+7. **the image provider video result is `result.videos[0].url[0]`** — `url` is a list.
 8. **`/transform` CDN URLs 202 on cold-cache miss and provider fetchers bail.** Always hand providers a `/source/` path or a presigned URL that returns bytes on the first GET.
-9. **Apimart rejects images outside [300, 6000] px on either axis.** Normalize before submit; write to a *sibling* key so concurrent jobs don't race the same PUT and the original stays intact for anything that references it.
-10. **Type quirks are per-endpoint, not per-gateway.** kie wants `num_images` as a string, `image_input` present-but-empty for T2I, arrays for every `*_urls` field, and `duration` as int except on wan-2.5 where it must be a string.
+9. **the image provider rejects images outside [300, 6000] px on either axis.** Normalize before submit; write to a *sibling* key so concurrent jobs don't race the same PUT and the original stays intact for anything that references it.
+10. **Type quirks are per-endpoint, not per-gateway.** the video provider wants `num_images` as a string, `image_input` present-but-empty for T2I, arrays for every `*_urls` field, and `duration` as int except on wan-2.5 where it must be a string.
 
 **The expensive one — silent provider fallthrough**
 
-11. **`elevenlabs-tts-v3` on kie: a 422 that cost 3× for months.** We added `similarity_boost` / `style` / `speed` to the kie whitelist because the *sibling* endpoints document them. kie's only Eleven-v3 route is `text-to-dialogue-v3`, whose schema has none of them (and whose `stability` is an **enum of `0 / 0.5 / 1.0`**, not a slider). Every submit posted three unknown fields -> **422** -> our code classified it as a retryable submission error -> **silently fell through to fal at $0.1996 vs $0.07** -> no trace in the DB, `_tried_providers` null on every row. The lane was dead for months while the config advertised it as priority 1.
+11. **`elevenlabs-tts-v3` on the video provider: a 422 that cost 3× for months.** We added `similarity_boost` / `style` / `speed` to the video provider whitelist because the *sibling* endpoints document them. the video provider's only Eleven-v3 route is `text-to-dialogue-v3`, whose schema has none of them (and whose `stability` is an **enum of `0 / 0.5 / 1.0`**, not a slider). Every submit posted three unknown fields -> **422** -> our code classified it as a retryable submission error -> **silently fell through to fal at $0.1996 vs $0.07** -> no trace in the DB, `_tried_providers` null on every row. The lane was dead for months while the config advertised it as priority 1.
 
     Two lessons, both structural: **(a)** validate against the *exact* endpoint's schema — sibling endpoints on the same gateway differ; **(b)** a fallback chain that swallows the reason is a cost leak you cannot see. Log which provider was tried and why it lost, or you will not find this.
 
 **Media**
 
-12. **Ship MP3 to the avatar model.** `"Audio size is too large"` is a byte limit, not a duration limit, and every one of our failures was a WAV. `pcm_f32le` @ 44.1 kHz is ~176 KB/s; a 40 s clip is ~7 MB against ~640 KB for the same content as MP3. Note our own Cartesia path *emits* WAV — transcode before the avatar step.
+12. **Ship MP3 to the avatar model.** `"Audio size is too large"` is a byte limit, not a duration limit, and every one of our failures was a WAV. `pcm_f32le` @ 44.1 kHz is ~176 KB/s; a 40 s clip is ~7 MB against ~640 KB for the same content as MP3. Note our own the voice provider path *emits* WAV — transcode before the avatar step.
 13. **TTS never returns duration.** ffmpeg probe is the only truth. Treat any client-supplied duration as a hint that loses to the probe, and fail **closed** (to the cap) rather than to zero — a broken probe path that returns 0 becomes free generations.
 14. **Presigned input URLs expire in 1 h.** A job queued longer than that submits a dead URL to the provider.
-15. **Copy the result to your own storage inside the webhook handler.** We have never measured kie's result-URL TTL because we never rely on it. Store the raw provider URL only as a fallback when your own download fails.
+15. **Copy the result to your own storage inside the webhook handler.** We have never measured the video provider's result-URL TTL because we never rely on it. Store the raw provider URL only as a fallback when your own download fails.
 16. **Never feed a previous generation back in as an identity reference** — it compounds its own drift. Always re-reference the source photos. Cap references at ~4.
 
 **Cost / correctness**
 
 17. **Content safety is the dominant image failure** (11 of 20 on `gpt-image-2-max`). Real people in branded contexts trip it. Plan for it.
 18. **Per-1000-char billing ceils.** 550 chars costs the same as 1,000. Batch.
-19. **Our `provider` column reads `fal` for Cartesia jobs** even though they are direct API calls — mislabeled at write time. If you build reporting off a provider column, verify it against the code path, not the label.
+19. **Our `provider` column reads `fal` for the voice provider jobs** even though they are direct API calls — mislabeled at write time. If you build reporting off a provider column, verify it against the code path, not the label.
 
 ---
 
@@ -706,15 +706,15 @@ Ordered by what they block. Q1–Q3 are one cluster and they gate step 2 entirel
 | 7 | Cost-cap integration | Low (mapping only) |
 | 8 | Optional precision on the WAV limit | Low |
 
-1. **Is "apimart + kie only" a hard constraint for TTS?** It currently has no solution. The only voice-cloning TTS we have ever gotten Hindi out of is **Cartesia, on a direct API with no gateway lane**. The one ElevenLabs TTS on kie has **zero successful generations ever** and **no cloning support at all**. Options: (a) allow Cartesia direct for the TTS step only; (b) I go check kie's and apimart's live catalogues for a cloning TTS endpoint we have not configured; (c) drop cloning and use a preset. Which?
+1. **Is "the two gateways only" a hard constraint for TTS?** It currently has no solution. The only voice-cloning TTS we have ever gotten Hindi out of is **the voice provider, on a direct API with no gateway lane**. The one ElevenLabs TTS on the video provider has **zero successful generations ever** and **no cloning support at all**. Options: (a) allow the voice provider direct for the TTS step only; (b) I go check the video provider's and the image provider's live catalogues for a cloning TTS endpoint we have not configured; (c) drop cloning and use a preset. Which?
 
 2. **What are the two client reference clips *for*?** Voice cloning, or choosing between presets? Our ElevenLabs config exposes no clone parameter whatsoever — only the 20 English presets. If it is cloning, the answer to Q1 is effectively forced.
 
 3. **Does it have to be a Hindi *male* voice?** Every verified Hindi generation we have used the `River` preset or a clone. I have no evidence of a male-Hindi preset in any lane. A clone from the client's male reference sidesteps this entirely — another reason Q1 matters.
 
-4. **What are the plate dimensions and the card's pixel rect?** This is the one place I have nothing. No path in this codebase preserves a pixel-locked composite region across an image edit — geometry/scale drift is genuinely unmeasured here. Give me the plate size and the card rect and I can at least tell you whether it survives the apimart [300, 6000] normalization and the `aspect_ratio -> size` mapping without a resample, which is a necessary-but-not-sufficient check.
+4. **What are the plate dimensions and the card's pixel rect?** This is the one place I have nothing. No path in this codebase preserves a pixel-locked composite region across an image edit — geometry/scale drift is genuinely unmeasured here. Give me the plate size and the card rect and I can at least tell you whether it survives the image provider [300, 6000] normalization and the `aspect_ratio -> size` mapping without a resample, which is a necessary-but-not-sufficient check.
 
-5. **Is the 35 s a single continuous take?** 39 s is our longest kie success on `kling-avatar-v2` and it took ~20 minutes. Splitting into 2 shots halves the latency risk and gives you a natural cut point. Acceptable, or must it be one take?
+5. **Is the 35 s a single continuous take?** 39 s is our longest the video provider success on `kling-avatar-v2` and it took ~20 minutes. Splitting into 2 shots halves the latency risk and gives you a natural cut point. Acceptable, or must it be one take?
 
 6. **What should the repair gate be, given there is no scoring signal?** (a) always run `sync-lipsync-v2` as a second pass — +$1.40/video and +~12 min; (b) human review gate; (c) build a scorer (nothing to start from). I would not invent a threshold for you.
 

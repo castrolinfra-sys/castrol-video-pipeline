@@ -2,7 +2,7 @@
 
 Submit and poll are separate calls on purpose. Both remote stages submit, record
 the vendor task id, and release the worker; a separate poller reconciles. A
-worker blocked on a 20-minute kie poll is a worker not doing the other 200 jobs,
+worker blocked on a 20-minute video poll is a worker not doing the other 200 jobs,
 and a claimed row that sits for 20 minutes is a row the reaper eventually
 returns to the queue — which re-runs a call that is still in flight and bills
 twice.
@@ -12,8 +12,9 @@ call and the stages hold that guard; putting it here too would double-meter.
 
 Gateway quirks that are not optional to know:
   * Both gateways return HTTP 200 with `code != 200` for errors.
-  * apimart's `data` is an ARRAY; kie's `resultJson` is a JSON *string*.
-  * apimart has no webhooks. Polling is the only completion signal.
+  * The image gateway's `data` is an ARRAY; the video gateway's `resultJson`
+    is a JSON *string*.
+  * The image gateway has no webhooks. Polling is the only completion signal.
 """
 
 from __future__ import annotations
@@ -53,13 +54,13 @@ def download(url: str, dst: Path, *, expect_image: bool = False) -> Path:
     return dst
 
 
-# ------------------------------------------------------- [A] Cartesia TTS --
+# -------------------------------------------------- [A] voice provider TTS --
 
 
-def cartesia_tts(text: str, *, voice_id: str, model_id: str, dst: Path) -> Path:
-    """Synthesise to WAV. Synchronous — Cartesia returns bytes on the call.
+def voice_tts(text: str, *, voice_id: str, model_id: str, dst: Path) -> Path:
+    """Synthesise to WAV. Synchronous — the provider returns bytes on the call.
 
-    Direct to api.cartesia.ai: the one deliberate exception to apimart+kie,
+    A DIRECT api, not one of the two gateways: the one deliberate exception,
     taken because that intersection has no voice-cloning Hindi lane.
     """
     s = get_settings()
@@ -68,8 +69,8 @@ def cartesia_tts(text: str, *, voice_id: str, model_id: str, dst: Path) -> Path:
         r = c.post(
             f"{base}/tts/bytes",
             headers={
-                "Authorization": f"Bearer {s.require('cartesia_api_key')}",
-                "Cartesia-Version": s.cartesia_version,
+                "Authorization": f"Bearer {s.require('voice_api_key')}",
+                "Cartesia-Version": s.voice_api_version,
                 "Content-Type": "application/json",
             },
             json={
@@ -84,13 +85,13 @@ def cartesia_tts(text: str, *, voice_id: str, model_id: str, dst: Path) -> Path:
             },
         )
     if r.status_code != 200:
-        raise VendorRejected(f"cartesia {r.status_code}: {r.text[:400]}")
+        raise VendorRejected(f"voice provider {r.status_code}: {r.text[:400]}")
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_bytes(r.content)
     return dst
 
 
-# --------------------------------------------------- [B] apimart image edit --
+# ------------------------------------------------- [B] image provider edit --
 
 #: Change / Preserve / Constrain, in that order, and the order is deliberate:
 #: the model is told what the one change is, then everything that must survive
@@ -173,15 +174,15 @@ def image_prompt(*, with_uniform_ref: bool) -> str:
 IMAGE_PROMPT = image_prompt(with_uniform_ref=False)
 
 
-def _apimart_headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {get_settings().require('apimart_api_key')}"}
+def _image_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {get_settings().require('image_api_key')}"}
 
 
-def _apimart_base() -> str:
-    return (get_settings().apimart_base_url or "https://api.apimart.ai/v1").rstrip("/")
+def _image_base() -> str:
+    return (get_settings().image_base_url or "https://api.apimart.ai/v1").rstrip("/")
 
 
-def apimart_submit(
+def image_submit(
     plate_url: str,
     photo_url: str,
     *,
@@ -209,22 +210,22 @@ def apimart_submit(
         "n": 1,
         "official_fallback": False,
     }
-    # 60s, not 15s: a short timeout ORPHANS jobs — apimart accepts and starts,
+    # 60s, not 15s: a short timeout ORPHANS jobs — the provider accepts and starts,
     # the client raises, and the result is keyed to a task_id nobody recorded.
     # That is a paid call with no way to collect it.
     with httpx.Client(timeout=60.0) as c:
-        j = c.post(f"{_apimart_base()}/images/generations",
-                   headers=_apimart_headers(), json=body).json()
+        j = c.post(f"{_image_base()}/images/generations",
+                   headers=_image_headers(), json=body).json()
     if j.get("code") != 200:
-        raise VendorRejected(f"apimart submit rejected: {json.dumps(j)[:400]}")
+        raise VendorRejected(f"image provider submit rejected: {json.dumps(j)[:400]}")
     data = j["data"]
     return str((data[0] if isinstance(data, list) else data)["task_id"])
 
 
-def apimart_poll(task_id: str) -> str | None:
+def image_poll(task_id: str) -> str | None:
     """Result URL, or None while still in flight. Raises on vendor failure."""
     with httpx.Client(timeout=60.0) as c:
-        j = c.get(f"{_apimart_base()}/tasks/{task_id}", headers=_apimart_headers()).json()
+        j = c.get(f"{_image_base()}/tasks/{task_id}", headers=_image_headers()).json()
     d = j.get("data", {})
     status = d.get("status")
 
@@ -232,7 +233,7 @@ def apimart_poll(task_id: str) -> str | None:
         res = d.get("result", {})
         images = res.get("images") or res.get("data") or []
         if not images:
-            raise VendorRejected(f"apimart completed with no image: {json.dumps(d)[:400]}")
+            raise VendorRejected(f"image provider completed with no image: {json.dumps(d)[:400]}")
         url = images[0].get("url") if isinstance(images[0], dict) else images[0]
         return url[0] if isinstance(url, list) else str(url)
 
@@ -240,12 +241,12 @@ def apimart_poll(task_id: str) -> str | None:
         # 11 of 20 observed failures on this model were content safety, and
         # swapping a real person into a branded plate is exactly the trigger.
         # Not retryable: the same inputs will trip the same filter.
-        raise VendorRejected(f"apimart {status}: {json.dumps(d.get('error', d))[:400]}")
+        raise VendorRejected(f"image provider {status}: {json.dumps(d.get('error', d))[:400]}")
 
     return None
 
 
-# ------------------------------------------------------ [C] kie avatar video --
+# ----------------------------------------------- [C] video provider avatar --
 
 
 #: Motion direction for the avatar. NOT decorative — on kling-avatar-v2 the
@@ -295,50 +296,51 @@ AVATAR_PROMPT = (
 )
 
 
-def _kie_headers() -> dict[str, str]:
+def _video_headers() -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {get_settings().require('kie_api_key')}",
+        "Authorization": f"Bearer {get_settings().require('video_api_key')}",
         "Content-Type": "application/json",
     }
 
 
-def _kie_base() -> str:
-    return (get_settings().kie_base_url or "https://api.kie.ai").rstrip("/")
+def _video_base() -> str:
+    return (get_settings().video_base_url or "https://api.kie.ai").rstrip("/")
 
 
-#: kie's documented ceiling on the prompt field.
-KIE_PROMPT_MAX_CHARS = 5000
+#: The video provider's documented ceiling on the prompt field.
+VIDEO_PROMPT_MAX_CHARS = 5000
 
 
-def kie_submit(
+def video_submit(
     image_url: str, audio_url: str, *, model_id: str, prompt: str = AVATAR_PROMPT
 ) -> str:
     """Submit the avatar render. Returns a task id. THIS TAKES 8-20 MINUTES."""
-    if len(prompt) > KIE_PROMPT_MAX_CHARS:
+    if len(prompt) > VIDEO_PROMPT_MAX_CHARS:
         raise VendorRejected(
-            f"Avatar prompt is {len(prompt)} chars, over kie's {KIE_PROMPT_MAX_CHARS} "
+            f"Avatar prompt is {len(prompt)} chars, over the video "
+            f"provider's {VIDEO_PROMPT_MAX_CHARS} "
             "limit. Caught before submit: a rejected submit on this model is a "
             "20-minute round trip to discover a typo."
         )
     with httpx.Client(timeout=120.0) as c:
         j = c.post(
-            f"{_kie_base()}/api/v1/jobs/createTask",
-            headers=_kie_headers(),
+            f"{_video_base()}/api/v1/jobs/createTask",
+            headers=_video_headers(),
             json={"model": model_id,
                   "input": {"image_url": image_url,
                             "audio_url": audio_url,
                             "prompt": prompt}},
         ).json()
     if j.get("code") != 200:
-        raise VendorRejected(f"kie submit rejected: {json.dumps(j)[:400]}")
+        raise VendorRejected(f"video provider submit rejected: {json.dumps(j)[:400]}")
     return str(j["data"]["taskId"])
 
 
-def kie_poll(task_id: str) -> str | None:
+def video_poll(task_id: str) -> str | None:
     """Result URL, or None while still in flight. Raises on vendor failure."""
     with httpx.Client(timeout=60.0) as c:
-        j = c.get(f"{_kie_base()}/api/v1/jobs/recordInfo",
-                  params={"taskId": task_id}, headers=_kie_headers()).json()
+        j = c.get(f"{_video_base()}/api/v1/jobs/recordInfo",
+                  params={"taskId": task_id}, headers=_video_headers()).json()
     d = j.get("data", {})
     state = d.get("state")
 
@@ -347,14 +349,16 @@ def kie_poll(task_id: str) -> str | None:
         result = json.loads(d["resultJson"])
         urls = result.get("resultUrls") or []
         if not urls:
-            raise VendorRejected(f"kie success with no result url: {json.dumps(d)[:400]}")
+            raise VendorRejected(
+                f"video provider success with no result url: {json.dumps(d)[:400]}"
+            )
         return str(urls[0])
 
     if state in {"fail", "FAILED", "failed", "error", "ERROR"}:
         msg = d.get("failMsg") or d.get("errorReason") or d.get("msg")
         # "Audio size is too large" is a BYTE limit, not a duration limit. If
         # this appears, the mp3 transcode did not happen.
-        raise VendorRejected(f"kie {state}: {d.get('failCode', '')} {msg}")
+        raise VendorRejected(f"video provider {state}: {d.get('failCode', '')} {msg}")
 
     return None
 
