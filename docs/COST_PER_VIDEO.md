@@ -1,0 +1,55 @@
+# Cost per video — Castrol MAGNATEC pipeline
+
+**Rates:** video $0.036/s (standard) · $0.072/s (Pro) · image $0.014 flat · TTS $0.00005/char
+**Assumptions:** ₹100 = $1 · 17.4 chars/sec of speech · kie ceils to whole seconds
+
+## Standard — `kling/ai-avatar-standard`, 720x1280
+
+| Duration | Image | TTS | Video | Total $ | Total ₹ | $/sec | ₹/sec |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1s | 0.0140 | 0.0008 | 0.0360 | **0.0508** | **₹5.08** | 0.0508 | 5.08 |
+| 5s | 0.0140 | 0.0044 | 0.1800 | **0.1984** | **₹19.84** | 0.0397 | 3.97 |
+| 20s | 0.0140 | 0.0174 | 0.7200 | **0.7514** | **₹75.14** | 0.0376 | 3.76 |
+| 25s | 0.0140 | 0.0218 | 0.9000 | **0.9358** | **₹93.58** | 0.0374 | 3.74 |
+
+## Pro — `kling/ai-avatar-pro`, 1072x1920
+
+| Duration | Image | TTS | Video | Total $ | Total ₹ | $/sec | ₹/sec |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1s | 0.0140 | 0.0008 | 0.0720 | **0.0868** | **₹8.68** | 0.0868 | 8.68 |
+| 5s | 0.0140 | 0.0044 | 0.3600 | **0.3784** | **₹37.84** | 0.0757 | 7.57 |
+| 20s | 0.0140 | 0.0174 | 1.4400 | **1.4714** | **₹147.14** | 0.0736 | 7.36 |
+| 25s | 0.0140 | 0.0218 | 1.8000 | **1.8358** | **₹183.58** | 0.0734 | 7.34 |
+
+## Summary
+
+| | Standard | Pro |
+|---|---:|---:|
+| Marginal second | ₹3.60 | ₹7.20 |
+| One 25s video | ₹93.58 | ₹183.58 |
+| 500 videos @ 25s | ₹46,788 | ₹91,788 |
+
+**Pro premium at 25s: ₹90 per video, ₹45,000 per 500.**
+
+## Notes
+
+- Only the $0.014 image cost is fixed, so per-second cost flattens by ~5s — there
+  is no volume discount in making videos longer. Runtime is the only lever.
+- TTS is ~2% of the total at 25s standard, ~1% on Pro.
+- Composite, card render and publish are local ffmpeg/Pillow — free.
+- The avatar step bills per OUTPUT second and kie ceils to whole seconds, so
+  24.8s bills as 25s. Negligible at our ~25s scripts; a 100% overcharge on a 1s clip.
+- Pro is the resolution switch. `kling/ai-avatar-standard` returns 720x1280 whatever
+  it is fed; `kling/ai-avatar-pro` returns 1072x1920. There is no resolution
+  parameter on either endpoint — `VIDEO_MODEL_ID` is the whole control, and
+  `Settings.video_is_pro` derives the billing rate from it.
+- Measured render times on the same 27s input: standard ~7 min, Pro ~11.5 min.
+
+## Known discrepancy
+
+`common/budget.py` pins `$0.04/s` standard and `$0.08/s` Pro, so every reservation
+over-estimates by **11.1%** against the rates above. The direction is safe — the
+daily cap trips early rather than late — but `job_costs` will read ~11% high and
+will not match the vendor invoice. `CLAUDE.md` quotes a third figure again,
+`$0.014 + seconds × $0.040886`. All three need reconciling against the provider
+dashboard before these numbers are quoted to anyone.

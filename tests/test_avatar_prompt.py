@@ -93,27 +93,33 @@ class TestHandsStayDown:
     smeared it, r2 clawed both hands across the chest panel, r3 produced clean
     open palms that still rose to chest level for no return.
 
-    r4 stops asking for gestures. In the source image the hands already rest at
-    roughly 71-78% of frame height, and the card is an opaque overlay across
-    66-82% (stages/media.py PANEL_Y0/PANEL_Y1) — so hands left where they are
-    are BEHIND it and never on screen. Every hand failure this model has shown
-    us becomes invisible rather than merely less likely.
+    The current text stops asking for gestures. It names the rest position
+    positively — low, one hand each side — and bounds the motion rather than
+    forbidding it, because frozen hands are their own defect: a still
+    photograph with a talking head pasted on.
 
-    The old objection — a waist-level gesture "happens behind the card, so the
-    viewer sees a hand enter frame and vanish" — is an objection to hands
-    CROSSING that boundary. Nothing enters or vanishes if nothing moves.
+    It also carries the one thing the client asked for by name after seeing a
+    batch: the hands must never overlap each other. Measured on the nine
+    renders of 2026-09-14, seven of nine held them apart for the whole take.
+
+    The card no longer hides this. It used to sit across 66-82% of frame
+    height, which is where the hands are; it now starts at 72.27%
+    (stages/media.py PANEL_Y0), BELOW them. So the prompt is the only thing
+    keeping the hands presentable — they are on screen either way.
     """
 
     def test_hands_are_told_to_stay_low(self):
         low = AVATAR_PROMPT.lower()
-        assert "waist" in low, "name where the hands are: at waist level"
-        assert "stay low" in low
+        assert "hands stay low" in low, "name where the hands rest"
 
-    def test_hand_position_defers_to_the_source_image(self):
-        # The strongest version of this instruction is "where they already
-        # are" — it defers to the source image instead of describing a pose the
-        # model then has to construct and could construct differently.
-        assert "exactly where they are in the image" in AVATAR_PROMPT.lower()
+    def test_hands_are_kept_apart(self):
+        # The client's words after reviewing a batch: reduce the hand motion
+        # and make sure no overlap occurs. Hands that meet are where this model
+        # renders fingers worst - it has to invent an occlusion.
+        low = AVATAR_PROMPT.lower()
+        assert "one on each side" in low
+        assert "apart from each other" in low
+        assert "clear of one another" in low
 
     def test_placement_is_stated_once(self):
         """Placement lives in the movement sentence, NOT also in the

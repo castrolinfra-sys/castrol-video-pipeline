@@ -126,9 +126,17 @@ def normalise_for_apimart(src: Path, dst: Path) -> Path:
 #: reference mockup measured 80.95% for the top edge, but that plate was framed
 #: waist-up; once apimart reframes to 9:16 the subject sits higher and that
 #: lands the card over the knees.
+#:
+#: v4 (2026-09-15) slides the SAME rect down by 5.87% of frame height. Nothing
+#: else about the card changes - the height, the type, the scale-to-fit are all
+#: v2's. The avatar prompt now parks the hands at belt height and keeps them
+#: there, which is exactly where the old top edge sat: it cut across the
+#: fingers, so the hands read as severed by the panel rather than hidden behind
+#: it. Measured on the nine renders of 2026-09-14, the hands sit between 60%
+#: and 70%, so the band has to start below that, not inside it.
 PANEL_X0, PANEL_X1 = 0.0, 1.0
-PANEL_Y0 = 0.6640
-PANEL_Y1 = 0.8113
+PANEL_Y0 = 0.7227
+PANEL_Y1 = 0.8700
 #: Red accent, directly beneath the panel.
 ACCENT_H = 0.0077
 #: Text inset from each frame edge. The panel is full-bleed; the TYPE is not.
@@ -157,7 +165,7 @@ WHITE = (255, 255, 255, 255)
 def render_card(fields: dict[str, str], frame_w: int, frame_h: int, path: Path) -> Path:
     """Deterministic Pillow render. No generative model ever touches this text.
 
-        panel   full frame width, y 66.40% .. 81.13% — a FIXED rect
+        panel   full frame width, y 72.27% .. 87.00% - a FIXED rect
         accent  red bar directly beneath, ~0.77% of frame height
         colours panel #014D26 (Castrol green), accent #D22419, text white
 

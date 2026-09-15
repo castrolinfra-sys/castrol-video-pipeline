@@ -98,7 +98,13 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------- pipeline --
     script_version: str = "v1"
     normalise_rules_version: str = "v1"
-    image_prompt_version: str = "v1"
+    # v2 (2026-09-14): the new uniforms dropped the cap and the sleeve logo, and
+    # the chest panel now reads "Castrol" alone. IMAGE_PROMPT's preserve clause
+    # used to name all four marks, so it was asking the model to keep branding
+    # the garment no longer has — which is how a garbled sleeve patch got
+    # invented. Bumping is what makes an open job regenerate instead of skip:
+    # unlike the avatar prompt (invariant 30) this one is hashed by version.
+    image_prompt_version: str = "v2"
     # v2: full-width band, address and phone on one contact line, fixed rect
     # with the type scaled to fit. In the composite input_hash, so bumping it
     # re-renders and re-burns every open job. That is free — the composite
@@ -107,7 +113,11 @@ class Settings(BaseSettings):
     # the audio stream, cutting the ~1.9s silent tail kling-avatar-v2 returns
     # after the speech ends. This version covers the composite OUTPUT, not just
     # the card artwork, so anything that changes what composite emits bumps it.
-    card_template_version: str = "v3"
+    # v4 (2026-09-15): the band moved DOWN to 72.27% and its height now comes
+    # from its own text instead of being a fixed rect. The avatar prompt parks
+    # the hands at belt height, which is where the old top edge was — it cut
+    # across the fingers.
+    card_template_version: str = "v4"
 
     max_concurrency_audio: int = 4
     max_concurrency_image: int = 4

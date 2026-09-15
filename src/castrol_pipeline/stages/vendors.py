@@ -287,10 +287,10 @@ def apimart_poll(task_id: str) -> str | None:
 #: VideoStage._params.
 AVATAR_PROMPT = (
     "An Indian auto mechanic in his Castrol work uniform, speaking directly to "
-    "camera in his garage. Warm, confident and friendly, with clear "
-    "articulation and subtle head nods. Natural open-palm hand gestures at "
-    "chest height that emphasise his words and settle back between points, "
-    "staying below the shoulders and without covering the chest logo. Keep the "
+    "camera in his garage. Calm, natural and slow, with clear articulation and "
+    "subtle head nods. His hands stay low and mostly still, one on each side "
+    "of his body, apart from each other and clear of one another at all times, "
+    "with only small slow movements that settle back to rest. Keep the "
     "existing framing, uniform and branding unchanged."
 )
 
