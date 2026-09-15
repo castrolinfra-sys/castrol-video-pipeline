@@ -4,7 +4,23 @@
     {
       "name": "panel",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "panel"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "panel"
+      ],
+      "port": 3100
+    },
+    {
+      "name": "panel-prod",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "start",
+        "--prefix",
+        "panel"
+      ],
       "port": 3100
     }
   ]

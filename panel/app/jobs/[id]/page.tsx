@@ -1,7 +1,9 @@
+import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { Problem } from "../../problem";
 import { pill, secs, ts } from "@/lib/format";
 import { failureText } from "@/lib/reasons";
+import { PageHead } from "../../ui";
 
 export const dynamic = "force-dynamic";
 
@@ -16,20 +18,24 @@ export const dynamic = "force-dynamic";
 export default async function JobDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  const { data: job, error } = await db
-    .from("job_usage")
-    .select("*")
-    .eq("job_id", id)
-    .single();
-  if (error) return <Problem what="this job" message={error.message} />;
-
-  const [delivery, link] = await Promise.all([
+  // All three are independent, so they go together. Previously `job` was
+  // awaited on its own first, which made this page three sequential Supabase
+  // round trips instead of two (async-parallel).
+  const [job, delivery, link] = await Promise.all([
+    db.from("job_usage").select("*").eq("job_id", id).maybeSingle(),
     db.from("deliveries").select("phone_e164, posted_at").eq("job_id", id).maybeSingle(),
     // job_usage does not carry the raw client row - it is a wide jsonb blob and
     // most pages have no use for it - so the submission id is fetched here and
     // the blob read separately.
-    db.from("jobs").select("submission_id").eq("id", id).single(),
+    db.from("jobs").select("submission_id").eq("id", id).maybeSingle(),
   ]);
+
+  if (job.error) return <Problem what="this job" message={job.error.message} />;
+  // A stale or mistyped link is a 404, not a database error. It used to surface
+  // as a raw PostgREST "no rows" message, which reads as a broken panel.
+  if (!job.data) notFound();
+
+  const j = job.data;
 
   const submission = link.data?.submission_id
     ? await db.from("submissions").select("raw").eq("id", link.data.submission_id).maybeSingle()
@@ -40,39 +46,57 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
   // re-publish the query happened to reach first - a real file, and the wrong
   // one. job_usage.video_url resolves it against `deliveries`, which holds the
   // link the mechanic was actually given. Invariant 22: always a CDN url.
-  const video: string | null = job.video_url ?? null;
+  const video: string | null = j.video_url ?? null;
 
   return (
     <>
-      <h1>
-        {job.user_name ?? "Job"} <span className="dim">— {job.workshop_name}</span>{" "}
-        <span className={pill(job.status)}>{job.status}</span>
-      </h1>
+      <PageHead
+        title={j.user_name ?? "Job"}
+        meta={
+          <>
+            {j.workshop_name}{" "}
+            <span className={pill(j.status)} style={{ marginLeft: 6 }}>
+              {j.status}
+            </span>
+          </>
+        }
+      />
 
-      <div className="scroll">
+      <div className="scroll" role="region" aria-label="Job details" tabIndex={0}>
         <table>
+          <caption className="visually-hidden">Details for this job.</caption>
           <tbody>
-            <Row label="Mechanic ID" value={job.mechanic_id || "—"} mono />
-            <Row label="WhatsApp number" value={job.whatsapp_number ?? "—"} mono />
-            <Row label="Contact number on card" value={job.card_phone_e164 ?? "—"} mono />
-            <Row label="Address" value={job.address_raw ?? "—"} />
-            <Row label="Video length" value={secs(job.video_seconds)} />
-            <Row label="Received" value={ts(job.created_at)} mono />
+            <Row label="Mechanic ID" value={j.mechanic_id || "—"} mono />
+            <Row label="WhatsApp number" value={j.whatsapp_number ?? "—"} mono />
+            <Row label="Contact number on card" value={j.card_phone_e164 ?? "—"} mono />
+            <Row label="Address" value={j.address_raw ?? "—"} />
+            <Row label="Video length" value={secs(j.video_seconds)} />
+            <Row label="Received (IST)" value={ts(j.created_at)} />
           </tbody>
         </table>
       </div>
 
-      {job.status === "failed" && (
+      {j.status === "failed" && (
         <>
           <h2>Why it failed</h2>
-          <p>{failureText(job.failure_reason)}</p>
+          <p>{failureText(j.failure_reason)}</p>
         </>
       )}
 
       {video && (
         <>
           <h2>Video</h2>
-          <video src={video} controls style={{ maxWidth: 320, borderRadius: 6 }} />
+          {/* Explicit dimensions so the page does not jump when the metadata
+              lands. 9:16, matching what the pipeline renders. */}
+          <video
+            src={video}
+            controls
+            preload="metadata"
+            width={288}
+            height={512}
+            aria-label={`Finished video for ${j.user_name ?? "this mechanic"}`}
+            style={{ width: 288, maxWidth: "100%", height: "auto", aspectRatio: "9 / 16", borderRadius: "var(--r)", background: "#000" }}
+          />
           <p className="mono dim" style={{ wordBreak: "break-all" }}>
             <a href={video} target="_blank" rel="noopener noreferrer">{video}</a>
           </p>
@@ -102,8 +126,12 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <tr>
-      <th style={{ width: 200, textAlign: "left" }}>{label}</th>
-      <td className={mono ? "mono" : undefined}>{value}</td>
+      <th scope="row" style={{ width: 200 }}>
+        {label}
+      </th>
+      <td className={mono ? "mono" : undefined} style={{ whiteSpace: "normal" }}>
+        {value}
+      </td>
     </tr>
   );
 }

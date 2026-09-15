@@ -12,10 +12,20 @@ decisions and risks.
 
 ## Accounts — read this first
 
-**This project uses a dedicated set of accounts, separate from every other
-BeHooked project.** GitHub, AWS, Supabase, Vercel and the AI provider are all
-different logins. Never reuse a credential, project ref, bucket or CLI profile
-from `BeHooked/Webapp` or `behooked_studio_backend`.
+**GitHub, Supabase, Vercel and the AI provider are dedicated logins, separate
+from every other BeHooked project.** Never reuse a credential, project ref or
+CLI profile from `BeHooked/Webapp` or `behooked_studio_backend` for those.
+
+**AWS is the exception, and this paragraph used to get it wrong.** It said AWS
+was a separate login too. It is not: `castrol-local` lives in account
+**872515254882**, which is the shared BeHooked account — the same one running
+`behooked-studio-backend-prod`, `hooked-micro-apps`, `hooked-nodeflow`,
+`orchestrator-prod` and `caption-studio`, and holding `behooked-dokploy-backups`
+and `cached-brolls` next to our bucket. What IS dedicated is the **IAM user**
+and the **bucket**, and that is the whole of the separation. Anything created in
+this account is created next to four running production services, so scope it
+by name and by security group and assume nothing is yours alone. Corrected
+2026-09-15, found while provisioning the EC2 worker.
 
 - **Git remote:** SSH alias `github-castrolinfra` (account `castrolinfra-sys`).
   The repo has a local `user.name` / `user.email` set to match — do not run git
@@ -24,6 +34,10 @@ from `BeHooked/Webapp` or `behooked_studio_backend`.
   `gh` for anything that writes to this repo.
 - **Supabase / AWS / Vercel / apimart:** credentials live in `.env` only.
   `.env.example` documents every variable.
+- **`castrol-local` cannot provision, by design.** It holds S3 object
+  read/write plus EC2 *read*. It is denied `ec2:CreateSecurityGroup` and all of
+  IAM, so standing up infrastructure needs a separate admin session — not a
+  wider policy on the key that sits in `.env` on the worker itself.
 
 ---
 
@@ -188,6 +202,23 @@ browser, and it lives ONLY in `middleware.ts` — signing in proves identity, th
 allowlist decides access, and a second check elsewhere would be one more thing
 to keep in step.
 
+**`currentAdmin()` does NOT call `getUser()`, and that is not an oversight.**
+`getUser()` is a network round trip to Supabase Auth — that is the whole reason
+it is trusted over `getSession()` — measured at ~60ms. The root layout called it
+on every render to find out whose email to print in the header, so each page
+view paid that latency TWICE before fetching a row. Middleware now publishes its
+verified verdict on the `x-castrol-admin` request header
+([`lib/env.ts:ADMIN_EMAIL_HEADER`](panel/lib/env.ts)) and
+[`lib/session.ts`](panel/lib/session.ts) reads it. Do not "restore" the second
+call.
+
+The gate is unchanged and is still middleware alone: `currentAdmin()` never was
+the gate, it only decided whether to draw the header. The header cannot be
+forged — middleware `delete`s any inbound copy unconditionally before setting
+the verified one, and its matcher runs on every non-static path, so no render is
+reachable without passing through it. Verified by curl: a forged
+`x-castrol-admin` carrying a real allowlisted address still 307s to `/login`.
+
 **There is no emailed-link route.** `/auth/callback` is gone: magic link is
 replaced and password recovery is not used — a forgotten password is reset in
 Supabase → Authentication → Users, which sends nothing. So there is no Supabase
@@ -209,6 +240,67 @@ password knows it, and rotation is a dashboard action rather than something the
 client can do alone. Supabase stores only a bcrypt hash and verifies it itself -
 the panel forwards the password to `signInWithPassword` and receives a session,
 so nothing here ever stores, logs or can read one.
+
+#### The look — rebuilt 2026-09-15
+
+**Light theme. The previous dark one is gone, not toggleable.** Rebuilt rather
+than inverted: a palette tuned to glow on black has the wrong saturation to sit
+on white. The ground is off-white (`--bg`) and CARDS are pure white, so elevation
+reads as *lighter* than the page — that is what lets the sticky table header
+separate itself without a heavy rule under it.
+
+**There are TWO greens and they are not interchangeable.** Collapsing them is
+the obvious-looking cleanup and it silently reverts a measured decision:
+
+| token | value | job |
+|---|---|---|
+| `--accent` | `#014d26` | INK — links, focus ring, active nav, success pills |
+| `--accent-mark` | `#00843d` | FILL — chart bars, the brand mark |
+
+`--accent` is 9.6:1 on the ground and excellent as text. As a *mark* colour it
+FAILS both the lightness band and the chroma floor — across a wide bar it stops
+reading as green and reads as dark slate. That verdict came from the `dataviz`
+Claude skill's `scripts/validate_palette.js` (it ships with the skill, not with
+this repo), run as `validate_palette.js "<hex>" --mode light`: `#014d26` fails
+two checks, `#00843d` passes all of them. Re-run it before changing either
+green rather than judging a fill colour by eye.
+
+**`--bad` is failure and nothing else.** The old palette used red for both the
+brand mark and errors, so a healthy page and a broken one were the same colour.
+
+**Type is `next/font`, self-hosted, three faces.** Barlow (body/data), Barlow
+Semi Condensed (every uppercase micro-label — nav, column heads, stat captions,
+form labels), IBM Plex Mono with slashed zero (identifiers only, so `0` and `O`
+differ when someone eyeballs a WhatsApp number against a spreadsheet). Barlow is
+drawn from industrial and transport signage, which is the subject's own
+vernacular; it is also low-contrast, which is what survives 14px across a
+500-row table.
+
+The next/font CSS variables are named `--font-display-src` / `--font-mono-src`
+**deliberately**. Naming them `--font-display` / `--font-mono` makes the `:root`
+declarations self-referential, and CSS drops a cycle silently — taking the
+fallback chain with it while still *looking* correct, because next/font injects
+its own fallback face.
+
+Two things that look like omissions and are not:
+
+- **No `content-visibility` on table rows.** These tables are auto-layout, so
+  skipped rows stop contributing to column widths and the columns visibly jitter
+  as you scroll. Considered and declined.
+- **No `next/dynamic` around the chart.** It is a client component and Next
+  already splits those per route. The build output is the proof: `/usage` 205 kB
+  First Load, every other route 102–107 kB. recharts never leaves that page.
+
+**Jobs fetches `limit(501)` and drops the 501st.** It does not use
+`{ count: "exact" }` — that makes PostgREST run a real `COUNT(*)` over the
+filtered view on every load, a second scan to print a total nobody acts on.
+"First 500" answers the only question that matters.
+
+Skeletons (`loading.tsx` per route) exist because every page is
+`force-dynamic` against Supabase, so there is always a real wait. Note that
+`<Link>` prefetch is **disabled in development** — the instant-navigation
+behaviour only appears in a production build, which is why `npm run dev` feels
+slower than the deployed panel and is not evidence of a problem.
 
 ### Checks
 
@@ -238,15 +330,23 @@ Settings → Secrets and variables → Actions:
 |---|---|---|
 | secret | `DOCKERHUB_USERNAME` | Docker Hub account name, not an email |
 | secret | `DOCKERHUB_TOKEN` | access token, Read & Write scope |
-| variable | `DOCKERHUB_IMAGE` | full repo, e.g. `acct/castrol-video-pipeline` |
+| variable | `DOCKERHUB_IMAGE` | full repo — `gethooked/castrol-video-pipeline` |
 
-Tags: `latest` and `main-<sha>` on `main`, semver on `v*`. **Deploys pin the
-sha tag** — a worker that spends per run should not track a mutable tag.
+Tags: `latest` and `main-<sha>` on `main`, semver on `v*`. **The EC2 worker
+tracks `latest` and pulls on every run** — continuous deploy, decided
+2026-09-15, reversing the earlier "deploys pin the sha tag". The spend argument
+for pinning did not survive checking: `cycle._schedule_all()` selects
+`status NOT IN ('completed','cancelled')`, so a changed `input_hash` never
+re-renders a finished video — only jobs still open when the new image first
+runs, and the pull lands between cycles rather than mid-batch. What the choice
+actually costs is a review gate: a merge reaches a paying worker with no
+staging and no visual check, and `pytest` green does not mean a render looks
+right. Pin a `main-<sha>` in `/etc/castrol-image.env` to freeze deliberately.
 
 The image carries no credentials. Supply them at run time:
 
 ```bash
-docker run --rm --env-file .env acct/castrol-video-pipeline:main-abc1234 work --stage audio
+docker run --rm --env-file .env gethooked/castrol-video-pipeline:main-331b386 work --stage audio
 ```
 
 Two container-only hazards, both covered by the workflow's smoke test:
@@ -320,6 +420,7 @@ rules, not application code.
 | Claiming, retries, poller, **all writes to `jobs`** | [`orchestrator.py`](src/castrol_pipeline/orchestrator.py) |
 | The unattended run: lock, window, wait loop | [`cycle.py`](src/castrol_pipeline/cycle.py) |
 | systemd units + the EC2 runbook | [`deploy/`](deploy/README.md) |
+| **The EC2 deployment as built** — ids, decisions, what was verified | [`docs/EC2_DEPLOYMENT.md`](docs/EC2_DEPLOYMENT.md) |
 | The eight real stages | [`stages/real.py`](src/castrol_pipeline/stages/real.py) |
 | Stage protocol + the DAG | [`stages/base.py`](src/castrol_pipeline/stages/base.py) |
 | Anything that talks to a provider | [`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) |
@@ -344,7 +445,8 @@ rules, not application code.
 | The standalone one-video script | [`spikes/prototype.py`](spikes/prototype.py) |
 | Admin panel (Next.js, Vercel) | [`panel/`](panel/) |
 | The panel's only DB handle — secret key, bypasses RLS | [`panel/lib/db.ts`](panel/lib/db.ts) |
-| Who may open the panel | [`panel/middleware.ts`](panel/middleware.ts) |
+| Who may open the panel, and the `x-castrol-admin` header | [`panel/middleware.ts`](panel/middleware.ts) |
+| Palette, type scale, every design token | [`panel/app/globals.css`](panel/app/globals.css) |
 | The panel's only write | [`panel/app/actions.ts`](panel/app/actions.ts) |
 | Duration-only views the panel reads | [`0007`](supabase/migrations/0007_usage_views_for_the_panel.sql), [`0008`](supabase/migrations/0008_job_usage_video_url.sql) |
 
@@ -744,6 +846,18 @@ repeat post is harmless where a missed one is a video nobody ever gets.
 ---
 
 ## Current phase
+
+**It is deployed.** `i-0d7560cd333c94cde`, `t3.medium` in `ap-south-1`, running
+the CI-built container under a systemd timer — the image digest on the box
+matches the one CI pushed, and `castrol doctor` passes through the real `.env`
+mount against the real database. **The timer is not armed yet and nothing has
+spent.** Resource ids, every decision taken while provisioning, and the
+verification evidence are in
+[`docs/EC2_DEPLOYMENT.md`](docs/EC2_DEPLOYMENT.md); the runbook is
+[`deploy/README.md`](deploy/README.md).
+
+The worker tracks `:latest` with `--pull always`, so a green merge to `main` is
+a deploy. The review gate that removes is real — see the Docker / CI section.
 
 **The pipeline runs end to end under the orchestrator** against real Supabase,
 real S3 and the real CDN. All eight stages are implemented in

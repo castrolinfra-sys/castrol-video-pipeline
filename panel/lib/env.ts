@@ -7,6 +7,15 @@
 // Loudly on purpose too: a silently missing var renders an empty jobs table,
 // which is indistinguishable from "nothing ran last night".
 
+/**
+ * The header middleware uses to publish the verified admin email to the render.
+ *
+ * Lives here because middleware runs in the edge runtime and cannot import
+ * lib/session.ts (which pulls in `next/headers`). This module is process.env
+ * only, so both runtimes can read it.
+ */
+export const ADMIN_EMAIL_HEADER = "x-castrol-admin";
+
 function required(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`${name} is not set — see panel/.env.local.example`);

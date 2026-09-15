@@ -1,11 +1,14 @@
 import Link from "next/link";
 import { Filters } from "./filters";
+import { PageHead } from "./ui";
 import { Problem } from "./problem";
 import { db } from "@/lib/db";
 import { duration, num, pill, secs, ts } from "@/lib/format";
 import { bounds, isRange, type RangeKey } from "@/lib/range";
 
 export const dynamic = "force-dynamic";
+
+const PAGE_SIZE = 500;
 
 // Reads job_usage (migration 0007), not `jobs` joined to anything. That view
 // carries no cost, vendor, model or stage column, so nothing on this page can
@@ -27,7 +30,12 @@ export default async function Jobs({
         "whatsapp_number, user_name, workshop_name, video_seconds, video_url",
     )
     .order("created_at", { ascending: false })
-    .limit(500);
+    // 500 is the cap; the 501st row is fetched only to find out whether there
+    // IS one, then dropped. This replaced `{ count: "exact" }`, which makes
+    // PostgREST run a real COUNT(*) over the filtered view on every page load
+    // — a second scan, to print a number nobody acts on. "First 500" answers
+    // the only question that matters: am I seeing everything?
+    .limit(PAGE_SIZE + 1);
 
   if (from) query = query.gte("created_at", from);
   if (to) query = query.lt("created_at", to);
@@ -48,22 +56,28 @@ export default async function Jobs({
   const { data: jobs, error } = await query;
   if (error) return <Problem what="jobs" message={error.message} />;
 
-  const rows = jobs ?? [];
+  const fetched = jobs ?? [];
+  const truncated = fetched.length > PAGE_SIZE;
+  const rows = truncated ? fetched.slice(0, PAGE_SIZE) : fetched;
   const delivered = rows.filter((j: any) => j.status === "completed");
   const totalSeconds = delivered.reduce(
     (n: number, j: any) => n + Number(j.video_seconds ?? 0),
     0,
   );
-
   return (
     <>
-      <h1>
-        Jobs{" "}
-        <span className="dim">
-          — {num(rows.length)} shown · {num(delivered.length)} delivered ·{" "}
-          {duration(totalSeconds)} of video
-        </span>
-      </h1>
+      <PageHead
+        title="Jobs"
+        meta={
+          <>
+            {truncated ? `First ${num(PAGE_SIZE)}` : `${num(rows.length)} shown`}
+            <Sep />
+            {num(delivered.length)} delivered
+            <Sep />
+            {duration(totalSeconds)} of video
+          </>
+        }
+      />
 
       <Filters action="/" q={q} range={range} />
 
@@ -72,18 +86,27 @@ export default async function Jobs({
           {q ? `Nothing matches “${q}” in this period.` : "No jobs in this period."}
         </p>
       ) : (
-        <div className="scroll">
+        <div
+          className="scroll"
+          role="region"
+          aria-label="Jobs"
+          tabIndex={0}
+        >
           <table>
+            <caption className="visually-hidden">
+              Jobs, most recent first. Columns: mechanic ID, WhatsApp number,
+              mechanic, workshop, status, duration, created, video.
+            </caption>
             <thead>
               <tr>
-                <th>Mechanic ID</th>
-                <th>WhatsApp</th>
-                <th>Mechanic</th>
-                <th>Workshop</th>
-                <th>Status</th>
-                <th className="num">Duration</th>
-                <th>Created</th>
-                <th>Video</th>
+                <th scope="col">Mechanic ID</th>
+                <th scope="col">WhatsApp</th>
+                <th scope="col">Mechanic</th>
+                <th scope="col">Workshop</th>
+                <th scope="col">Status</th>
+                <th scope="col" className="num">Duration</th>
+                <th scope="col">Created (IST)</th>
+                <th scope="col">Video</th>
               </tr>
             </thead>
             <tbody>
@@ -101,7 +124,7 @@ export default async function Jobs({
                     <span className={pill(j.status)}>{j.status}</span>
                   </td>
                   <td className="num">{secs(j.video_seconds)}</td>
-                  <td className="mono dim">{ts(j.created_at)}</td>
+                  <td className="dim">{ts(j.created_at)}</td>
                   <td>
                     {/* The full CloudFront url is ~90 characters and would set
                         the width of the whole table, so it is a link rather
@@ -117,6 +140,10 @@ export default async function Jobs({
                         title={j.video_url}
                       >
                         Watch
+                        <span className="visually-hidden">
+                          {" "}
+                          {j.user_name ?? "this job"}’s video, opens in a new tab
+                        </span>
                       </a>
                     ) : (
                       <span className="dim">—</span>
@@ -130,4 +157,10 @@ export default async function Jobs({
       )}
     </>
   );
+}
+
+// A separator that is punctuation to the eye and nothing to a screen reader,
+// which would otherwise read "middle dot" between every figure.
+function Sep() {
+  return <span aria-hidden="true" style={{ opacity: 0.45, padding: "0 6px" }}>·</span>;
 }

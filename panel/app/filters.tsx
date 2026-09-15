@@ -1,9 +1,15 @@
+import Link from "next/link";
 import { RANGES, type RangeKey } from "@/lib/range";
 
-// Search and date range, as a plain GET form and plain links.
+// Search and date range, as a plain GET form and prefetched links.
 //
 // No client JavaScript: the state lives in the URL, which means a filtered view
 // can be bookmarked, shared in a message, and reloaded without going stale.
+//
+// The range chips are `Link` rather than `<a>` so changing a filter is a client
+// transition into the route's loading skeleton, not a full document reload.
+// They carry aria-current, because "which range am I on" was previously
+// signalled by border colour alone.
 
 export function Filters({
   action,
@@ -18,30 +24,36 @@ export function Filters({
     <div className="filters">
       <form method="get" action={action}>
         <input type="hidden" name="range" value={range} />
-        <input
-          type="text"
-          name="q"
-          defaultValue={q}
-          placeholder="Search mechanic ID or WhatsApp number"
-          style={{ width: 300 }}
-        />
-        <button>Search</button>
+        <div className="field">
+          <label htmlFor="q">Search</label>
+          <input
+            id="q"
+            type="text"
+            name="q"
+            defaultValue={q}
+            placeholder="Mechanic ID or WhatsApp number…"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <button type="submit">Search</button>
         {q && (
-          <a className="btn" href={`${action}?range=${range}`}>
+          <Link className="btn" href={`${action}?range=${range}`}>
             Clear
-          </a>
+          </Link>
         )}
       </form>
 
-      <nav className="ranges">
+      <nav className="ranges" aria-label="Date range">
         {(Object.keys(RANGES) as RangeKey[]).map((key) => (
-          <a
+          <Link
             key={key}
-            className={key === range ? "range on" : "range"}
+            className="range"
+            aria-current={key === range ? "true" : undefined}
             href={`${action}?range=${key}${q ? `&q=${encodeURIComponent(q)}` : ""}`}
           >
             {RANGES[key]}
-          </a>
+          </Link>
         ))}
       </nav>
     </div>

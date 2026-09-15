@@ -1,8 +1,9 @@
-// Email and password. No client JavaScript at all: the form posts straight to
-// a server action, so the password never lands in component state and the page
-// works before React has hydrated.
+// Email and password. The password itself never touches client state: the form
+// posts straight to a server action, and the reveal toggle in PasswordField
+// only flips the input's `type`.
 
 import { signIn } from "./actions";
+import { PasswordField } from "./password-field";
 
 export default async function Login({
   searchParams,
@@ -11,49 +12,66 @@ export default async function Login({
 }) {
   const params = await searchParams;
 
+  // `.screen` centres against the VIEWPORT, not against <main>. main is
+  // max-width:1400px and flush left, so on a monitor wider than that the card
+  // was centred inside the left 1400px and sat visibly left of centre.
   return (
-    <div className="center card">
-      <h1>Pipeline admin</h1>
+    <div className="screen">
+      <div className="center card stack">
+        <h1 style={{ margin: 0 }}>Pipeline admin</h1>
 
-      {params.denied ? (
-        <p style={{ color: "var(--bad)", marginTop: 0 }}>
-          That account is signed in but not on the admin list. Ask for access,
-          or sign in as a different address.
-        </p>
-      ) : (
-        <p className="dim" style={{ marginTop: 0 }}>
-          Sign in with your admin email and password.
-        </p>
-      )}
-
-      <form action={signIn}>
-        <input type="hidden" name="next" value={params.next ?? "/"} />
-        <input
-          type="email"
-          name="email"
-          required
-          autoComplete="username"
-          placeholder="you@example.com"
-        />
-        <input
-          type="password"
-          name="password"
-          required
-          autoComplete="current-password"
-          placeholder="Password"
-          style={{ marginTop: 8 }}
-        />
-        <button style={{ marginTop: 12 }}>Sign in</button>
-
-        {params.error && (
-          <p style={{ color: "var(--bad)" }}>Wrong email or password.</p>
+        {params.denied ? (
+          <p className="bad" style={{ margin: 0 }}>
+            That account is signed in but not on the admin list. Ask for access,
+            or sign in as a different address.
+          </p>
+        ) : (
+          <p className="dim" style={{ margin: 0 }}>
+            Sign in with your admin email and password.
+          </p>
         )}
-      </form>
 
-      <p className="dim" style={{ fontSize: 12, marginBottom: 0 }}>
-        Accounts are created in the Supabase dashboard, not here. There is no
-        sign-up.
-      </p>
+        <form action={signIn} className="stack">
+          <input type="hidden" name="next" value={params.next ?? "/"} />
+
+          {/* Visible labels, not placeholder-as-label: a placeholder disappears
+              the moment you start typing, which is exactly when you most want
+              to know which field you are in. */}
+          <div>
+            <label htmlFor="email">Email</label>
+            <input
+              id="email"
+              type="email"
+              name="email"
+              required
+              autoComplete="username"
+              spellCheck={false}
+              autoCapitalize="none"
+              placeholder="you@example.com"
+            />
+          </div>
+
+          <PasswordField />
+
+          {/* Announced, not just displayed. */}
+          <div aria-live="polite">
+            {params.error && (
+              <p className="bad" style={{ margin: 0 }}>
+                Wrong email or password.
+              </p>
+            )}
+          </div>
+
+          <button type="submit" className="primary" style={{ width: "100%" }}>
+            Sign In
+          </button>
+        </form>
+
+        <p className="dim" style={{ fontSize: "var(--t-sm)", margin: 0 }}>
+          Accounts are created in the Supabase dashboard, not here. There is no
+          sign-up.
+        </p>
+      </div>
     </div>
   );
 }

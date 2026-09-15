@@ -5,8 +5,8 @@
 // deny-all and it holds no elevated role.
 
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
-import { cookies } from "next/headers";
-import { isAllowed, publishableKey, supabaseUrl } from "./env";
+import { cookies, headers } from "next/headers";
+import { ADMIN_EMAIL_HEADER, isAllowed, publishableKey, supabaseUrl } from "./env";
 
 export async function sessionClient() {
   const store = await cookies();
@@ -30,14 +30,17 @@ export async function sessionClient() {
 /**
  * The signed-in admin's email, or null.
  *
- * Returns null for a valid Supabase session whose email is not on the
- * allowlist - being able to authenticate is not the same as being allowed in,
- * and Supabase Auth will happily mint a session for any address that can
- * receive a magic link.
+ * Reads middleware's verdict rather than re-deriving it. This used to call
+ * getUser() itself, which is a network round trip to Supabase Auth - and since
+ * middleware had already made the identical call on the same request, every
+ * page view paid that latency TWICE before fetching a single row.
+ *
+ * Middleware remains the only thing that verifies identity, exactly as it was;
+ * this never was the gate, it only decides whether to draw the header. The
+ * allowlist is re-checked here anyway because it is a local string compare and
+ * costs nothing.
  */
 export async function currentAdmin(): Promise<string | null> {
-  const supabase = await sessionClient();
-  const { data } = await supabase.auth.getUser();
-  const email = data.user?.email ?? null;
+  const email = (await headers()).get(ADMIN_EMAIL_HEADER);
   return isAllowed(email) ? email!.toLowerCase() : null;
 }

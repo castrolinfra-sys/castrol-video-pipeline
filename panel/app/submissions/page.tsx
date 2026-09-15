@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { Problem } from "../problem";
 import { ts } from "@/lib/format";
+import { PageHead } from "../ui";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export default async function Submissions() {
   if (!rows?.length) {
     return (
       <>
-        <h1>Submissions</h1>
+        <PageHead title="Submissions" />
         <p className="empty">
           Nothing pulled yet. This fills up on the next scheduled run.
         </p>
@@ -32,31 +33,46 @@ export default async function Submissions() {
 
   // Union of every key seen, first-seen order. A renamed or added client
   // column shows up here immediately instead of being silently dropped.
+  // The Set is what keeps membership O(1) — this is 500 rows by ~18 keys, and
+  // `cols.includes` made it quadratic (js-set-map-lookups).
   const cols: string[] = [];
-  for (const r of rows) for (const k of Object.keys(r.raw ?? {})) if (!cols.includes(k)) cols.push(k);
+  const seen = new Set<string>();
+  for (const r of rows) {
+    for (const k of Object.keys(r.raw ?? {})) {
+      if (!seen.has(k)) {
+        seen.add(k);
+        cols.push(k);
+      }
+    }
+  }
 
   return (
     <>
-      <h1>
-        Submissions{" "}
-        <span className="dim">
-          — {rows.length} rows, {cols.length} columns exactly as your system
-          returned them
-        </span>
-      </h1>
-      <div className="scroll">
+      <PageHead
+        title="Submissions"
+        meta={`${rows.length} rows, ${cols.length} columns exactly as your system returned them`}
+      />
+      <div className="scroll" role="region" aria-label="Client submissions" tabIndex={0}>
         <table>
+          <caption className="visually-hidden">
+            Rows pulled from the client export, most recent first. Column names
+            are the client’s own.
+          </caption>
           <thead>
             <tr>
-              <th>Stored</th>
-              <th>Job</th>
-              {cols.map((c) => <th key={c}>{c}</th>)}
+              <th scope="col">Stored (IST)</th>
+              <th scope="col">Job</th>
+              {cols.map((c) => (
+                <th scope="col" key={c} translate="no">
+                  {c}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {rows.map((r: any) => (
               <tr key={r.id}>
-                <td className="mono dim">{ts(r.created_at)}</td>
+                <td className="dim">{ts(r.created_at)}</td>
                 <td>
                   {r.submission_id
                     ? <span className="pill succeeded">accepted</span>
