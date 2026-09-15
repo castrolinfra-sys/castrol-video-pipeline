@@ -113,12 +113,28 @@ def _card_fields(ctx: JobContext) -> dict[str, str]:
     The FULL address, not the spoken `Locality, City` — the card is read, so
     the landmark is useful there; the voiceover says only the area.
     Phone is card-only and never spoken.
+
+    The phone is `card_phone_e164` — the export's `mechanic_phone_number`, his
+    business contact. It is NOT `phone_e164`, which is `whatsapp_number`: the
+    delivery key we POST back and the number the client relays on. They are two
+    different numbers doing two different jobs (client, 2026-09-08), and this
+    function read the wrong one until 2026-09-15, so every card printed the
+    mechanic's WhatsApp number burned into a public video.
+
+    The fallback to `phone_e164` covers rows seeded by hand from a source with
+    only one number - `seed-job` takes a single `--phone` - where the two are
+    the same number and there is nothing to get wrong.
     """
     row = db.fetch_one(
-        "SELECT address_raw, phone_e164 FROM submissions WHERE id = %(id)s;",
+        "SELECT address_raw, phone_e164, card_phone_e164 FROM submissions"
+        " WHERE id = %(id)s;",
         {"id": ctx.submission_id},
     )
-    phone = (row or {}).get("phone_e164") or ctx.phone_e164
+    phone = (
+        (row or {}).get("card_phone_e164")
+        or (row or {}).get("phone_e164")
+        or ctx.phone_e164
+    )
     return media.card_payload(
         name=ctx.user_name,
         workshop=ctx.workshop_name,

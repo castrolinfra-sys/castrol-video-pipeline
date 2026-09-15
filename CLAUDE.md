@@ -475,9 +475,21 @@ key the client relays on; `mechanic_phone_number` is the contact number printed
 in the card's green panel. Neither is ever spoken.
 
 They are NOT interchangeable and must not be collapsed back into one column.
-`submissions.phone_e164` is the delivery key (`whatsapp_number`), and the card
-number needs its own column — today `stages/real.py` renders the card from
-`phone_e164`, so until that is split the card prints the delivery number.
+`submissions.phone_e164` is the delivery key (`whatsapp_number`);
+`card_phone_e164` is what the card prints (`mechanic_phone_number`).
+
+**`stages/real.py:_card_fields` read the wrong one until 2026-09-15**, so every
+card printed the mechanic's WhatsApp number burned into a video that gets shared
+around. The column existed and intake populated it correctly; only the renderer
+was wrong, which is why nothing looked broken. It now reads `card_phone_e164`
+and falls back to `phone_e164` only when that is null — which is the `seed-job`
+case, where a single `--phone` supplies both and there is nothing to confuse.
+
+That fix is NOT a `card_template_version` bump: the phone value sits inside
+`media.card_payload`, which is already in the composite `input_hash`, so a job
+whose printed number actually changes re-burns on its own. The version is for
+what the hash cannot see.
+
 `mechanic_id` would be the natural primary key but is not reliable enough to
 use as one; the export's own `id` is.
 

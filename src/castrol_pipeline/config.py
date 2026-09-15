@@ -113,10 +113,16 @@ class Settings(BaseSettings):
     # the audio stream, cutting the ~1.9s silent tail kling-avatar-v2 returns
     # after the speech ends. This version covers the composite OUTPUT, not just
     # the card artwork, so anything that changes what composite emits bumps it.
-    # v4 (2026-09-15): the band moved DOWN to 72.27% and its height now comes
-    # from its own text instead of being a fixed rect. The avatar prompt parks
-    # the hands at belt height, which is where the old top edge was — it cut
-    # across the fingers.
+    # v4 (2026-09-15): the same fixed rect moved DOWN to 72.27%-87.00%, and
+    # nothing else changed. The avatar prompt parks the hands at belt height,
+    # which is where the old top edge sat — it cut across the fingers. A
+    # content-driven height was tried and rejected; the rect stays fixed and the
+    # type stays scale-to-fit.
+    #
+    # The card's PHONE moved to card_phone_e164 the same day. That is not a
+    # version bump: the phone value is inside `media.card_payload`, which is
+    # already in the composite input_hash, so a job whose number actually
+    # changes re-burns on its own. This version is for what the hash cannot see.
     card_template_version: str = "v4"
 
     max_concurrency_audio: int = 4
