@@ -97,22 +97,78 @@ class TestSpokenPlace:
     def test_one_or_two_segments_are_already_the_spoken_form(self, address, said):
         assert spoken_place_from(address) == said
 
+    @pytest.mark.parametrize(
+        "address,said",
+        [
+            # The real row that exposed this: no commas at all, so splitting on
+            # them leaves the PIN in and the voice reads it out.
+            ("Sector 3 Asian market pushp vihar south delhi 110017",
+             "Sector 3 Asian market pushp vihar south delhi"),
+            ("Ashram chowk opposite ashram metro station 110014",
+             "Ashram chowk opposite ashram metro station"),
+            ("Beturkar Pada, Opposite Hospital, Andheri 400053", "Andheri"),
+        ],
+    )
+    def test_a_trailing_pin_code_is_not_spoken(self, address, said):
+        assert spoken_place_from(address) == said
+
+    def test_a_house_number_survives(self):
+        # The PIN rule is anchored to the END and to SIX digits, so it must not
+        # reach a building number - which is the only other digit run here.
+        assert spoken_place_from("K 68 hari nagar ashram chowk") == (
+            "K 68 hari nagar ashram chowk"
+        )
+
+    def test_an_address_that_is_only_a_pin_is_kept(self):
+        # Stripping it would leave the voice with nothing to say at all, which
+        # is worse than saying six digits.
+        assert spoken_place_from("110017") == "110017"
+
 
 class TestSpeechExpansion:
-    def test_digits_are_read_individually(self):
-        assert expand_for_speech("Shop 24") == "Shop do chaar"
+    """Short runs of digits are QUANTITIES; long runs are SEQUENCES.
+
+    `K 68` is a house number and must be said "aṭṭhaasaṭh", not "chhah aath" -
+    a mechanic heard the second one in his own address. A PIN code is the other
+    way round: read as a quantity it becomes "one lakh ten thousand seventeen".
+    """
+
+    @pytest.mark.parametrize("text", ["K 68", "Shop 24", "Sector 3", "Plot 120"])
+    def test_short_runs_are_left_for_the_voice_to_read_as_a_number(self, text):
+        # NOT spelled into Hindi words here. Hindi numerals are irregular - 68
+        # is "aṭṭhaasaṭh", not a compound of 6 and 8 - so a hand-written table
+        # of them is a mispronunciation waiting to reach a client video, so the
+        # digits go to the voice as digits and it reads them as a quantity.
+        assert expand_for_speech(text) == text
+
+    @pytest.mark.parametrize("run", ["110017", "9773128990", "2026"])
+    def test_long_runs_are_still_spelled_out_digit_by_digit(self, run):
+        said = expand_for_speech(run)
+        assert run not in said
+        assert said.split() == [
+            {"0": "zero", "1": "ek", "2": "do", "3": "teen", "4": "chaar",
+             "5": "paanch", "6": "chhah", "7": "saat", "8": "aath", "9": "nau"}[c]
+            for c in run
+        ]
+
+    def test_the_boundary_is_three_digits(self):
+        assert expand_for_speech("999") == "999"
+        assert expand_for_speech("1000") != "1000"
 
     def test_expands_abbreviations(self):
         assert "Road" in expand_for_speech("MG Rd.")
 
     def test_is_not_applied_to_card_text(self):
         # Guard against the two paths being confused: fill_script must keep the
-        # display text unexpanded while the spoken text is expanded.
+        # display text unexpanded while the spoken text is expanded. A long run
+        # is what shows the two paths diverging now that a short one is
+        # identical in both.
         filled = fill_script(
-            version="v1", name="Raju", workshop="Shop 24", locality="Andheri"
+            version="v1", name="Raju", workshop="Shop 240424", locality="Andheri"
         )
-        assert "Shop 24" in filled.display_text
-        assert "do chaar" in filled.spoken_text
+        assert "Shop 240424" in filled.display_text
+        assert "Shop 240424" not in filled.spoken_text
+        assert "do chaar zero chaar do chaar" in filled.spoken_text
 
 
 class TestScript:
