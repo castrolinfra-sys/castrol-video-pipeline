@@ -768,18 +768,30 @@ No alerting this release, by decision.
 
 | Piece | Where |
 |---|---|
-| workers, poller, cron | AWS EC2 (single instance to start) |
+| workers, poller, cron | AWS EC2 — `i-0d7560cd333c94cde`, `t3.medium`, `ap-south-1a` |
 | database | Supabase Postgres |
 | object storage | AWS S3, private |
 | delivery links | CDN in front of S3 |
 | admin panel | Vercel |
 | AI providers | apimart gateway |
 
-**All of these are on a dedicated set of accounts, separate from the usual
-BeHooked ones** — different GitHub, AWS, Supabase and Vercel logins. Git
-pushes go through the `github-castrolinfra` SSH alias; the repo's local
-`user.email` is set accordingly so commits are not attributed to the personal
-account.
+The worker runs `castrol cycle` under a systemd timer at 00:00 and 12:00 IST,
+as a container pulled from Docker Hub. The as-built record — resource ids, the
+decisions taken while provisioning, and what was verified — is
+[`EC2_DEPLOYMENT.md`](EC2_DEPLOYMENT.md); the runbook is
+[`deploy/README.md`](../deploy/README.md).
+
+**GitHub, Supabase, Vercel and the AI providers are dedicated logins, separate
+from the usual BeHooked ones.** Git pushes go through the `github-castrolinfra`
+SSH alias; the repo's local `user.email` is set accordingly so commits are not
+attributed to the personal account.
+
+**AWS is the exception**, and this section used to claim otherwise.
+`castrol-local` lives in account `872515254882` — the shared BeHooked account,
+running `behooked-studio-backend-prod`, `hooked-micro-apps`, `hooked-nodeflow`
+and `orchestrator-prod` in the same default VPC. What is dedicated is the IAM
+user and the bucket, and that is the whole of the separation; anything created
+here is created beside four production services. Corrected 2026-09-15.
 
 Migrations are forward-only numbered SQL applied in order. No down migrations —
 rolling a schema back on a live batch is worse than fixing forward.

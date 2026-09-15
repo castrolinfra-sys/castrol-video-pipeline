@@ -12,10 +12,24 @@ Group=castrol
 
 # The image tag is the ONE thing that changes per deploy, so it lives in a file
 # nobody has to edit this unit to change:
-#     echo 'CASTROL_IMAGE=acct/castrol-video-pipeline:main-abc1234' \
-#       | sudo tee /etc/castrol-image.env
-# Pin the sha tag, never :latest - a worker that spends a dollar a job must not
-# change what it runs because someone merged to main (CLAUDE.md, Docker / CI).
+#     echo 'CASTROL_IMAGE=gethooked/castrol-video-pipeline:latest' | sudo tee /etc/castrol-image.env
+#
+# CONTINUOUS DEPLOY, decided 2026-09-15. :latest is moved by CI on every green
+# push to main, and `--pull always` below is what makes that real - without it
+# `docker run` reuses whatever it cached on the first cycle, so the box freezes
+# on an old build while still appearing to track main. That silent freeze is
+# worse than either choice made deliberately.
+#
+# The spend argument against tracking a moving tag is weaker than it looks.
+# `_schedule_all()` selects `status NOT IN ('completed','cancelled')`, so a
+# changed input_hash NEVER re-renders a finished video - only jobs still open
+# when the new image first runs, and the pull lands between cycles rather than
+# mid-batch. What you accept instead is that a merge reaches a paying worker
+# with no staging and no visual review, and pytest green does not mean a render
+# looks right.
+#
+# To freeze deliberately - a risky merge, a bad batch - pin a sha:
+#     echo 'CASTROL_IMAGE=gethooked/castrol-video-pipeline:main-331b386' | sudo tee /etc/castrol-image.env
 EnvironmentFile=/etc/castrol-image.env
 
 # The .env is MOUNTED, not passed with --env-file. Docker's --env-file parser is
@@ -28,7 +42,12 @@ EnvironmentFile=/etc/castrol-image.env
 # created with any other uid the container process cannot read one line of it -
 # the run dies on missing settings, not on anything that names a permission.
 # deploy/README.md therefore pins the host user to `--uid 10001` to match.
+#
+# `--pull always` needs the pull to be authenticated: the Hub repo is private,
+# so `docker login` must have been run AS castrol - systemd reads that user's
+# ~/.docker/config.json, not root's.
 ExecStart=/usr/bin/docker run --rm \
+    --pull always \
     --name castrol-cycle \
     --volume /opt/castrol-video-pipeline/.env:/app/.env:ro \
     --log-driver journald \

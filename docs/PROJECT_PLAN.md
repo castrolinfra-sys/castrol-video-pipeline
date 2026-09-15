@@ -1,7 +1,11 @@
 # Castrol MAGNATEC — Mechanic Promo Video Pipeline
 
-**Status:** Plan complete — Phase 0 spikes next
-**Last updated:** 07 Sep 2026
+**Status:** Built and deployed. The pipeline runs end to end against real
+Supabase, S3 and CDN; nine jobs have completed for real. The worker is on EC2
+behind a twice-daily systemd timer — **not yet armed**, and `DELIVERY_ENABLED`
+is still false, so nothing has reached a mechanic. See
+[`EC2_DEPLOYMENT.md`](EC2_DEPLOYMENT.md).
+**Last updated:** 15 Sep 2026
 **Supersedes:** WhatsApp Personalised Video Campaign plan (21 Aug 2026)
 
 ---
@@ -74,7 +78,10 @@ A vertical promo video per mechanic. Fixed Hindi script with three inserted vari
    S3 + CDN ──▶ POST client delivery webhook {phone, videoLink}
 ```
 
-Infrastructure unchanged: AWS S3, Supabase Postgres, AWS EC2, GitHub, Cloudflare/Vercel for the panel.
+Infrastructure unchanged: AWS S3, Supabase Postgres, AWS EC2, GitHub,
+Cloudflare/Vercel for the panel. Note the AWS account is the **shared** BeHooked
+one — only the IAM user and the bucket are dedicated
+([`EC2_DEPLOYMENT.md` §1](EC2_DEPLOYMENT.md)).
 
 ---
 

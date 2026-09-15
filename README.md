@@ -153,9 +153,10 @@ Fill [`.env`](.env.example) — every variable is documented there. Then apply
 own Supabase instance, with
 [`scripts/apply_migration.py`](scripts/apply_migration.py).
 
-> This project uses a **dedicated set of accounts** — GitHub, AWS, Supabase,
-> Vercel, apimart, kie and Cartesia are all separate from other BeHooked
-> projects. See [`CLAUDE.md`](CLAUDE.md).
+> GitHub, Supabase, Vercel, apimart, kie and Cartesia are **dedicated
+> accounts**, separate from other BeHooked projects. **AWS is not** —
+> `castrol-local` lives in the shared BeHooked account `872515254882`; only the
+> IAM user and the bucket are dedicated. See [`CLAUDE.md`](CLAUDE.md).
 
 ---
 
@@ -469,9 +470,13 @@ keeps, and the two disagreeing means a paid call happened outside the guard.
 | [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) | scope, client decisions, risks |
 | [`docs/TALKING_HEAD_PIPELINE_REFERENCE.md`](docs/TALKING_HEAD_PIPELINE_REFERENCE.md) | prod-measured evidence from the existing BeHooked backend — the source of most invariants |
 | [`docs/CARTESIA_API_DOCS.md`](docs/CARTESIA_API_DOCS.md) | Cartesia reference — implemented in [`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) |
+| [`docs/COST_PER_VIDEO.md`](docs/COST_PER_VIDEO.md) | the per-video arithmetic, in dollars and rupees |
+| [`deploy/README.md`](deploy/README.md) | **the EC2 runbook** — provision, install, operate, read the logs |
+| [`docs/EC2_DEPLOYMENT.md`](docs/EC2_DEPLOYMENT.md) | **the deployment as built** — resource ids, decisions taken, what was verified |
 | [`infra/README.md`](infra/README.md) | AWS setup commands you run by hand |
+| [`panel/DEPLOY.md`](panel/DEPLOY.md) | how the admin panel reached Vercel, and why |
 | [`spikes/README.md`](spikes/README.md) | the Phase 0 spike list and what each one killed |
-| [`CLAUDE.md`](CLAUDE.md) | working rules and the 28 invariants, each naming the file that enforces it |
+| [`CLAUDE.md`](CLAUDE.md) | working rules and the 32 invariants, each naming the file that enforces it |
 
 ---
 
@@ -479,23 +484,32 @@ keeps, and the two disagreeing means a paid call happened outside the guard.
 
 The pipeline runs end to end under the orchestrator against real Supabase, real
 S3 and the real CDN. Every stage is implemented; `USE_STUB_STAGES=true` still
-swaps in deterministic fakes to exercise the DAG without spending.
+swaps in deterministic fakes to exercise the DAG without spending. Migrations
+0001–0010 are applied.
 
 Verified: seed → prep → composite → checks → publish → deliver on a real job,
 with the delivered CDN URL returning 200. The three paid stages are the same
 calls the prototype proved, now under budget reservation and cost recording.
+Nine jobs have completed for real, at an average 26.9s render.
+
+**Deployed to EC2** (2026-09-15). `i-0d7560cd333c94cde`, `t3.medium` in
+`ap-south-1`, running the CI-built container behind a systemd timer. The image,
+the `.env` mount and the database connection are all verified on the box —
+see [`docs/EC2_DEPLOYMENT.md`](docs/EC2_DEPLOYMENT.md).
 
 Open:
 
-- **Plates.** Being authored. The card position is calibrated for 1080×1920;
-  `seed-job` warns on anything else, because apimart reframes a non-9:16 plate
-  by inventing new ceiling and floor.
-- **Intake** is still written against the pre-CSV export schema (the real export
-  returns CSV, has no `image_face_count`, and carries two phone fields). Use
-  `seed-job` until it is reworked.
-- **kie returns 720x1280 whatever it is fed.** A 1152x2048 input was downscaled,
-  so plate resolution above 720p buys nothing downstream, and there is no
-  resolution or fps field to ask for more — the gateway drops unmapped fields
-  silently. Pro is the only lever on output detail.
+- **The timer is not armed.** Everything is installed and `castrol doctor`
+  passes on the instance, but nothing runs on a schedule yet, so nothing has
+  spent. The first cycle will render every new submission in the pull window.
 - **`DELIVERY_ENABLED` is false.** The deliver stage logs what it would POST and
-  sends nothing until the client confirms the webhook contract.
+  sends nothing. Turning it on is deliberate (invariant 28); the first cycle
+  afterwards reopens the whole suppressed backlog at once (invariant 32).
+- **The client asked for 1080p on 2026-09-12** and production still runs
+  `kling/ai-avatar-standard`, which returns 720x1280. `kling/ai-avatar-pro`
+  returns 1072x1920 and the model id is the only switch — it doubles the
+  per-second rate, so this is a cost decision, not an oversight.
+- **Three different video rates are written down in this repo** and they do not
+  all agree. Reconcile against the provider dashboard before quoting any of them
+  to the client.
+- **Geometry drift** — spike 0.3 — remains the open unknown.

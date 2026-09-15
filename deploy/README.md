@@ -96,12 +96,22 @@ the same database, because claiming is `SKIP LOCKED`.
 
 ## Provisioning the instance
 
-Commands to run yourself, with an account that can create EC2 — the pipeline's
-own IAM user (`castrol-local`) holds object read/write on the bucket and
-nothing else, by design (see [`infra/README.md`](../infra/README.md)). Region is
-**`ap-south-1`**, the same as `AWS_REGION` and the bucket: the mechanics, the
-client and the data are all in India, and invariant 21 already ties presigning
-to the bucket's own regional endpoint.
+**This is the shared BeHooked AWS account, not a Castrol-only one.** Account
+`872515254882` runs `behooked-studio-backend-prod`, `hooked-micro-apps`,
+`hooked-nodeflow` and `orchestrator-prod`, all in the default VPC, and the
+worker goes in beside them. Only the IAM user and the bucket are dedicated
+(CLAUDE.md, "Accounts"). So every resource below is named `castrol-*` and the
+security group is the boundary that actually matters — nothing here accepts
+inbound, and nothing here should touch another project's groups or roles.
+
+Needs an **admin session**. The pipeline's own `castrol-local` is denied
+`ec2:CreateSecurityGroup` and all of IAM, deliberately: that key ships in `.env`
+on the worker, and a pipeline credential that can launch instances is a far
+worse thing to leak than one that can write objects.
+
+Region is **`ap-south-1`**, the same as `AWS_REGION` and the bucket: the
+mechanics, the client and the data are all in India, and invariant 21 already
+ties presigning to the bucket's own regional endpoint.
 
 ```bash
 export AWS_REGION=ap-south-1
@@ -138,11 +148,13 @@ aws iam create-instance-profile --instance-profile-name castrol-pipeline-ec2 && 
 ### 2. A security group with no ingress rules
 
 ```bash
-aws ec2 create-security-group --group-name castrol-pipeline --description "Castrol video pipeline worker - egress only" --vpc-id <your-vpc-id>
+aws ec2 create-security-group --group-name castrol-pipeline --description "Castrol video pipeline worker - egress only" --vpc-id vpc-0f7de061b0fa8c299
 ```
 
-Create it and leave it alone. A new group has no inbound rules and full
-outbound, which is exactly right — **do not add SSH**. Outbound 443 carries the
+That is the **default VPC**, which is where the existing BeHooked services
+already live. Create the group and leave it alone: a new group has no inbound
+rules and full outbound, which is exactly right — **do not add SSH**, and do
+not attach any group belonging to another project. Outbound 443 carries the
 vendors and S3; outbound 5432 carries Supabase's session pooler.
 
 ### 3. Launch
@@ -158,8 +170,11 @@ aws ec2 run-instances --image-id resolve:ssm:/aws/service/canonical/ubuntu/serve
 that turns any "fetch this URL" bug into instance-credential theft — and this
 pipeline fetches URLs it did not choose, from the client's export feed.
 
-The subnet must have a route to the internet (public with a public IP, or
-private behind a NAT gateway). Session Manager needs outbound 443 too.
+Use a default-VPC subnet that assigns public IPs — `subnet-09d461dcda7204047`
+(`ap-south-1a`), `subnet-03cbf140798cc2add` (`1b`) or `subnet-06fcad4da114e3551`
+(`1c`). The subnet must have a route to the internet, because Session Manager
+needs outbound 443 just as the vendors do. The AZ does not matter: there is no
+state on this box worth pinning to one.
 
 ```bash
 aws ssm start-session --target <instance-id>
@@ -202,7 +217,7 @@ ffprobe -version | head -1 && fc-list | grep -i dejavusans-bold
 ### 2. User and checkout
 
 ```bash
-sudo useradd --system --uid 10001 --create-home --home-dir /opt/castrol-video-pipeline castrol
+sudo useradd --uid 10001 --create-home --home-dir /opt/castrol-video-pipeline castrol
 ```
 
 **The uid is pinned, and it has to match the image's.** The Dockerfile creates
@@ -314,8 +329,12 @@ sudo apt-get update && sudo apt-get install -y docker.io && sudo systemctl enabl
 ### 2. The user, at the image's uid
 
 ```bash
-sudo useradd --system --uid 10001 --create-home --home-dir /opt/castrol-video-pipeline castrol && sudo usermod -aG docker castrol
+sudo useradd --uid 10001 --create-home --home-dir /opt/castrol-video-pipeline castrol && sudo usermod -aG docker castrol
 ```
+
+No `--system`: that flag asks for a uid under `SYS_UID_MAX` (999), and 10001 is
+deliberately not one, so pairing them only produces a warning before useradd
+does what you asked anyway.
 
 The uid is not cosmetic. The unit bind-mounts a `0600` `.env` into a container
 that runs as uid 10001, and a bind mount carries the host's numeric ownership
@@ -327,25 +346,51 @@ pulled, so nothing in the journal mentions the pipeline at all.
 
 ### 3. Credentials
 
-Copy your filled-in `.env` to `/opt/castrol-video-pipeline/.env`, then:
+Written by hand on the box, not copied from a laptop — the file never has to
+exist in two places, and nothing carries it over a wire we did not choose.
+Section 4 above lists what a real run needs.
+
+```bash
+sudo -u castrol nano /opt/castrol-video-pipeline/.env
+```
 
 ```bash
 sudo chown 10001:10001 /opt/castrol-video-pipeline/.env && sudo chmod 600 /opt/castrol-video-pipeline/.env
 ```
 
-Same contents as section 4 above. `USE_STUB_STAGES` and `DELIVERY_ENABLED` are
-already `false` in the image, so the `.env` decides only when you want them on.
+The chown is not optional and is the single easiest thing to skip here: the
+unit mounts this file into a container running as uid 10001, a bind mount keeps
+the host's numeric owner, and `0600` owned by anyone else reads as an empty
+config rather than as a permission error.
 
-### 4. Pin the image
+`USE_STUB_STAGES` and `DELIVERY_ENABLED` are already `false` in the image, so
+the `.env` only decides when you want them *on*. Leave `DELIVERY_ENABLED=false`
+for the first real run — turning it on is invariant 28's deliberate act, and by
+invariant 32 the first cycle afterwards reopens every suppressed delivery at
+once.
+
+### 4. Set the image tag
 
 ```bash
-echo 'CASTROL_IMAGE=acct/castrol-video-pipeline:main-abc1234' | sudo tee /etc/castrol-image.env
+echo 'CASTROL_IMAGE=gethooked/castrol-video-pipeline:latest' | sudo tee /etc/castrol-image.env
 ```
 
-Pin the **sha** tag, never `latest`: a worker that spends a dollar a job must not
-change what it runs because someone merged a branch. The tag CI publishes is
-`main-<short sha>` — take it from the green run for the commit you mean to
-deploy, not from whatever is newest.
+**The worker tracks `latest` and the unit carries `--pull always`.** CI moves
+that tag on every green push to `main`, so a merge is a deploy and the next
+cycle runs it.
+
+The two halves are not separable. `docker run` reuses a cached image when the
+tag is already present locally, so `:latest` *without* `--pull always` would
+pull once on the first cycle and then run that build forever while appearing to
+track `main` — a silent freeze, which is worse than either choice made on
+purpose.
+
+To freeze deliberately — a risky merge, a bad batch, an incident — pin the sha
+instead and the same file does it:
+
+```bash
+echo 'CASTROL_IMAGE=gethooked/castrol-video-pipeline:main-331b386' | sudo tee /etc/castrol-image.env
+```
 
 ### 5. Prove the mount before arming anything
 
@@ -394,15 +439,31 @@ the quotes attached.
 
 ### Upgrading
 
-A deploy is one line and a restart of nothing — the next timer fire picks it up:
+**Nothing to do.** Merge to `main`, let CI go green, and the next cycle pulls
+it. There is no step on the box.
+
+What that buys, and what it costs, is worth being clear about. A cycle is
+`Type=oneshot` and the pull happens at start, so an in-flight run always
+finishes on the image it began with — a new build is never swapped in
+mid-batch. And a finished video is never re-rendered by a code change:
+`_schedule_all()` only touches jobs that are not `completed` or `cancelled`.
+What a new image *can* re-run is a job left open by a failure or a deadline,
+which is a handful at worst.
+
+The real cost is that there is no staging and no visual review between a merge
+and a worker that spends about a dollar a job. `pytest` passing says the DAG is
+sound; it says nothing about whether a render looks right, and every prompt and
+card revision in this project was judged by eye.
+
+So before merging anything that touches `AVATAR_PROMPT`, `IMAGE_PROMPT`, a model
+id or the card geometry, either prove it through `spikes/prototype.py` first or
+pin the sha on the box until you have looked at a render.
+
+To check what the box is actually running:
 
 ```bash
-echo 'CASTROL_IMAGE=acct/castrol-video-pipeline:main-<new sha>' | sudo tee /etc/castrol-image.env
+sudo -u castrol -H docker image inspect --format '{{index .RepoDigests 0}}' "$(. /etc/castrol-image.env && echo "$CASTROL_IMAGE")"
 ```
-
-Do it between runs. `Type=oneshot` means an in-flight cycle keeps the image it
-started with, but a cycle killed mid-render and restarted on the new tag is a
-cycle whose `input_hash` inputs changed underneath it.
 
 ---
 
