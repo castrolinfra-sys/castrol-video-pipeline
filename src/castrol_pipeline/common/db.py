@@ -274,6 +274,12 @@ def mark_failed(
 
     `retry_in_seconds is None` means terminal: the run stays `failed` and is not
     picked up again. Otherwise it returns to `pending` behind a backoff.
+
+    A terminal failure that carried a cost is marked `refunded` in the same
+    statement. Every failed vendor job refunds its credits, so the figure the
+    submit recorded is money that came back; `job_costs` excludes it. The row
+    keeps the number rather than zeroing it, because what was reserved is still
+    what reconciles against the provider's own record of the call.
     """
     if retry_in_seconds is None:
         execute(
@@ -282,7 +288,12 @@ def mark_failed(
                SET status = 'failed',
                    error_code = %(code)s,
                    error_message = %(msg)s,
-                   finished_at = now()
+                   finished_at = now(),
+                   -- Every failed vendor job refunds its credits, with no
+                   -- exception (migration 0013). Only a run that actually
+                   -- reserved something is marked, so a free stage stays false
+                   -- and `job_costs` has nothing to subtract.
+                   refunded = (cost_usd IS NOT NULL AND cost_usd > 0)
              WHERE id = %(id)s;
             """,
             {"id": run_id, "code": error_code, "msg": error_message},
