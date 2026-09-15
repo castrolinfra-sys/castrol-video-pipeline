@@ -7,18 +7,30 @@ exactly the call that matters.
 
 from decimal import Decimal
 
-from castrol_pipeline.common.budget import tts_cost_usd, video_cost_usd
+from castrol_pipeline.common.budget import (
+    USD_PER_VIDEO_SECOND_STANDARD,
+    tts_cost_usd,
+    video_cost_usd,
+)
 
 
 class TestVideoCost:
+    """What is pinned here is the ROUNDING, not the rate.
+
+    The rate is a provider fact that moves when the provider moves — it went
+    from 0.04 to 0.036 on 2026-09-15 — so these read it from the module rather
+    than restating it. A test that hardcodes the rate fails on a correct rate
+    change and says nothing about the behaviour it was written to protect.
+    """
+
     def test_whole_seconds(self):
-        assert video_cost_usd(35) == Decimal("1.40")
+        assert video_cost_usd(35) == USD_PER_VIDEO_SECOND_STANDARD * 35
 
     def test_fractional_seconds_ceil(self):
         # Regression: Decimal floor division truncates toward zero, so the
         # -(-x // 1) idiom returned 34 here and under-reserved by a second.
-        assert video_cost_usd(34.2) == Decimal("1.40")
-        assert video_cost_usd(34.0001) == Decimal("1.40")
+        assert video_cost_usd(34.2) == USD_PER_VIDEO_SECOND_STANDARD * 35
+        assert video_cost_usd(34.0001) == USD_PER_VIDEO_SECOND_STANDARD * 35
 
     def test_pro_is_double(self):
         assert video_cost_usd(35, pro=True) == video_cost_usd(35) * 2
@@ -26,7 +38,9 @@ class TestVideoCost:
     def test_never_under_estimates(self):
         for tenths in range(1, 600):
             seconds = tenths / 10
-            assert video_cost_usd(seconds) >= Decimal("0.04") * Decimal(str(seconds))
+            assert video_cost_usd(seconds) >= (
+                USD_PER_VIDEO_SECOND_STANDARD * Decimal(str(seconds))
+            )
 
 
 class TestTtsCost:

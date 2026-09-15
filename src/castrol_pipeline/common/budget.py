@@ -34,10 +34,18 @@ VENDOR_VIDEO = "kie_video"  # kling-avatar-v2 — billed PER OUTPUT SECOND
 #: Provider rates in USD, used to turn a stage's known inputs into the
 #: reservation. Rates are checked into code rather than config because getting
 #: one wrong under-reserves silently; a change should be a reviewed diff.
-#: Confirmed against the provider dashboards on 07 Sep 2026.
-USD_PER_IMAGE_2K = Decimal("0.014")             # apimart gpt-image-2 @ 2K
-USD_PER_VIDEO_SECOND_STANDARD = Decimal("0.04")  # kie kling/ai-avatar-standard
-USD_PER_VIDEO_SECOND_PRO = Decimal("0.08")       # kling/ai-avatar-pro
+#: Confirmed against the provider dashboards on 07 Sep 2026; the video rates
+#: corrected on 15 Sep 2026.
+#:
+#: The video rates were 0.04 and 0.08, which over-reserved by 11.1% against the
+#: real ones. Safe in direction — a daily cap trips early rather than late — but
+#: `job_costs` is what we reconcile against the vendor invoice and what a client
+#: quote is built from, and a number that is knowingly 11% wrong in the
+#: forgiving direction is still a number nobody can use. `docs/COST_PER_VIDEO.md`
+#: holds the full tables.
+USD_PER_IMAGE_2K = Decimal("0.014")               # apimart gpt-image-2 @ 2K
+USD_PER_VIDEO_SECOND_STANDARD = Decimal("0.036")  # kie kling/ai-avatar-standard
+USD_PER_VIDEO_SECOND_PRO = Decimal("0.072")       # kling/ai-avatar-pro
 
 #: Cartesia bills 1 credit per CHARACTER, 100K credits per $5. Per character,
 #: not per block: there is no kilochar rounding to apply. An earlier $0.10 per
