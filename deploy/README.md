@@ -80,26 +80,26 @@ The limit you will actually hit first is money:
 uv run castrol costs
 ```
 
-Since migration `0011` (2026-09-15) the **cost** cap is no longer what stops
-you. It is $5000 on `kie_video` and $500 on the other two — a runaway guard for
-a loop that escaped every other check, not a budget. The real ceiling is
-`daily_call_cap`, deliberately left alone:
+Since migrations `0011` and `0012` (2026-09-15) the caps are a runaway guard
+rather than a budget. **`daily_cost_cap_usd` is the one that binds** — the call
+caps were raised alongside it so the money limit trips first everywhere:
 
-| vendor | call cap | × measured unit cost | effective ceiling / day |
-|---|---|---|---|
-| `kie_video` | 200 | $1.0567 per render | **~$211** |
-| `apimart_image` | 600 | $0.014 per call | ~$8.40 |
-| `tts` | 600 | $0.0226 per call | ~$13.56 |
+| vendor | cost cap | call cap | unit cost | calls when cost trips | binds on |
+|---|---|---|---|---|---|
+| `kie_video` | **$5000** | 5 000 | $1.0567 | ~4 732 | **cost** |
+| `apimart_image` | **$500** | 40 000 | $0.0140 | ~35 714 | **cost** |
+| `tts` | **$500** | 25 000 | $0.0226 | ~22 124 | **cost** |
 
-So when asking "how much can this spend today", read the CALL cap. Raising a
-cost cap without the call cap beside it changes nothing.
-
-Both caps fail closed, and the cap day is **IST** — the 00:00 and 12:00 IST
+Worst case $6000/day across the three, against an observed ~40 videos a day
+(~$44). Both caps fail closed. The cap day is **IST** — the 00:00 and 12:00 IST
 cycles draw on the same bucket, so a heavy midnight batch starves the noon one.
-Changing either is a decision about spend, taken in the database:
+
+Raise or lower spend in the database. Move the COST cap, then check the call
+cap still sits above it — otherwise the ceiling lands somewhere you did not
+intend, which is exactly what `0011` did before `0012` fixed it:
 
 ```sql
-UPDATE vendor_limits SET daily_call_cap = 400 WHERE vendor = 'kie_video';
+UPDATE vendor_limits SET daily_cost_cap_usd = 200 WHERE vendor = 'kie_video';
 ```
 
 If composite ever does become the constraint, the fix is more workers, not a

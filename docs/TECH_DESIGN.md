@@ -303,12 +303,27 @@ character with no block rounding.
 
 A call-count cap bounds volume but bounds *spend* only within ~3× (script
 length) × ~2× (standard vs pro), which is why `vendor_limits` carries both.
-That reasoning stands; the conclusion drawn from it has been **inverted in
-practice**. Migration `0011` raised `daily_cost_cap_usd` to $5000 on
-`kie_video` and $500 on the other two, so the cost cap is now the runaway guard
-and `daily_call_cap` is the operative ceiling — 200 kie renders, ~$211/day. If
-you tighten spend again, move the call cap or move both; moving the cost cap
-alone no longer does anything until it drops back under ~$211.
+That reasoning stands, and `0011`/`0012` (2026-09-15) reasserted it after a
+brief inversion. `0011` raised `daily_cost_cap_usd` to $5000 on `kie_video` and
+$500 on the other two but left the call caps at 200/600/600 — which made THOSE
+the ceiling (~$211/day on kie) while the number anyone would read said $5000.
+`0012` lifted the call caps to 5000 / 40000 / 25000 so the cost cap trips first
+for every vendor again:
+
+| vendor | cost cap | call cap | calls when cost trips | binds on |
+|---|---|---|---|---|
+| `kie_video` | $5000 | 5 000 | ~4 732 | **cost** |
+| `apimart_image` | $500 | 40 000 | ~35 714 | **cost** |
+| `tts` | $500 | 25 000 | ~22 124 | **cost** |
+
+The two cheap vendors had to move as well, and not because they were given a
+budget: every video costs one image call and one TTS call, so a 600-call cap on
+either would have halted the pipeline at 600 videos — under kie's ~4 732 — and
+relocated the binding constraint to stage A or stage B without announcing it.
+A cap is only a guard if it is the one you think it is.
+
+To tighten spend, move the COST cap and check the call cap still sits above
+it.
 
 The cap day is **IST** (`now() at time zone 'Asia/Kolkata'` inside
 `reserve_vendor_call`), so both the 00:00 and 12:00 IST cycles spend from one

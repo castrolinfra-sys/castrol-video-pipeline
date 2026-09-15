@@ -408,7 +408,7 @@ keyed on the file's name so a re-run cannot claim a second apply. It did not
 always: 0001–0003 were registered by the Supabase tooling and 0004–0005 were
 not, and a HALF-populated ledger is worse than none, because `supabase db push`
 reads it and would treat applied migrations as pending. Both were backfilled;
-0001–0011 are now applied and registered.
+0001–0012 are now applied and registered.
 
 ### AWS
 
@@ -538,14 +538,22 @@ batch anyway — `docs/TALKING_HEAD_PIPELINE_REFERENCE.md` still carries $0.04/s
 correctly, because it records what the OTHER stack measured and is not our
 config.
 
-**Caps are `vendor_limits`, and the cost cap is no longer the binding one.**
-Raised 2026-09-15 by migration `0011` to $5000 on `kie_video` and $500 on the
-other two, which makes every cost cap a runaway guard rather than a budget.
-What bounds a day's spend now is `daily_call_cap`, left where it was: 200 kie
-renders (~$211/day at the measured $1.0567 each), 600 image calls (~$8.40), 600
-TTS calls (~$13.56). Read the CALL cap when asking what a day can cost. The cap
-day is **IST**, and both timer cycles fall inside one — a heavy 00:00 run
-starves the 12:00 one.
+**Caps are `vendor_limits`, and `daily_cost_cap_usd` is the one that binds.**
+Raised 2026-09-15 by migrations `0011` (cost) and `0012` (calls) to **$5000 on
+`kie_video`, $500 on the other two**, with the call caps lifted to match so the
+cost cap trips first everywhere — 5000 / 40000 / 25000 respectively. 0011 alone
+had inverted this: it left the call caps at 200/600/600, which made *those* the
+real ceiling at ~$211/day on kie while the number anyone would read said $5000.
+0012 restored 0002's design. Both cheap vendors had to move too, because every
+video costs one image call and one TTS call — a 600-call cap on either would
+have halted the pipeline at 600 videos, well under kie's ~4,732, and moved the
+binding constraint to stage A or B without saying so.
+
+Worst case is now **$6000/day** against an observed ~40 videos (~$44). These
+caps are a runaway guard and nothing else; what actually keeps spend honest is
+invariant 3, `require_cost_estimate` on kie, and per-attempt cost recording.
+The cap day is **IST**, and both timer cycles fall inside one — a heavy 00:00
+run starves the 12:00 one.
 
 ## Invariants
 
@@ -894,7 +902,7 @@ a deploy. The review gate that removes is real — see the Docker / CI section.
 **The pipeline runs end to end under the orchestrator** against real Supabase,
 real S3 and the real CDN. All eight stages are implemented in
 `stages/real.py`; `USE_STUB_STAGES=true` still swaps in deterministic fakes to
-exercise the DAG without spending. Migrations 0001–0011 are applied.
+exercise the DAG without spending. Migrations 0001–0012 are applied.
 
 Verified on a real job: seed → prep → composite → checks → publish → deliver,
 with the delivered CDN URL returning 200. The three paid stages are the same
