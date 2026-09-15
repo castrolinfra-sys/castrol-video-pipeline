@@ -22,6 +22,12 @@ EnvironmentFile=/etc/castrol-image.env
 # not a shell: it does not strip quotes, so KEY="value" arrives as the literal
 # "value" with the quotes attached. pydantic-settings reads the same file
 # correctly, and the image's WORKDIR is /app, which is where it looks.
+#
+# A bind mount carries the HOST's numeric ownership through unchanged, and the
+# image runs as uid 10001. The .env is 0600, so if the host `castrol` user was
+# created with any other uid the container process cannot read one line of it -
+# the run dies on missing settings, not on anything that names a permission.
+# deploy/README.md therefore pins the host user to `--uid 10001` to match.
 ExecStart=/usr/bin/docker run --rm \
     --name castrol-cycle \
     --volume /opt/castrol-video-pipeline/.env:/app/.env:ro \
@@ -32,7 +38,9 @@ ExecStart=/usr/bin/docker run --rm \
 # Leaves nothing behind if the unit is killed rather than exiting.
 ExecStopPost=-/usr/bin/docker rm -f castrol-cycle
 
-TimeoutStartSec=5h
+# Longer than the cycle's own 8h deadline, so the process gets to stop itself.
+# See the comment in castrol-cycle.service.
+TimeoutStartSec=9h
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=castrol-cycle

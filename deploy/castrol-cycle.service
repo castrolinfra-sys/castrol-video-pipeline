@@ -21,10 +21,13 @@ WorkingDirectory=/opt/castrol-video-pipeline
 # at 00:00 without anyone deciding to. Deploys run `uv sync` explicitly.
 ExecStart=/opt/castrol-video-pipeline/.venv/bin/castrol cycle
 
-# The cycle enforces its own deadline (--deadline-minutes, default 240) and
+# The cycle enforces its own deadline (--deadline-minutes, default 480) and
 # exits 1 when it hits it. This is the outer backstop for a process that has
-# stopped honouring its own clock, so it must be comfortably LONGER than that.
-TimeoutStartSec=5h
+# stopped honouring its own clock, so it must be comfortably LONGER than that -
+# and it was SHORTER, left at 5h when the deadline went 4h -> 8h. systemd would
+# have SIGTERMed a long batch three hours early and marked the unit failed,
+# which is the one signal this deploy alerts on.
+TimeoutStartSec=9h
 
 # structlog writes JSON to stdout; journald keeps it. `journalctl -u
 # castrol-cycle -o cat | jq` is the whole log story.
