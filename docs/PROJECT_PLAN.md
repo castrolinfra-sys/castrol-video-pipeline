@@ -51,7 +51,7 @@ A vertical promo video per mechanic. Fixed Hindi script with three inserted vari
             │
             ▼
    INTAKE ──── validate, normalise, dedupe, filter test rows
-            │  reject file → back to client
+            │  reject code recorded; rows are never repaired
             ▼
    Supabase (job + stage state)
             │
@@ -64,10 +64,7 @@ A vertical promo video per mechanic. Fixed Hindi script with three inserted vari
      └──────┬──────┘
             ▼
    C: VIDEO   avatar / lipsync  ← bottleneck, async submit + poll
-            │
-            ▼
-   C2: REPAIR  (conditional lipsync pass)
-            │
+            │                     (there is NO repair pass — see §5)
             ▼
    D: COMPOSITE  burn personalisation card
             │
@@ -91,29 +88,58 @@ one — only the IAM user and the bucket are dedicated
 
 ### Plate matrix — 6 combinations
 
-| Combo | Uniform | Background |
+| Combo | `uniform_id` | Background |
 |---|---|---|
-| 1 | Polo T-shirt | BG1 — indoor garage, white SUV, red tool cart |
-| 2 | Polo T-shirt | BG2 — indoor garage, dark sedan |
-| 3 | Polo T-shirt | BG3 — weathered garage, hatchback, open hood |
-| 4 | Half sleeve shirt | BG1 |
-| 5 | Half sleeve shirt | BG2 |
-| 6 | Half sleeve shirt | BG3 |
+| `plate_01` | `u1_tshirt` | `bg1_white_suv` — indoor garage, white SUV, red tool cart |
+| `plate_02` | `u1_tshirt` | `bg2_dark_sedan` — indoor garage, dark sedan |
+| `plate_03` | `u1_tshirt` | `bg3_hatchback_hood` — weathered garage, hatchback, open hood |
+| `plate_04` | `u2_uniform` | `bg1_white_suv` |
+| `plate_05` | `u2_uniform` | `bg2_dark_sedan` |
+| `plate_06` | `u2_uniform` | `bg3_hatchback_hood` |
 
-Supplied so far: BG1/2/3 rendered with Uniform 1, plus a two-up uniform reference. **Three plates (Uniform 2 × BG1/2/3) do not exist yet.**
+**All six exist.** The uniform ids are the client's number and the client's
+word: `polo` / `half_shirt` were ours, and since one of the two garments is
+literally a t-shirt, which way round they mapped was a coin flip. The
+backgrounds 1|2|3 **are** the SUV, sedan and hatchback — the ids were always
+right, only the lookup keys were wrong until 2026-09-09.
+
+The artwork was **replaced on 2026-09-11** and re-registered on 2026-09-15, all
+six at 1152x2048 (a true 9:16). Each combination now has three rows, one active
+and two retired, and older jobs still point at the artwork they were built from
+— replacing a combination RETIRES its row and inserts a new one rather than
+editing in place, because `jobs.plate_id` is the only record of what a video was
+actually made from (invariant 31).
 
 Plates are generated once, human-approved once, and frozen. Uniform and car are never generated at runtime.
 
+Each active plate row also carries a **uniform reference** (`uniform_ref_key`):
+a plain-background shot of the garment, `uniform/u1_tshirt.png` on plates 01–03
+and `uniform/u2_uniform.png` on 04–06, handed to the image edit as a third
+input. See §4 "Person replacement".
+
 ### Brand marks per frame
 
-Four instances, all of which must survive both generative passes:
+**The 2026-09-11 artwork changed this, and the change was load-bearing.** The
+uniforms now have **no cap and no sleeve logo**, and the chest panel reads
+`Castrol` alone rather than `Castrol MAGNATEC` on two lines. So there are two
+marks, not four:
 
-1. Cap — Castrol MAGNATEC
-2. Chest panel — Castrol MAGNATEC
-3. Sleeve — Castrol
-4. Overhead banner — Castrol Service / Castrol MAGNATEC
+1. Chest panel — `Castrol`  ← re-rendered per job, on a torso whose shape varies
+2. Overhead banner — part of the frozen plate background
 
-The cap is a useful side effect: it standardises the head silhouette, which makes the person-replacement step more reliable across varied source photos and removes most hair/headwear variance.
+Only the first has to survive both generative passes. `IMAGE_PROMPT`'s preserve
+clause used to name all four, which asked the model to keep branding the garment
+no longer has — and it invented a garbled sleeve patch. `image_prompt_version`
+is **v2** for that reason.
+
+The single-word mark also turned out to be why the smearing stopped: nine of
+nine renders on 2026-09-14 read a clean `Castrol`, where every earlier render
+smeared `Castrol MAGNAT..`. Months of that was blamed on hand motion and on
+tier resolution.
+
+Two things the old artwork bought are gone with the cap: it no longer
+standardises the head silhouette, and a tightly-cropped source photo with the
+top of the skull cut off now needs the model to invent hair.
 
 ### Personalisation card
 
@@ -121,18 +147,37 @@ Per the client draft, the mechanic's details appear as a **lower-third card comp
 
 This removes generative text rendering from the pipeline entirely. Card is drawn deterministically and burned in **after** video generation, so no generative model ever touches the text.
 
-Card copy (draft, client to finalise):
+Card copy, as built (template v4):
 
 ```
-Raju Shetty          ← Full Name
-Shetty Motors        ← Garage Name
-Andheri, Mumbai      ← Address (Location, City)
-Mo. 9898989898       ← WhatsApp Number
+Raju Shetty                        ← Full Name
+Shetty Motors                      ← Garage Name
+Andheri, Mumbai | Mo. 9898989898   ← the address (free text, printed whole)
+                                      and the mechanic's CONTACT number
 ```
 
-**Card geometry is fixed.** Position sits just below the belt line, identical across all six plates, since every plate shares the same uniform framing and subject placement. Full video duration. Burned in after video generation.
+**The number on the card is `mechanic_phone_number`, NOT the WhatsApp number.**
+Two different numbers doing two different jobs, confirmed by the client
+2026-09-08: `whatsapp_number` is the delivery key we POST back and is never
+printed and never spoken; `mechanic_phone_number` is the contact number the card
+prints. The renderer read the wrong one until 2026-09-15.
 
-The fixed position is only safe if the person-replacement step preserves subject scale and placement — see §4.4.
+**Card geometry is fixed**, identical across all six plates, full video duration,
+burned in after video generation. **v4 (2026-09-15) sits at `y 72.27% .. 87.00%`
+of frame height** — 5.87% lower than v1's "just below the belt line", which was
+chosen against a plate whose subject stood with folded arms. The avatar prompt
+now parks the hands at belt height and keeps them there, measured at 60–70% of
+frame height, which is exactly where v1's top edge sat: it cut across the
+fingers. The band is now below them.
+
+The rect is FIXED and the type scales to fit, not the other way round. A
+content-driven height was built and rejected on 2026-09-15: it fixes the one
+real cost of a fixed rect — two mechanics in a batch getting visibly different
+type because one address wrapped — but a band that changes size between jobs is
+the louder fault.
+
+The fixed position is only safe if the person-replacement step preserves subject
+scale and placement — see "Person replacement" below, and §11.
 
 ### Person replacement — scope of the edit
 
@@ -171,14 +216,23 @@ Useful side effect of the cap: it covers the top of the head, so tightly-cropped
 | A: AUDIO | script + voice ref | wav | duration recorded |
 | B: IMAGE | plate + owner photo | edited still | person replace only |
 | C: VIDEO | B + A | mp4 | async submit, separate poller |
-| C2: REPAIR | C + A | mp4 | conditional |
-| D: COMPOSITE | C/C2 + card | final mp4 | deterministic, no model |
-| CHECKS | final mp4 | pass/fail + scores | logged regardless |
-| PUBLISH | final mp4 | CDN URL | then POST webhook |
+| D: COMPOSITE | C + card | final mp4 | deterministic, no model; also trims the silent tail |
+| CHECKS | final mp4 | pass/fail + scores | logged regardless, non-blocking |
+| PUBLISH | final mp4 | CDN URL | copies to `deliver/<uuid4>/` |
+| DELIVER | CDN URL | POST `{phone, videoLink}` | gated by `DELIVERY_ENABLED` |
+
+**There is no C2.** A conditional lipsync repair pass was in the original plan
+and was dropped in migration `0003`: quality is solved in the main flow, and if
+stage C output is unacceptable the fix is its inputs, not a patch stage. Do not
+reintroduce it.
 
 Per-stage queues with independent semaphores. Audio and image run ahead and buffer so video workers never wait upstream.
 
 Per-stage idempotency by content hash of inputs: a stage whose input hash is unchanged is skipped on re-run. A failure at C must not re-run A and B.
+
+The eight stages are one class each in
+[`stages/real.py`](../src/castrol_pipeline/stages/real.py), driven twice a day
+by `castrol cycle` — see [`TECH_DESIGN.md` §2](TECH_DESIGN.md).
 
 ---
 
@@ -191,36 +245,69 @@ Per-stage idempotency by content hash of inputs: a stage whose input hash is unc
 ```
 GET https://capi.letschbang.com/api/submissions/export/vendor
     ?from=YYYY-MM-DD&to=YYYY-MM-DD
-Header: (auth pending from client)
+Header: apikey: <key>
+→ CSV, 18 columns, UTF-8 with a BOM. Rate limit 100 / 900s.
 ```
 
-Current schema (supersedes the earlier Google Sheets export):
+**The response is CSV, not JSON.** Confirmed against a live pull on 2026-09-08.
+The real header, in order:
 
 ```
-user_name                  Deeraj
-workshop_name              Sai Motors
-address                    Dombivili, Thane          ← Locality, City
-gender                     Male
-has_mechanic_id            FALSE
-mechanic_id                MECH|8932442
-mechanic_phone_number      8355837844
-background                 SUV                       ← vehicle-type named
-outfit                     Castrol T-shirt
-image_url                  https://interaktprodmediastorage.blob.core.windows.net/...
-image_mime_type            image/jpeg
-image_validation_status    APPROVED
-image_rekognition_status   FACE_DETECTED
-image_face_count           1
-status                     COMPLETED
-created_at_ist             03-09-2026 14:35
-updated_at_ist             03-09-2026 15:57
+id, whatsapp_number, user_name, workshop_name, address, gender,
+mechanic_id_verified, mechanic_id, mechanic_phone_number, background,
+outfit, image_url, image_mime_type, image_validation_status,
+image_rekognition_status, status, createdAt, updatedAt
 ```
 
-Improvements over the previous schema: address already arrives as `Locality, City`, upstream Rekognition results are exposed, and photos are Azure blobs rather than Drive links.
+A sample row: `id` a uuid · `whatsapp_number` `918355837844` ·
+`user_name` `Deeraj` · `workshop_name` `Sai Motors` · `address` `Worli` ·
+`gender` `Male` · `mechanic_id_verified` `NOT VERIFIED` ·
+`mechanic_id` `MECH|8932442` · `mechanic_phone_number` `8355837844` ·
+`background` `SUV` · `outfit` `Castrol T-shirt` · `image_url` an Azure blob SAS
+url · `image_validation_status` `APPROVED` ·
+`image_rekognition_status` `FACE_DETECTED` · `status` `COMPLETED` ·
+`createdAt` `2026-09-07T10:13:49.681Z`.
 
-**Timestamp format is ambiguous.** `03-09-2026 14:35` — dd-MM vs MM-dd is not determinable from the value, there are no seconds, and no timezone marker beyond the column name. Since the export API takes date ranges, a misparse silently shifts the entire pull window. Pin the format explicitly; do not let a parser infer it.
+Four differences from the schema this section used to list, each of which broke
+every row on its own until 2026-09-08:
 
-**Pull is not idempotent by itself.** Overlapping date windows will re-return rows, and late submissions may land in a later window. Dedupe on our side.
+- **There is a BOM.** Decoded as plain utf-8 the first header becomes `﻿id`,
+  so `id` — the only unique identifier in the feed — silently reads as missing
+  while the other 17 columns parse perfectly. `export_client.py` decodes
+  `utf-8-sig`.
+- **There are TWO phone columns.** `whatsapp_number` is the delivery key and the
+  dedupe anchor; `mechanic_phone_number` is what the card prints. Neither is
+  spoken. They are not interchangeable.
+- **There is no `image_face_count`.** Rekognition arrives as a status string,
+  which says a face was found but not how many — so the group-photo case is no
+  longer detectable at intake and falls to the stage B checks.
+- **`mechanic_id_verified` is a string**, not the boolean `has_mechanic_id` this
+  plan assumed.
+
+**Timestamps are ISO 8601** — `2026-09-07T10:13:49.681Z`, with and without
+millis. The earlier `03-09-2026 14:35` / dd-MM-vs-MM-dd ambiguity belonged to
+the pre-CSV schema and is gone. The format is still **pinned**
+(`EXPORT_TIMESTAMP_FORMAT=iso8601`) and never inferred, and the raw string is
+stored alongside the parsed value so a wrong format can be reparsed without
+re-pulling.
+
+**The address is free text, any shape** (client, 2026-09-09). It used to be
+required to be exactly `Locality, City`, which rejected real people for writing
+their own address normally — a one-word `Worli` was a `BAD_ADDRESS`. The card
+prints the whole thing; the voice says only the last segment, because Indian
+addresses run most-specific to least and reading it all aloud puts a hospital
+landmark in a 30-second ad.
+
+**Client-confirmed guarantees**, all encoded as CHECKS rather than assumptions,
+so that if one stops holding we get a row with a stable reject code instead of a
+broken video: `mechanic_phone_number` is never empty, `whatsapp_number` is
+unique, `address` is never empty, `background` never holds a seventh value.
+
+**Pull is not idempotent by itself.** Overlapping date windows will re-return
+rows, and late submissions may land in a later window. Dedupe is ours, on the
+submission hash **and** on the client's own row `id` — the second is what stops
+an overlapping window turning a re-issued media url into a UNIQUE violation
+that fails the whole batch.
 
 ### Photo access (Azure blob + SAS)
 
@@ -254,35 +341,18 @@ Body:  { "phone": "...", "videoLink": "https://..." }
 
 **There is no failure channel.** The webhook accepts a video link and nothing else. Decision taken: failures are recorded in Supabase after retries and surfaced in the admin panel only. No notification, no alert, nothing sent back to the client.
 
-### Photo access (Google Drive)
+### Photo access (Google Drive) — superseded, removed
 
-Photo URLs in the export are Drive links in `open?id=` form. All variants (`/file/d/ID/view`, `/open?id=ID`, `/uc?id=ID`, `/uc?export=download&id=ID`) carry the same file ID; one regex extracts it.
-
-**Tested 07 Sep 2026: files are publicly fetchable, no authentication required.**
-
-```
-curl -sL "https://drive.usercontent.google.com/download?id=FILE_ID&export=download"
-→ 200  image/jpeg  84045 bytes  (736x1104 progressive JPEG)
-```
-
-Note that the `/file/d/ID/view` preview page renders a sign-in prompt even for link-shared files. **The preview page is not a permissions test.** Only the `drive.usercontent.google.com/download` content endpoint gives a true answer.
-
-**No client action required.** Extract the file ID and fetch from the content endpoint.
-
-Durable improvement, not a blocker: ask the client to share the folder with a service account and use Drive API `files.get(fileId, alt=media)`. Current access depends on the folder staying link-shared; if anyone tightens it, every row breaks at once with no warning. Also worth flagging to the client that a publicly-fetchable folder of face photos, joinable to a sheet of phone numbers, is a weak DPDP position — their call.
-
-**Implementation notes**
-
-- A permissions failure returns **HTTP 200 with an HTML body**. Validate `Content-Type` and magic bytes, never the status code. Without this, a revoked share writes login pages into S3 as `.jpg`.
-- Download once at intake, straight to S3. Store `sha256` and our own key. Never fetch from Drive at job time — our copy is the system of record.
-- Rows may carry multiple comma-separated URLs. Take the first, flag the row.
-- Throttle; Drive rate-limits tight loops.
-- Files over ~100MB get a confirmation interstitial instead of bytes. Photos won't hit this, but handle it.
-- Forms appends the **uploader's Google account name** to each filename (`<hash> - <Name>.jpg`). This is the Google identity of whoever uploaded, not necessarily the mechanic. Do not parse it as the name. Usable as a duplicate-submission signal.
-
-**Photo quality floor:** minimum 100px on the short edge. This is a sanity check to reject empty files, thumbnails and broken uploads — not a quality gate. The client runs face detection on their side, which is the real filter.
-
-Consequence accepted: output quality tracks input quality directly and there is no gate. Sampled real inputs range from a sharp 900x1600 portrait to a soft, tightly-cropped ~270x390 image with the top of the skull cut off. The second will produce a visibly softer result. This is expected, not a defect.
+Photos arrived as Drive links under the earlier Google Sheets export. That is
+gone: they are Azure blob SAS urls now, and the Drive-specific handling (file-ID
+extraction, the `drive.usercontent.google.com` content endpoint, the sign-in
+preview page that is not a permissions test, the uploader's Google account name
+appended to filenames) has been deleted rather than left here to be mistaken
+for current. Two things learned there survive as invariants because they are not
+Drive-specific: a permissions failure can return **HTTP 200 with an HTML body**,
+so validate magic bytes and never the status code (invariant 2); and the photo
+is downloaded once at intake straight to S3, which is the system of record
+(invariant 15).
 
 ---
 
@@ -290,7 +360,9 @@ Consequence accepted: output quality tracks input quality directly and there is 
 
 **Configured in** [`config.py`](../src/castrol_pipeline/config.py); documented in [`.env.example`](../.env.example). Account boundaries: [`CLAUDE.md`](../CLAUDE.md).
 
-`mechanic_id` is not usable as a key. Values are inconsistent in format (`MECH|8932442`, bare integers of varying length), and `has_mechanic_id` can read FALSE while `mechanic_id` is populated — the two fields do not agree.
+`mechanic_id` is not usable as a key. Values are inconsistent in format (`MECH|8932442`, bare integers of varying length), and the verification field can disagree with it. What the export sends is `mechanic_id_verified`, a string (`VERIFIED` / `NOT VERIFIED`); the boolean `has_mechanic_id` this plan originally assumed is derived from it at intake and is not supplied.
+
+**The export's own `id` is the primary key on the client's side**, and intake requires it — a row without one is `MISSING_FIELD`. That is the identifier `mechanic_id` was hoped to be.
 
 **Approach:**
 
@@ -298,67 +370,78 @@ Consequence accepted: output quality tracks input quality directly and there is 
 - `phone_e164` is the client join key — the delivery webhook accepts phone and nothing else.
 - `mechanic_id` is stored as an opaque string, carried through, never trusted, never used for joins. Where missing or malformed, store the normalised value and flag it. The field is never null in the dashboard.
 - **`media_key` = the blob path with the query string stripped** — e.g. `inbox_customer_to_agent/AuBQaWIlbgZF/wQiYtQWpeaYE.jpeg`. Those segments are unique per upload, which makes this the strongest available dedupe key. Preferred over any timestamp-based hash, since `created_at_ist` has no seconds.
-- `submission_hash` = hash(`media_key` + `phone_e164`) for deduping repeated export pulls.
+- `submission_hash` = hash(`media_key` + `phone_e164`) for deduping repeated export pulls, **and** `client_submission_id` (the export's `id`) as a second anchor. Two keys rather than one because the media url can be re-issued between pulls: without the `id`, an overlapping window turns that into a UNIQUE violation that fails the whole batch.
 
 ---
 
 ## 8. Data model
 
-**Implemented in** [`supabase/migrations/`](../supabase/migrations/) — [`0001`](../supabase/migrations/0001_init.sql) tables and RLS, [`0002`](../supabase/migrations/0002_budget_and_seed.sql) budget, [`0003`](../supabase/migrations/0003_cartesia_tts_no_repair.sql) TTS lane, [`0004`](../supabase/migrations/0004_runtime_observability.sql) cost, events and `assets.cdn_url`.
+**Implemented in** [`supabase/migrations/`](../supabase/migrations/) — forward-only
+numbered SQL, applied in order, **0001–0014 applied**. The DDL is the source of
+truth and carries the reasoning as column comments; what follows is the map.
 
-```
-submissions   id, submission_hash, media_key, pulled_at, raw jsonb,
-              phone_e164, user_name, workshop_name, address_raw,
-              address_normalized, gender, mechanic_id, has_mechanic_id,
-              background_choice, outfit_choice,
-              image_url_raw, image_mime_type,
-              image_validation_status, image_rekognition_status, image_face_count,
-              client_status, created_at_ist, updated_at_ist,
-              is_test, validation_status, reject_reason
+| Table / view | Holds | Added by |
+|---|---|---|
+| `submissions` | one export row, validated — the two phone columns, the raw and spoken address, the verbatim `image_url_raw`, the reject code | `0001`, `0006` |
+| `export_pulls` / `export_rows` | the raw export, byte-for-byte, so a parse can be redone without re-pulling | `0001`, `0005` |
+| `jobs` | one video. `plate_id` is the only record of the artwork it was built from | `0001` |
+| `stage_runs` | per-attempt state: `input_hash`, vendor, `vendor_task_id`, `model_id`, `params`, `cost_usd`, `billed_seconds`, `refunded` | `0001`, `0004`, `0013` |
+| `assets` | every artefact by `kind`, with `s3_key`, `sha256`, dimensions, `cdn_url` | `0001`, `0004` |
+| `checks` | machine-validation results, written regardless of outcome | `0001` |
+| `deliveries` | the webhook POST and its response | `0001` |
+| `plates` | the six combinations, append-only, with `uniform_ref_key` | `0001`, `0009` |
+| `batches` | the morning summary row | `0001` |
+| `vendor_limits` / `vendor_usage` | the daily caps and the independent count behind `reserve_vendor_call()` | `0002`, `0011`, `0012` |
+| `job_events` | the durable timeline, credential-scrubbed | `0004` |
+| `job_reports` | client review notes — the admin panel's only write | `0005` |
+| `job_costs` (view) | per-video spend, **net of refunds**, with `refunded_usd` beside it | `0004`, `0013` |
+| `job_usage` / `daily_usage` (views) | what the panel reads: DURATION only, no cost or vendor column to leak. `video_seconds` is the RENDER length, ceiled per row | `0007`, `0008`, `0010`, `0014` |
 
-jobs          id, submission_id, status, current_stage, plate_id,
-              script_version, voice_id, created_at, completed_at
+Three shapes worth stating because collapsing them looks like a cleanup:
 
-stage_runs    id, job_id, stage, input_hash, status, attempts,
-              vendor, vendor_task_id, model_id, params jsonb,
-              output_key, started_at, finished_at, error_code, error_message
+- **`phone_e164` and `card_phone_e164` are different numbers.** Delivery key and
+  printed contact number respectively (§6).
+- **`plates` is append-only.** Re-registering retires the active row and inserts
+  a new one; updating in place would silently rewrite what every shipped job
+  claims it was made from.
+- **Cost lives on `stage_runs`, per attempt**, never aggregated onto the job —
+  and a terminal failure is marked `refunded`, because every failed vendor job
+  refunds its credits.
 
-assets        id, job_id, kind, s3_key, sha256, bytes,
-              duration_ms, width, height, created_at
-
-checks        id, job_id, check_name, passed, score, details jsonb
-
-deliveries    id, job_id, phone_e164, cdn_url, posted_at,
-              response_code, response_body, attempts
-
-plates        id, uniform_id, background_id, s3_key,
-              approved_by, approved_at, active
-```
+RLS is deny-all with no policies on every table. The pipeline connects to
+Postgres directly and uses no Supabase API key at all.
 
 ---
 
 ## 9. Input validation
 
-**Implemented in** [`intake/validate.py`](../src/castrol_pipeline/intake/validate.py) and [`prep/normalise.py`](../src/castrol_pipeline/prep/normalise.py); reject codes in [`common/errors.py`](../src/castrol_pipeline/common/errors.py). Note intake is still on the pre-CSV export schema — use `castrol seed-job` ([`seed.py`](../src/castrol_pipeline/seed.py)) meanwhile.
+**Implemented in** [`intake/validate.py`](../src/castrol_pipeline/intake/validate.py) and [`prep/normalise.py`](../src/castrol_pipeline/prep/normalise.py); reject codes in [`common/errors.py`](../src/castrol_pipeline/common/errors.py). Written against the real CSV export and confirmed against a live pull.
 
 Applied at INTAKE. Non-compliant rows are rejected with a reason code and returned; they are not repaired in-pipeline.
 
-| Field | Rule |
+| Field | Rule, as implemented |
 |---|---|
+| `id` | Required. The client's own row id, and the only unique identifier in the feed |
 | `image_validation_status` | Must be `APPROVED` |
-| `image_face_count` | Must equal 1. A group photo can pass "face detected" and still break stage B. |
-| `image_mime_type` | Recognised image type; confirm against magic bytes, not the declared value |
-| Photo | Minimum 100px short edge. Sanity check only. |
-| `mechanic_phone_number` | 10-digit Indian mobile, normalise to E.164 |
-| `user_name` | ≤30 chars, no honorifics (was 25; a real 2026-09-15 row hit 23) |
-| `workshop_name` | ≤ card width limit (TBC from final card artwork) |
-| `address` | `Locality, City`, ≤ length limit (TBC), abbreviations expanded, no PIN, no shop/plot number, no numerals |
+| `image_rekognition_status` | Must be `FACE_DETECTED`. **Not a count** — there is no `image_face_count` in the real export, so the group-photo case falls to the stage B checks. The reject code is still named `FACE_COUNT_NOT_1` |
+| `image_mime_type` | Recognised image type; confirmed against **magic bytes**, never the declared value or the status code |
+| Photo | Minimum 100px short edge. Sanity check only, not a quality gate |
+| `whatsapp_number` | 10-digit Indian mobile → E.164. The delivery key |
+| `mechanic_phone_number` | Same rule, separately. The card number |
+| `user_name` | ≤ 30 chars, honorifics stripped (raised from 25 after a real row hit 23) |
+| `workshop_name` | ≤ 30 chars |
+| `address` | Non-empty, ≤ 90 chars. **Free text of any shape** — 90 is a sanity bound that catches a pasted paragraph, not a layout rule |
 | `gender` | Male only this release |
-| `background` | Enum, maps to background plate |
-| `outfit` | Enum, maps to uniform |
-| Test rows | Filtered by name/workshop heuristics + explicit test list |
+| `background` | Mapped to a background id; client phrasings accepted as aliases |
+| `outfit` | Mapped to a uniform id; same |
+| Test rows | Name heuristics (`test`, `demo`, `dummy`, …) and repeated-digit phones |
 
-Address quality has improved markedly in the current schema (`Dombivili, Thane`), but normalisation still runs — earlier samples carried shop numbers, house numbers and inconsistent spellings of the same locality, and transliteration variance remains a TTS pronunciation risk regardless of format.
+Normalisation still runs on the address and is not about shape: it expands
+abbreviations, says house numbers as numbers, drops the PIN code from speech,
+and picks the **last segment** as the spoken locality. Transliteration variance
+remains a TTS pronunciation risk regardless of format. `address_normalized`
+holds the SPOKEN form, not a tidied postal address; `address_raw` is what the
+card prints.
 
 ---
 
@@ -368,34 +451,74 @@ Address quality has improved markedly in the current schema (`Dombivili, Thane`)
 |---|---|
 | Failure reporting | Supabase record after retries, visible in admin panel. No alerts, no client notification. |
 | Duplicate phone | Not handled this release. |
-| Submission ID | None supplied. Dedupe on `media_key` (blob path). |
+| Submission ID | **Supplied** — the export's `id`, since the CSV schema (2026-09-08). Dedupe is on `media_key` + phone AND on that id. |
 | Glasses | Keep if present in the source photo. |
 | Photo source | Azure blob SAS URLs. Copy to S3 at intake; treat URL as opaque. |
 | Card duration | Full video. |
-| Card phone number | WhatsApp number from the export. |
+| Card phone number | **`mechanic_phone_number`**, not the WhatsApp number — confirmed 2026-09-08, corrected in the renderer 2026-09-15. |
 | Backgrounds | All 3 final. Vehicle-type → background mapping to be updated client-side in the mapping sheet. |
-| Plates | We generate the 3 missing Uniform-2 plates. |
+| Plates | All six exist. Artwork replaced 2026-09-11 (no cap, no sleeve logo, chest reads `Castrol`) and re-registered 2026-09-15. |
 | Aspect ratio | Deferred. Re-framing handled with image generation later. |
 | Output link lifetime | 6 months. |
 | Photo resolution floor | 100px short edge, sanity check only. No quality gate. |
-| Card position | Fixed pixel position just below the belt, same across all plates. Full duration. |
-| Uniform / background mapping | Handled client-side later; mapping sheet to be updated. |
+| Card position | Fixed, same across all plates, full duration. **Template v4: `y 72.27%..87.00%`** — moved below the hands 2026-09-15, not "just below the belt". |
+| Uniform / background mapping | Mapped in `prep/plates.py` against the client's own combination map (2026-09-09). Uniform ids are `u1_tshirt` / `u2_uniform`. |
+| Repair pass | Dropped (`0003`). Quality is solved in the main flow; if stage C output is unacceptable the fix is its inputs. |
+| TTS provider | Cartesia, direct API — the one exception to "apimart + kie only". Voice created by hand in the dashboard, referenced by id; no cloning call ships. |
+| Video tier | `VIDEO_MODEL_ID` is the only resolution switch. Standard returns 720x1280, pro 1072x1920. Pro was declined 2026-09-10 and **reinstated 2026-09-12** when the client asked for 1080p; production still runs standard, which is a cost decision. |
+| Run cadence | Twice daily, 00:00 and 12:00 IST, `castrol cycle` under a systemd timer on EC2. |
+| Failed vendor calls | Refunded by the vendor, always. `job_costs` counts what was billed (`0013`); the daily caps still count failed attempts. |
 
 ## 11. Open issues
 
-1. **Script runtime.** The finalised script is ~80 words, landing around 30–40s spoken, well above the 18–25s originally assumed. Confirm against the avatar model's maximum input duration before anything else. If it caps below that, the script changes, not the pipeline.
-2. **6-month links cannot be done with S3 presigned URLs.** SigV4 caps presigned expiry at 7 days (604800s), a hard AWS limit. Worse, a URL signed with temporary EC2 instance-role credentials dies when the session token expires — typically within the hour — regardless of the expiry set.
+**Open:**
 
-   Workable approaches:
-   - **S3 private + Cloudflare CDN + unguessable object key** (UUID path), with an S3 lifecycle rule deleting at 180 days. Stable link, scheduled disappearance, uses infrastructure already in the stack. Recommended.
-   - **CloudFront signed URLs** if cryptographic expiry is required rather than unguessability. Arbitrary expiry, but adds a distribution and key pair to manage.
-3. **`outfit` / `background` enums** — exact allowed value strings. `Castrol T-shirt` and `SUV` confirmed; remaining values unknown.
-4. **Timestamp format** — confirm dd-MM-yyyy with the client before wiring the date-range pull.
-5. **`has_mechanic_id` semantics** — reads FALSE while `mechanic_id` is populated. Confirm before the panel displays it as the mechanic's own ID.
+1. **Geometry / scale drift under a fixed-pixel card.** Spike 0.3, and the one
+   question with no prior art — nothing in the existing BeHooked backend holds a
+   subject at a fixed pixel scale across an image edit. The inputs it needed are
+   now known (plates 1152x2048, card rect `y 72.27%..87.00%`, hands measured at
+   60–70% of frame height across nine renders); what is missing is a per-job
+   measurement. No check compares subject geometry against the plate, so drift
+   would surface as a card over the hands in a render somebody happens to watch.
+2. **The brand and geometry checks named as mitigations in §13 do not exist.**
+   Three checks run — duration vs audio, vertical aspect, plausible bitrate. The
+   chest-mark template match, the face-presence sample and the hand skin-tone
+   check were never built. The chest mark is currently protected by the artwork
+   and the image prompt, reviewed by eye.
+3. **Throughput at volume.** Per-render latency is measured (~8–20 min); whether
+   `MAX_CONCURRENCY_VIDEO=10` clears a big day is not. Observed volume is ~40
+   videos, so this becomes real the first time a batch outlasts the 8-hour cycle
+   deadline.
+
+**Closed, with the answer:**
+
+1. ~~**Script runtime.**~~ `kling-avatar-v2` has completed at 39s via kie and
+   60s via fal. The ~80-word script at 30–40s is comfortably inside proven range
+   and **needs no rewriting**; the original 18–25s assumption was conservative by
+   about half. The real ceiling is *bytes, not seconds* — ship MP3, never WAV.
+2. ~~**6-month links cannot be done with S3 presigned URLs.**~~ Resolved as
+   recommended: **S3 private + CloudFront over an unguessable key**, with a
+   180-day lifecycle rule deleting the object. The link dies because the object
+   is removed, not because a signature lapsed. This is also why the worker holds
+   static AWS keys rather than using its instance role — a URL signed with
+   temporary credentials expires with the session token, well inside a render
+   window.
+3. ~~**`outfit` / `background` enums.**~~ Mapped 2026-09-09 from the client's own
+   combination map; client phrasings accepted as aliases, and an unmapped value
+   is a rejected row rather than a guess.
+4. ~~**Timestamp format.**~~ ISO 8601, confirmed against a live pull. Still
+   pinned in `EXPORT_TIMESTAMP_FORMAT`, still never inferred.
+5. ~~**`has_mechanic_id` semantics.**~~ The export sends `mechanic_id_verified`
+   as a string; the boolean is derived from it. Neither is joined on, and the
+   panel does not present either as the mechanic's own ID.
 
 ---
 
 ## 12. Build plan
+
+**All phases below have shipped** — the plan is kept as the record of what each
+step had to prove. Current state is the Status block at the top of this file and
+[`EC2_DEPLOYMENT.md`](EC2_DEPLOYMENT.md).
 
 ### Phase 0 — Spikes (before any pipeline code)
 
@@ -406,7 +529,7 @@ Throwaway scripts. The only goal is to kill assumptions that would force a rebui
 | 0.1 | Stage C on one plate + one full-length audio | the script fits the avatar model's max input duration |
 | 0.2 | Same, measuring wall-clock generation time | concurrency 10 clears a day's batch |
 | 0.3 | Stage B person replacement on 3 real photos — sharp, soft, glasses | build/age/skin-tone transfer works with geometry locked |
-| 0.4 | Inspect stage C output for all 4 Castrol marks | brand marks survive two generative passes |
+| 0.4 | Inspect stage C output for the Castrol marks | brand marks survive two generative passes — and there are **two** marks now, not four: the 2026-09-11 artwork dropped the cap and the sleeve logo |
 | 0.5 | Fetch 5 Azure SAS URLs verbatim through the real HTTP client | nothing in the stack re-encodes the signature |
 | 0.6 | TTS one real address + the `8 seconds` numeral | normalisation rules are sufficient |
 
@@ -447,15 +570,15 @@ Throwaway scripts. The only goal is to kill assumptions that would force a rebui
 
 **1.5 Generation stages**
 - A: TTS. Voice reference, duration recorded.
-- B: image edit. Change/Preserve/Constrain prompt per §4.4.
+- B: image edit. Change/Preserve/Constrain prompt per §4 "Person replacement".
 - C: video. Async submit, `vendor_task_id` stored, separate reconciling poller. Workers submit and release — never block a worker on a poll.
-- C2: conditional lipsync repair.
+- ~~C2: conditional lipsync repair.~~ **Dropped in `0003`** and not to be reintroduced.
 - Each stage behind one interface so a vendor swap is a config change.
 
 **1.6 Composite and checks**
 - Card renderer: deterministic, fixed geometry, text fitting rules.
 - Burn-in after video generation.
-- Machine checks: card text OCR match, chest mark template match, face present across sampled frames, audio/video duration delta, file integrity, resolution, duration, size.
+- Machine checks. **Three were built** — audio/video duration delta, vertical aspect, plausible bitrate. Card text OCR match, chest-mark template match, face presence and geometry were specified here and never built; see §11.
 - Results written to `checks` regardless of outcome. Logged, not blocking.
 
 **1.7 Publish and deliver**
@@ -463,8 +586,8 @@ Throwaway scripts. The only goal is to kill assumptions that would force a rebui
 - Lifecycle rule, 180-day expiry.
 - Delivery webhook client: POST `{phone, videoLink}`, retry with backoff, response recorded in `deliveries`.
 
-**1.8 Batch runner**
-- Nightly entry point: pull → enqueue → drain → report.
+**1.8 Batch runner** — built as `castrol cycle`, twice daily rather than nightly, and it *waits* rather than draining: `drain` stops as soon as a sweep moves nothing, which for an async stage means "still rendering".
+- Entry point: lock → pull → repair orphans → reopen suppressed deliveries → schedule → work/poll until quiet → stop at a deadline.
 - Batch summary row: total, completed, failed, by-stage failure counts.
 - Resume behaviour on restart mid-batch.
 
@@ -472,7 +595,9 @@ Throwaway scripts. The only goal is to kill assumptions that would force a rebui
 
 ### Phase 2 — Admin panel
 
-Supabase queries over the schema above. Submissions table, per-job stage history, video preview, batch summaries, failure breakdown by stage and error code. Auth, RLS deny-all by default, service key server-side only.
+Built and live at <https://castrol-pipeline-admin-panel.vercel.app> — Next.js on Vercel, in-repo at [`panel/`](../panel/). Four pages: Jobs, Failures, Submissions, Usage, plus a per-job detail page. Auth is Supabase email + password with an `ADMIN_ALLOWED_EMAILS` allowlist; RLS is deny-all with no policies, so every query runs server-side with the secret key.
+
+**It is a CLIENT-facing surface, not our operations console**, and that changed what it may show: no cost, no vendor, no model id, no stage, no retry count, no internal error code. The metric it reports is DURATION. That line is held structurally rather than by care — the pages read the `job_usage` / `daily_usage` views, which have no cost or vendor column in them. Per-job stage history and the failure breakdown "by stage" named above were therefore deliberately NOT built as such; Failures shows a reason sentence, not a stage. The one thing the panel writes is `job_reports`.
 
 ---
 
@@ -480,24 +605,30 @@ Supabase queries over the schema above. Submissions table, per-job stage history
 
 1.1 → 1.2 → 1.3 can proceed without any vendor integration and should be verified against real client data first. 1.4 is provable with stubs. Only 1.5 spends money, and by then everything around it is known good.
 
-Plate generation (3 missing Uniform-2 plates) and card artwork are parallel tracks, not blockers for 1.1–1.4.
+Plate generation and card artwork were parallel tracks, not blockers for 1.1–1.4. Both are closed: all six plates exist with uniform references, and the card is at template v4.
 
 ---
 
 ## 13. Risks
 
+**Mitigation here means something that exists.** Three rows in this table used to
+name a machine check as the mitigation — chest/sleeve marks, subject scale, hand
+skin tone — and those checks were never built (§11). They are marked as what they
+actually are.
+
 | Risk | Impact | Mitigation |
 |---|---|---|
-| SAS URL re-encoded anywhere in the stack | 403 that reads as a permissions failure | URL treated as opaque; verified in spike 0.5 |
+| SAS URL re-encoded anywhere in the stack | 403 that reads as a permissions failure | URL treated as opaque bytes, verbatim to the HTTP client; invariant 1, and a code comment in `intake/media.py` because this is what a refactor "fixes" |
 | Client rotates storage account key | Every photo URL dies at once | S3 copy at intake is the system of record |
-| Non-image body saved as `.jpg` | Silent corruption, wasted vendor spend | Validate magic bytes, not status or declared MIME |
-| Timestamp misparsed dd-MM vs MM-dd | Pull window silently wrong | Format pinned with client, not inferred |
-| Chest/sleeve marks regenerated per job on varying torso | Client-facing brand incident | Machine check on every video, logged |
-| Subject scale drift breaks fixed card position | Card covers hands or exposes mismatch | Geometry lock in preserve list; per-job position check |
-| Hand skin tone inherited from plate | Most visible tell after the face | Explicit in change list; dedicated check |
-| Script longer than model's max audio duration | Rework of script or vendor | Verify in the stage C spike |
-| Presigned URL expiry misunderstood | Links dead within the hour | CDN + unguessable key + lifecycle rule |
-| Address mispronounced | Video is useless to the mechanic | Normalisation + pronunciation overrides |
-| Export re-returns rows | Duplicate generation and spend | `submission_hash` dedupe |
-| Systemic overnight failure | Whole batch silently produces nothing | Batch completed/failed counts on panel |
-| Retry loop | Runaway vendor spend | Global daily call cap per vendor |
+| Non-image body saved as `.jpg` | Silent corruption, wasted vendor spend | Validate magic bytes, not status or declared MIME; invariant 2 |
+| Chest mark regenerated per job on a varying torso | Client-facing brand incident | **No automated check.** The artwork (single-word `Castrol`) and the image prompt's preserve clause, reviewed by eye. Nine of nine renders clean on 2026-09-14 |
+| Subject scale drift breaks the fixed card position | Card covers the hands | Geometry lock in the prompt's Preserve/Constrain clauses, pinned by `tests/test_image_prompt.py`; the card moved below the hands in v4. **No per-job position check** |
+| Hand skin tone inherited from the plate | Most visible tell after the face | Explicit in the prompt's change list. **No check** |
+| Hands rendered badly by the avatar model | Visible defect in every frame | `AVATAR_PROMPT`: no gestures, hands low and apart, calm and slow motion — three paid revisions' worth of constraint, hashed as text so editing it regenerates |
+| Export re-returns rows | Duplicate generation and spend | `submission_hash` **and** the client's row `id` |
+| Retry loop | Runaway vendor spend | `reserve_vendor_call()` before every paid call, daily cost and call caps, `require_cost_estimate` on per-second vendors; caps count failed attempts even though the vendor refunds them |
+| A cycle interrupted mid-intake | A mechanic silently never gets a video, with no error anywhere | `_repair_orphans` every cycle, logged at warning level; invariant 33 |
+| Delivery recorded from an HTTP status | A video the mechanic never gets and nobody looks for | `webhook_accepted()` reads the body and fails closed; there is no failure channel back to the client |
+| Systemic overnight failure | Whole batch silently produces nothing | Batch summary row, `castrol report`, and the panel. **No alerting, by decision** |
+| Address mispronounced | Video is useless to the mechanic | Normalisation + spoken-locality rules, unit-tested |
+| A merge reaching the worker unreviewed | A render that looks wrong, shipped | The worker tracks `:latest` with `--pull always`, so this is real: prove prompt, model-id and card changes through `spikes/prototype.py` or pin a `main-<sha>` first |

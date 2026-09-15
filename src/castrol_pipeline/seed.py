@@ -179,7 +179,7 @@ def seed_job(
     plate_id: str | None = None,
     uniform_ref: Path | None = None,
     spoken_place: str | None = None,
-    uniform_id: str = "polo",
+    uniform_id: str = "u1_tshirt",
     background_id: str = "bg1_white_suv",
     approved_by: str = "seed-job",
 ) -> dict[str, str]:

@@ -82,8 +82,8 @@ differ in RAM and credit accrual, not core count, so a render takes the same
 wall-clock on any of them. `t3.medium` earns ~576 credit-minutes/day against
 ~42 vCPU-minutes of work, two orders of magnitude of headroom.
 
-Revisit only if the kie cap rises a long way. Even the `$150` example in the
-runbook (~134 videos/day) is about an hour of ffmpeg. If composite ever really
+Revisit only if the kie cap rises a long way. Even the `$200` example in the
+runbook (~190 videos/day) is about an hour and a half of ffmpeg. If composite ever really
 does bind, the answer is more workers — claiming is `SKIP LOCKED` — not a
 bigger box.
 
@@ -234,6 +234,13 @@ midnight.
   cycle afterwards reopens every suppressed delivery at once — that is invariant
   32 working, not a bug, and the client stores `{phone, videoLink}`
   idempotently.
+- **Continuous deploy makes an interrupted cycle routine**, which is why
+  `_repair_orphans` exists (invariant 33): a cycle killed between intake's three
+  transactions leaves a submission with no job or a job with no photo, and
+  nothing anywhere reports it. Every cycle repairs both, at warning level. There
+  were zero orphans of either kind when it was written, so it is a guard for the
+  first real batch rather than a fix for an observed incident — and it has no
+  test yet.
 - **The first run will spend.** At the time of writing the pull window held
   **15 submissions, all new** — none matching the 9 hand-seeded rows by
   `client_submission_id` or by phone. At the measured 26.9s average and the
@@ -245,16 +252,21 @@ midnight.
   tts     ~400 chars × $0.00005    ≈  $0.020
                                       ──────
   per video                           ~$1.01
-  15 submissions                      ~$15,  ~$18 with retries at the observed 2-in-9 rate
+  15 submissions                      ~$15
   ```
+
+  Retries do **not** add to that, which this estimate originally assumed they
+  would: every failed vendor job refunds its credits, so a render that fails and
+  is retried bills once (migration `0013`). What retries still consume is the
+  daily CALL cap, which is deliberately not refund-adjusted.
 
   Submissions arrive continuously — the window grew by one row in eleven
   seconds while this was being measured — so the real figure on the day will be
   higher. The 2026-09-15 pull bore that out: **44 rows in the 14-day window, 42
   valid, ~$46 all-in**, which would have hit the original $50 cap with one
-  retry to spare. That is what prompted migration `0011`; the ceiling is now
-  `0012`. The ceiling is now the $5000/day kie COST cap (~4,732 renders); the
-  call caps were raised to match so the money limit is what trips.
+  retry to spare. That is what prompted migration `0011`. The ceiling is now
+  the $5000/day kie COST cap (~4,732 renders), with the call caps raised by
+  `0012` to match so the money limit is what trips.
 
 - **Root was used for provisioning.** Switch to `castrol-server` for
   administration; root cannot be scoped, revoked per-action, or attributed to a

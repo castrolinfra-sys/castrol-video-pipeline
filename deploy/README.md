@@ -29,26 +29,42 @@ and everything below is either how to install it or how to read what it did.
    A failed pull does **not** abort the run — the jobs already in the database
    still need finishing. It sets exit code 1 so the failure is visible.
 
-3. **Schedules every unfinished job.** Intake creates jobs but does not schedule
+3. **Finishes the rows a crash left half-created.** Intake writes one mechanic
+   across three transactions — submission, job, photo asset — so a process
+   killed between them leaves a valid submission with no job, or a job with no
+   source photo. Neither is an error anywhere: no stage fails, the counters look
+   right, and that mechanic simply never gets a video. Both repairs are free and
+   idempotent, so every cycle does them, and each one logs at **warning** level
+   (`cycle.orphan_job_created`, `cycle.orphan_photo_restored`,
+   `cycle.orphan_photo_failed`) because a silent self-heal hides a recurring
+   crash. A photo whose SAS url has since expired is logged and skipped rather
+   than failing the cycle.
+
+4. **Reopens deliveries suppressed while `DELIVERY_ENABLED` was false.** See
+   "The backlog reopens itself" below.
+
+5. **Schedules every unfinished job.** Intake creates jobs but does not schedule
    them, and a previous cycle may have stopped at its deadline. This step is why
    a cycle needs no memory of what the last one did.
 
-4. **Works, then waits, then works again** until nothing is queued and nothing
+6. **Works, then waits, then works again** until nothing is queued and nothing
    is in flight at a vendor. This is the part `drain` gets wrong for unattended
    use: `drain` stops as soon as a sweep moves nothing, which for an avatar
    render means "still rendering" — it would submit every paid job and exit
    before collecting a single result.
 
-5. **Stops at a deadline** (default 8 hours, inside the 12-hour gap) and
+7. **Stops at a deadline** (default 8 hours, inside the 12-hour gap) and
    exits 1 if work is still outstanding. Nothing is lost when this happens —
    readiness is recomputed from `stage_runs`, so the next cycle picks up exactly
    where this one stopped — but a batch that outlasts its own window is worth
    knowing about.
 
-**Delivery is still off.** `DELIVERY_ENABLED=false` means step 8 logs what it
+**Delivery is still off.** `DELIVERY_ENABLED=false` means the `deliver` stage —
+the eighth and last of the pipeline, not a step in the list above — logs what it
 would have POSTed and records the delivery row without posting. Everything up to
 and including publish runs for real, so turning delivery on later requires no
-re-render: flip the variable and the deliver stage runs on the next cycle.
+re-render: flip the variable, and step 4 of the next cycle reopens the whole
+suppressed backlog at once.
 
 ---
 
@@ -135,7 +151,7 @@ export AWS_REGION=ap-south-1
 
 | | | why |
 |---|---|---|
-| type | `t3.large` | composite is 28s of ffmpeg per video and is the only CPU-bound step. 2 vCPU / 8 GB. |
+| type | `t3.medium`, `CpuCredits=standard` | composite is 28s of ffmpeg per video and is the only CPU-bound step, ~21 min of work a day. `t3.small`/`medium`/`large` all have **2 vCPUs** — they differ in RAM and credit accrual, not core count, so a render takes the same wall clock on any of them. This said `t3.large` as a rule of thumb; the measurement says medium, with two orders of magnitude of credit headroom. `standard` rather than the T3 default `unlimited`, which bills extra instead of throttling — a silent overage is the wrong failure mode here. See [`EC2_DEPLOYMENT.md` §3](../docs/EC2_DEPLOYMENT.md) |
 | disk | 30 GB gp3 | the working set is small — artefacts go to S3 — but images, layers and journald need room. |
 | AMI | Ubuntu 24.04 LTS | systemd 255, so the timer's `Asia/Kolkata` suffix works without touching the box clock. |
 | inbound | **none** | this box accepts no connections. It only makes them: the export API, three vendors, S3, Supabase. |
@@ -177,7 +193,7 @@ The AMI is resolved through SSM rather than pasted, so this command does not
 rot into a stale image id the first time Canonical publishes a new build:
 
 ```bash
-aws ec2 run-instances --image-id resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id --instance-type t3.large --iam-instance-profile Name=castrol-pipeline-ec2 --security-group-ids <sg-id> --subnet-id <subnet-id> --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":30,"VolumeType":"gp3","Encrypted":true}}]' --metadata-options 'HttpTokens=required' --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=castrol-pipeline}]'
+aws ec2 run-instances --image-id resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id --instance-type t3.medium --credit-specification CpuCredits=standard --iam-instance-profile Name=castrol-pipeline-ec2 --security-group-ids <sg-id> --subnet-id <subnet-id> --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":30,"VolumeType":"gp3","Encrypted":true}}]' --metadata-options 'HttpTokens=required' --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=castrol-pipeline}]'
 ```
 
 `HttpTokens=required` forces IMDSv2. It costs nothing and closes the SSRF path
@@ -493,8 +509,23 @@ journalctl -u castrol-cycle --since today -o cat
 journalctl -u castrol-cycle --since today -o cat | jq -c 'select(.level=="error")'
 ```
 
-The last run's own summary — window, intake counters, per-stage run counts,
-elapsed time, jobs by status — is the final JSON object the command prints.
+The last run's own summary — window, intake counters, `repaired`, `redelivering`,
+per-stage run counts, elapsed time, jobs by status — is the final JSON object the
+command prints.
+
+**Three warning-level events mean something upstream was interrupted**, and all
+three are self-heals rather than failures. Worth reading every morning, because
+a repair that recurs is a crash that recurs:
+
+```bash
+journalctl -u castrol-cycle --since today -o cat | jq -c 'select(.event|startswith("cycle.orphan"))'
+```
+
+`cycle.orphan_job_created` — a submission had no job. `cycle.orphan_photo_restored`
+— a job had no source photo and it was refetched. `cycle.orphan_photo_failed` —
+the same, but the SAS url had expired and the photo is unrecoverable; that job
+will never render and needs the row cancelling or the client re-issuing the
+media.
 
 Against the database, from any machine with the `.env`:
 

@@ -11,9 +11,9 @@
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-// Loosely typed for now. Once migration 0005 is applied, replace this with
-// generated types (`supabase gen types typescript`) so every column name in
-// this app is checked against the real schema.
+// Loosely typed. Migrations 0001-0014 are applied, so the remaining work is to
+// generate types (`supabase gen types typescript`) and replace this, which
+// would check every column name in this app against the real schema.
 type Db = SupabaseClient<any, "public", any>;
 
 if (typeof window !== "undefined") {

@@ -17,14 +17,23 @@ contracts and nothing else.
 |---|---|---|---|
 | 1 | **Plate** — uniform + garage background | pre-built, frozen, human-approved. Chosen by the export's `outfit` + `background` | the scene the mechanic is composited into |
 | 2 | **Mechanic photo** | export `image_url` (Azure blob) | the face/build swapped onto the plate |
-| 2b | **Uniform reference** — the garment alone on a plain background | pre-built, frozen, registered on the plate row. Optional per combination | a third reference to the image edit, so the uniform's fabric and printed marks are copied rather than reconstructed |
+| 2b | **Uniform reference** — the garment alone on a plain background | pre-built, frozen, registered on the plate row. Nullable, and **all six active plates carry one** | a third reference to the image edit, so the uniform's fabric and printed marks are copied rather than reconstructed |
 | 3 | **Name** | export `user_name` | **spoken** and on the card |
 | 4 | **Workshop name** | export `workshop_name` | **spoken** and on the card |
-| 5 | **Location** | export `address` (`Locality, City`) | **spoken** and on the card |
-| 6 | **Phone** | export `whatsapp_number` | **card only** — never spoken |
+| 5 | **Location** | export `address` — free text, any shape | card prints it whole; the voice says only its **last segment** |
+| 6 | **Delivery phone** | export `whatsapp_number` | **delivery key only** — what we POST back as `phone`. Never printed, never spoken |
+| 7 | **Card phone** | export `mechanic_phone_number` | **card only** — never spoken |
 
 Only 3–5 vary inside the script; the rest of the script is identical for every
-mechanic. The phone number appears on the card but is never read aloud.
+mechanic. Neither phone number is ever read aloud.
+
+**6 and 7 are two different numbers doing two different jobs**, confirmed by the
+client 2026-09-08: `submissions.phone_e164` is the delivery key the client
+relays on, `card_phone_e164` is the contact number in the card's green panel.
+They are not interchangeable. The renderer printed the wrong one until
+2026-09-15 — the column existed and intake populated it correctly, so nothing
+looked broken while every card carried a mechanic's WhatsApp number burned into
+a video that gets shared around.
 
 ---
 
@@ -200,12 +209,33 @@ Check config and the database are actually usable before anything else:
 uv run castrol doctor
 ```
 
+**The whole run, unattended.** This is the only command the EC2 timer executes,
+at 00:00 and 12:00 IST: take an advisory lock, pull the client's window, finish
+any intake rows a crash left half-created, reopen deliveries suppressed while
+`DELIVERY_ENABLED` was false, schedule every unfinished job, then work and wait
+until nothing is queued and nothing is in flight — or the 8-hour deadline hits,
+which loses nothing because readiness is recomputed from `stage_runs`. The lock
+means a noon run that lands on a still-rendering midnight run exits rather than
+doubling the concurrent load on a paid vendor. **It spends money.** See
+[`cycle.py`](src/castrol_pipeline/cycle.py) and
+[`deploy/README.md`](deploy/README.md).
+
+```bash
+uv run castrol cycle
+```
+
+Finish what is already in the database without pulling anything new:
+
+```bash
+uv run castrol cycle --no-fetch
+```
+
 **One video by hand.** The manual-entry path — a single mechanic, a plate test,
 a client sample — without the export API in the way. Creates the rows and lands
 the photo in S3; runs nothing. Idempotent on (photo, phone).
 
 ```bash
-uv run castrol seed-job --photo spikes/in/mechanic2.jpg --plate spikes/in/plate_bg2.png --uniform-ref spikes/in/uniform_u1.png --name "Amit Kumar" --workshop "Ganesh Car Service" --address "Beturkar Pada, Opposite New National Hospital, Andheri" --phone 9773128990 --uniform polo --background bg2_dark_sedan
+uv run castrol seed-job --photo spikes/in/mechanic2.jpg --plate spikes/in/plate_bg2.png --uniform-ref uniform/u1_tshirt.png --name "Amit Kumar" --workshop "Ganesh Car Service" --address "Beturkar Pada, Opposite New National Hospital, Andheri" --phone 9773128990 --uniform u1_tshirt --background bg2_dark_sedan
 ```
 
 **Plate artwork on its own**, with the uniform reference the image edit uses as
@@ -214,7 +244,7 @@ one inserted, so every existing job keeps naming the artwork it was really built
 from. Free, and runs nothing.
 
 ```bash
-uv run castrol register-plate --plate plates/plate_02.png --uniform u1_tshirt --background bg2_dark_sedan --uniform-ref plates/uniform_u1.png
+uv run castrol register-plate --plate plates/plate_02.png --uniform u1_tshirt --background bg2_dark_sedan --uniform-ref uniform/u1_tshirt.png
 ```
 
 The reference belongs to the uniform rather than the background, so the same
@@ -226,8 +256,11 @@ and the combination submits plate + photo only, on the two-image prompt.
 last segment of it (`Andheri`), so landmarks are not read aloud; override with
 `--spoken-place`.
 
-**Run it.** `drain` sweeps every stage and the poller until nothing moves —
-convenient locally; production uses N workers and a separate poller.
+**Run it by hand.** `drain` sweeps every stage and the poller until nothing
+moves — convenient locally. It is NOT what production runs: `drain` stops the
+moment a sweep moves nothing, which for an async stage means "still rendering",
+so under a timer it would submit every paid render and exit before collecting
+one. That is what `cycle` is for.
 
 ```bash
 uv run castrol drain
@@ -258,8 +291,10 @@ uv run castrol redo <job-id> --stage video
 Succeeded runs are marked `skipped`, never deleted — the row carries what that
 attempt cost, and a deleted row takes that with it.
 
-**Bulk intake** from the client export (still written against the pre-CSV
-schema — see Status):
+**Bulk intake** from the client export, for one window, without the rest of a
+cycle. Written against the real CSV export and confirmed against a live pull;
+dedupes on the submission hash and on the client's own row `id`, so an
+overlapping window is free:
 
 ```bash
 uv run castrol intake --from 2026-09-01 --to 2026-09-01
@@ -391,7 +426,7 @@ Every path is real. If you are hunting for where something happens, start here.
 | [`prep/script.py`](src/castrol_pipeline/prep/script.py) | **the script itself**, the three placeholders, and the spoken-pronunciation overrides |
 | [`prep/normalise.py`](src/castrol_pipeline/prep/normalise.py) | phone → E.164, address splitting, numerals and abbreviations for speech |
 | [`prep/plates.py`](src/castrol_pipeline/prep/plates.py) | export `outfit` + `background` → plate ids |
-| [`intake/`](src/castrol_pipeline/intake/) | the export pull, validation, dedupe, photo landing — **still on the pre-CSV schema** |
+| [`intake/`](src/castrol_pipeline/intake/) | the export pull (**CSV, BOM**), validation, dedupe, photo landing |
 
 ### Schema and infrastructure
 
@@ -401,6 +436,16 @@ Every path is real. If you are hunting for where something happens, start here.
 | [`0002_budget_and_seed.sql`](supabase/migrations/0002_budget_and_seed.sql) | USD budget caps, `reserve_vendor_call()`, the six plate rows |
 | [`0003_cartesia_tts_no_repair.sql`](supabase/migrations/0003_cartesia_tts_no_repair.sql) | Cartesia enabled; the repair pass deleted |
 | [`0004_runtime_observability.sql`](supabase/migrations/0004_runtime_observability.sql) | per-attempt cost, `assets.cdn_url`, `job_events`, the `job_costs` view |
+| [`0005_admin_review_and_export_copy.sql`](supabase/migrations/0005_admin_review_and_export_copy.sql) | `job_reports` (the panel's only write) and the raw export copy |
+| [`0006_real_export_schema.sql`](supabase/migrations/0006_real_export_schema.sql) | the real CSV columns — `card_phone_e164`, `mechanic_id_verified`, the client's own row `id` |
+| [`0007_usage_views_for_the_panel.sql`](supabase/migrations/0007_usage_views_for_the_panel.sql) | `job_usage` / `daily_usage` — duration only, no cost or vendor column to leak |
+| [`0008_job_usage_video_url.sql`](supabase/migrations/0008_job_usage_video_url.sql) | the delivered URL on `job_usage` |
+| [`0009_plate_uniform_reference.sql`](supabase/migrations/0009_plate_uniform_reference.sql) | `plates.uniform_ref_key` — the image edit's third input |
+| [`0010_bill_on_the_render_not_the_trim.sql`](supabase/migrations/0010_bill_on_the_render_not_the_trim.sql) | `job_usage.video_seconds` reads `video_raw` — the render, not the trimmed file |
+| [`0011_raise_the_daily_cost_caps.sql`](supabase/migrations/0011_raise_the_daily_cost_caps.sql) | `daily_cost_cap_usd` → $5000 / $500 / $500 |
+| [`0012_raise_the_call_caps_to_match.sql`](supabase/migrations/0012_raise_the_call_caps_to_match.sql) | `daily_call_cap` → 5000 / 40000 / 25000, so the cost cap is what binds |
+| [`0013_refunded_runs.sql`](supabase/migrations/0013_refunded_runs.sql) | `stage_runs.refunded`; `job_costs` counts what was billed, not what was reserved |
+| [`0014_ceil_the_billed_second.sql`](supabase/migrations/0014_ceil_the_billed_second.sql) | `video_seconds` **ceiled per render**, so `daily_usage` sums already-billed integers |
 | [`infra/s3-lifecycle.json`](infra/s3-lifecycle.json) | what expires and when — the 180-day delivery rule |
 | [`infra/README.md`](infra/README.md) | the AWS commands you run by hand, and why the IAM user cannot |
 | [`.env.example`](.env.example) | every variable, documented |
@@ -415,6 +460,13 @@ Every path is real. If you are hunting for where something happens, start here.
 | [`tests/test_hashing.py`](tests/test_hashing.py) | what does and does not force a regeneration |
 | [`tests/test_orchestrator_policy.py`](tests/test_orchestrator_policy.py) | retry and terminality decisions |
 | [`tests/test_prep.py`](tests/test_prep.py), [`tests/test_intake.py`](tests/test_intake.py) | normalisation and validation rules |
+| [`tests/test_export_csv.py`](tests/test_export_csv.py) | the BOM — as plain utf-8 the `id` column silently reads as missing |
+| [`tests/test_avatar_prompt.py`](tests/test_avatar_prompt.py) | the motion prompt is hashed as TEXT, so editing it regenerates |
+| [`tests/test_image_prompt.py`](tests/test_image_prompt.py) | geometry survives both prompts; the two-image prompt never names a third image |
+| [`tests/test_card_fields.py`](tests/test_card_fields.py) | the card prints the CONTACT number, never the WhatsApp one |
+| [`tests/test_composite_trim.py`](tests/test_composite_trim.py) | the silent tail is cut, and the billed length is not |
+| [`tests/test_deliver_webhook.py`](tests/test_deliver_webhook.py) | delivery is read from the BODY and fails closed |
+| [`tests/test_cycle.py`](tests/test_cycle.py) | the pull window's timezone, and the wait loop's sleep |
 
 ---
 
@@ -460,11 +512,21 @@ trips first for every vendor. Worst case $6000/day against an observed ~$44 —
 a runaway guard, not a budget. The cap day is IST and both timer cycles share
 one bucket.
 
-Spend is recorded per **attempt** on `stage_runs`, not per job — a job that
-retried the video step really did pay twice, and a per-job total that hides
-that is what lets a retry bug run for a week. `castrol costs` reads the
-`job_costs` view; `vendor_usage` is the independent count the budget guard
-keeps, and the two disagreeing means a paid call happened outside the guard.
+Spend is recorded per **attempt** on `stage_runs`, not per job, because a
+per-job total is what lets a retry bug run for a week unseen. But a retried
+video step does **not** cost twice: every failed vendor job refunds its
+credits, so migration `0013` marks a terminal failure `refunded` and
+`job_costs.cost_usd` counts only what was actually billed, carrying what came
+back as `refunded_usd` so the difference stays auditable. Before that a job
+which failed twice before succeeding read roughly three times its real bill —
+in the expensive-looking direction, out of the view a client quote is built
+from.
+
+`castrol costs` reads the `job_costs` view. `vendor_usage` is the independent
+count the budget guard keeps, and it is deliberately **not** refund-adjusted:
+a cap that forgave failures is one a retry loop can walk straight through. The
+two disagreeing on *reservations* means a paid call happened outside the guard;
+the two disagreeing on *cost* is just refunds, and expected.
 
 ---
 
@@ -482,7 +544,7 @@ keeps, and the two disagreeing means a paid call happened outside the guard.
 | [`infra/README.md`](infra/README.md) | AWS setup commands you run by hand |
 | [`panel/DEPLOY.md`](panel/DEPLOY.md) | how the admin panel reached Vercel, and why |
 | [`spikes/README.md`](spikes/README.md) | the Phase 0 spike list and what each one killed |
-| [`CLAUDE.md`](CLAUDE.md) | working rules and the 32 invariants, each naming the file that enforces it |
+| [`CLAUDE.md`](CLAUDE.md) | working rules and the 33 invariants, each naming the file that enforces it |
 
 ---
 
@@ -491,7 +553,7 @@ keeps, and the two disagreeing means a paid call happened outside the guard.
 The pipeline runs end to end under the orchestrator against real Supabase, real
 S3 and the real CDN. Every stage is implemented; `USE_STUB_STAGES=true` still
 swaps in deterministic fakes to exercise the DAG without spending. Migrations
-0001–0012 are applied.
+0001–0014 are applied.
 
 Verified: seed → prep → composite → checks → publish → deliver on a real job,
 with the delivered CDN URL returning 200. The three paid stages are the same
@@ -515,7 +577,18 @@ Open:
   `kling/ai-avatar-standard`, which returns 720x1280. `kling/ai-avatar-pro`
   returns 1072x1920 and the model id is the only switch — it doubles the
   per-second rate, so this is a cost decision, not an oversight.
-- **Three different video rates are written down in this repo** and they do not
-  all agree. Reconcile against the provider dashboard before quoting any of them
-  to the client.
-- **Geometry drift** — spike 0.3 — remains the open unknown.
+- **Geometry drift** — spike 0.3 — remains the open unknown. Nothing in the
+  existing backend holds a subject at a fixed pixel scale across an image edit,
+  so there is no prior art to lean on. What is no longer missing is the
+  measurement: the plates are 1152x2048, the card rect is fixed at
+  `y 72.27%..87.00%`, and across nine renders the hands sat at 60–70% of frame
+  height. The drift itself has still not been measured per job, and no check
+  looks for it.
+
+Closed since the last revision:
+
+- **The video rates agree.** `common/budget.py` pins $0.036/$0.072 (`cf00e4a`)
+  and every doc here now matches. `docs/TALKING_HEAD_PIPELINE_REFERENCE.md`
+  still carries $0.04/s and is correct to: it records what the OTHER BeHooked
+  stack measured and is not this pipeline's config. Reconcile against the
+  provider dashboard after any batch regardless.

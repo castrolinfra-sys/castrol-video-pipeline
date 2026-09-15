@@ -4,7 +4,11 @@ Overlapping date windows re-return rows and late submissions land in later
 windows, so dedupe is ours. The key is sha256(media_key + phone_e164) where
 media_key is the blob path with the query string stripped: those path segments
 are unique per upload, which makes them a stronger key than anything
-timestamp-derived (`created_at_ist` has no seconds).
+timestamp-derived.
+
+This is not the only anchor. `intake._already_seen` also checks the client's own
+row `id`, which is what stops an overlapping window turning a re-issued media
+url into a UNIQUE violation that fails the whole batch.
 """
 
 from __future__ import annotations

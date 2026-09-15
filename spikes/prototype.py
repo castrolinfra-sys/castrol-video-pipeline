@@ -8,7 +8,7 @@ by hand is what the pipeline will later do properly.
             |
       [1] image   apimart gpt-image-2   person replacement on the plate
             |
-      [2] audio   Cartesia sonic-3.5    Hindi script -> mp3 + probed duration
+      [2] audio   Cartesia sonic-3.6    Hindi script -> mp3 + probed duration
             |
       [3] video   kie kling-avatar-v2   avatar lipsync   (8-20 MINUTES)
             |
@@ -355,7 +355,7 @@ def step_audio(script_text: str, out_dir: pathlib.Path) -> tuple[pathlib.Path, f
                 "Content-Type": "application/json",
             },
             json={
-                "model_id": ENV.get("TTS_MODEL_ID", "sonic-3.5"),
+                "model_id": ENV.get("TTS_MODEL_ID", "sonic-3.6"),
                 "transcript": spoken,
                 "voice": {"mode": "id", "id": need("TTS_VOICE_ID")},
                 "output_format": {
@@ -456,8 +456,9 @@ def main() -> int:
                          "Useful before the plates exist.")
     ap.add_argument("--trim-audio", type=float, metavar="SECONDS",
                     help="send only the first N seconds of the mp3 to the avatar "
-                         "model. Prompt work costs ~$0.04 per output second, so a "
-                         "10s probe is ~$0.40 against ~$1.06 for the full take. "
+                         "model. Prompt work costs $0.036 per output second on "
+                         "standard, so a 10s probe is ~$0.37 against ~$1.06 for "
+                         "the full take. "
                          "Hands, fingers and the chest logo are all judgable in "
                          "the first few seconds.")
     ap.add_argument("--only", choices=["image", "audio", "video", "composite"],
@@ -512,7 +513,7 @@ def main() -> int:
             audio_path = to_mp3(audio_path, out / "audio_trimmed.mp3",
                                 seconds=args.trim_audio)
             say("video", f"trimmed audio to {ffprobe_duration(audio_path):.1f}s "
-                         f"~${ffprobe_duration(audio_path) * 0.04:.2f} render")
+                         f"~${ffprobe_duration(audio_path) * 0.036:.2f} render")
         audio_url = args.audio_url or publish(audio_path)
         step_video(st.get("image_url"), audio_url, out / "video_raw.mp4")
         st.set("video_path", str(out / "video_raw.mp4"))

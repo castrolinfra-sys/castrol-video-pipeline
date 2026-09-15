@@ -1,6 +1,8 @@
 # Castrol MAGNATEC video pipeline — technical design
 
-**Status:** Phase 0 — foundation scaffolded, spikes not yet run
+**Status:** Built and deployed (2026-09-15). Every stage implemented, migrations
+0001–0014 applied, the worker running the CI-built container on EC2 behind a
+systemd timer that is **not yet armed**. `DELIVERY_ENABLED` is still false.
 **Companion doc:** [PROJECT_PLAN.md](PROJECT_PLAN.md) — scope, client decisions, risks
 **This doc:** how it is built. Module layout, interfaces, state machine, invariants.
 
@@ -20,28 +22,41 @@ nothing else.
 
 **Non-goals for this release:** female voice/plates, aspect-ratio variants,
 duplicate-phone handling, any notification or alerting channel, real-time
-generation. Everything is nightly batch.
+generation. Everything is batch, **twice a day** — 00:00 and 12:00 IST.
 
 ---
 
 ## 2. System shape
 
-Four processes, one codebase, one database. Nothing talks to anything else
-except through Postgres.
+**One process, run twice a day.** This section used to describe four
+long-running processes — `intake`, `worker`, `poller`, `reporter` — and that is
+not how it was built. They are four *phases* of one command,
+[`cycle.py`](../src/castrol_pipeline/cycle.py), fired by a systemd timer at
+00:00 and 12:00 IST and the only thing the server executes. A `oneshot` unit
+that exits is what makes an interrupted run harmless: readiness is recomputed
+from `stage_runs`, so the next cycle resumes without remembering anything.
 
-| Process | Trigger | Job |
+| Phase of a cycle | In `cycle.py` | Job |
 |---|---|---|
-| `intake` | nightly cron | pull export window → validate → land photos in S3 → insert submissions + jobs |
-| `worker` | long-running, N instances | claim `stage_runs`, execute one stage, release |
-| `poller` | long-running, 1 instance | reconcile in-flight async vendor tasks (stage C) |
-| `reporter` | end of batch | roll up counts into `batches`, close the run |
+| lock | `db.advisory_lock` | a noon run landing on a still-rendering midnight run logs `cycle.skipped` and exits 0 rather than doubling vendor load |
+| intake | `run_intake` over `intake_window` | pull `[today−1, today+1]` on the CLIENT's calendar → validate → land photos in S3 → insert submissions + jobs |
+| repair | `_repair_orphans` | finish the rows a crash left half-created — a submission with no job, a job with no photo (invariant 33) |
+| reopen | `_reopen_suppressed_deliveries` | re-deliver jobs that completed while `DELIVERY_ENABLED` was false (invariant 32) |
+| schedule | `_schedule_all` | enqueue every job that is not `completed` or `cancelled` |
+| work + poll | `drain_stage` / `poll_once` / `reap` | claim `stage_runs`, execute a stage, release; reconcile in-flight vendor tasks; sleep and repeat until nothing is queued and nothing is in flight |
+| stop | the deadline | 8 hours, inside the 12-hour gap; exits 1 with work outstanding, losing nothing |
 
-The admin panel (Vercel) is read-only over the same Postgres. It is not in the
-critical path and cannot be.
+Concurrency is still per-stage and claiming is still `FOR UPDATE SKIP LOCKED`,
+so more workers remains the answer if composite ever binds — the design below
+is unchanged, it is the process count that was never four.
+
+The admin panel (Vercel) reads the same Postgres and writes exactly one table,
+`job_reports` (client review notes). It is not in the critical path and cannot
+be.
 
 **Why Postgres-as-queue and not SQS/Redis:** the state has to be inspectable and
-resumable anyway, the volume is a few hundred rows a night, and `FOR UPDATE SKIP
-LOCKED` is sufficient. A second piece of infrastructure would buy nothing and
+resumable anyway, the volume is tens of rows a cycle — observed ~40 a day —
+and `FOR UPDATE SKIP LOCKED` is sufficient. A second piece of infrastructure would buy nothing and
 add a way for queue state and DB state to disagree.
 
 ```
@@ -78,6 +93,7 @@ src/castrol_pipeline/
   cli.py               typer entrypoints — every `castrol <cmd>` lands here
   config.py            pydantic-settings; every key, endpoint and pinned id from env
   orchestrator.py      readiness, claiming, retries, job state, the poller
+  cycle.py             the unattended run: lock, window, orphan repair, wait loop
   seed.py              create one job by hand from local files (`castrol seed-job`)
   common/
     db.py              psycopg pool, claim/release helpers, transaction scope
@@ -103,9 +119,14 @@ src/castrol_pipeline/
     vendors.py         apimart / kie / Cartesia HTTP clients, submit + poll
     media.py           ffprobe, mp3, the Pillow card, the ffmpeg composite
 scripts/
-  apply_migration.py   the write path for migrations (the MCP server is read-only)
+  apply_migration.py   the write path for migrations — one file per invocation,
+                       DDL and its ledger row in a single transaction
 supabase/migrations/   numbered SQL, forward-only, no down migrations
 infra/                 AWS setup you run by hand (lifecycle rules, bucket posture)
+deploy/                the systemd units and the EC2 runbook
+panel/                 the Next.js admin panel on Vercel — client-facing, read-only
+plates/                the six approved plate PNGs
+uniform/               the flat uniform shots — the image edit's third input
 spikes/                throwaway; imports src, is never imported BY src
 tests/                 pytest; no network, no database
 ```
@@ -148,13 +169,44 @@ Spikes are otherwise allowed to be ugly.
 Defined in [`0001_init.sql`](../supabase/migrations/0001_init.sql), extended by
 [`0002`](../supabase/migrations/0002_budget_and_seed.sql) (USD budget caps),
 [`0003`](../supabase/migrations/0003_cartesia_tts_no_repair.sql) (Cartesia, no repair
-pass) and [`0004`](../supabase/migrations/0004_runtime_observability.sql) (per-attempt
-cost, `assets.cdn_url`, `job_events`, the `job_costs` view).
+pass), [`0004`](../supabase/migrations/0004_runtime_observability.sql) (per-attempt
+cost, `assets.cdn_url`, `job_events`, the `job_costs` view),
+[`0005`](../supabase/migrations/0005_admin_review_and_export_copy.sql) (`job_reports`,
+the raw export copy),
+[`0006`](../supabase/migrations/0006_real_export_schema.sql) (the REAL export columns —
+`card_phone_e164`, `mechanic_id_verified`, the client's own row `id`),
+[`0007`](../supabase/migrations/0007_usage_views_for_the_panel.sql) and
+[`0008`](../supabase/migrations/0008_job_usage_video_url.sql) (`job_usage` /
+`daily_usage`, duration-only views the panel reads),
+[`0009`](../supabase/migrations/0009_plate_uniform_reference.sql)
+(`plates.uniform_ref_key`),
+[`0010`](../supabase/migrations/0010_bill_on_the_render_not_the_trim.sql) (bill on the
+render, not the trim) and
+[`0014`](../supabase/migrations/0014_ceil_the_billed_second.sql) (ceil that
+render to a whole second, per row, because kie rounds up and charges per job),
+[`0011`](../supabase/migrations/0011_raise_the_daily_cost_caps.sql) /
+[`0012`](../supabase/migrations/0012_raise_the_call_caps_to_match.sql) (the daily caps)
+and [`0013`](../supabase/migrations/0013_refunded_runs.sql) (`stage_runs.refunded`).
+0001–0014 are applied.
+
 Notes on the decisions that are not obvious from the DDL:
+
+**The two phone columns are two different numbers.** `phone_e164` is the
+export's `whatsapp_number` — the DELIVERY key, what we POST back as `phone`,
+never printed and never spoken. `card_phone_e164` is `mechanic_phone_number`,
+the contact number the CARD prints. Confirmed by the client 2026-09-08; they
+are not interchangeable and must not be collapsed back into one column.
+
+**`has_mechanic_id` is derived, not supplied.** The export sends
+`mechanic_id_verified`, a string (`VERIFIED` / `NOT VERIFIED`), which `0006`
+added; the original boolean is kept and populated as `== 'VERIFIED'` by
+`intake/runner.py`. Neither is joined on.
 
 **`job_id` (uuid) is the primary key of the system.** `mechanic_id` from the
 client is stored as an opaque string, carried through, and never joined on —
-it is inconsistently formatted and `has_mechanic_id` disagrees with it.
+it is inconsistently formatted (`MECH|8932442`, bare integers of varying
+length), and the verification flag can disagree with it. The export's own `id`
+is the unique identifier in the feed, and intake requires it.
 `phone_e164` is the *client's* join key because the delivery webhook accepts
 nothing else, but it is not unique on our side (duplicate phones are out of
 scope this release, and making it unique would reject rows we want to keep).
@@ -280,6 +332,17 @@ a 4-minute poll is a worker not doing the other 200 jobs.
 ## 8. Vendor budget
 
 **Implemented in** [`common/budget.py`](../src/castrol_pipeline/common/budget.py) (the wrapper and the rate constants) over `reserve_vendor_call()`, defined in [`0002_budget_and_seed.sql`](../supabase/migrations/0002_budget_and_seed.sql) and amended by [`0003`](../supabase/migrations/0003_cartesia_tts_no_repair.sql) and [`0004`](../supabase/migrations/0004_runtime_observability.sql). Per-attempt spend is recorded on `stage_runs` and summed by the `job_costs` view.
+
+**Reserved is not billed, and `0013` is where the two part company.** Every
+failed vendor job refunds its credits — confirmed against the provider
+dashboard 2026-09-15, with no exception for a rejection or for a task that
+timed out on our side. So `mark_failed` sets `stage_runs.refunded` on any
+terminal failure that carried a cost, and `job_costs.cost_usd` counts only
+unrefunded attempts, surfacing the rest as `refunded_usd`. `vendor_usage` is
+deliberately NOT adjusted: its reservation is what bounds a runaway loop, and a
+budget that gives money back on failure is one a retry loop can walk straight
+through. See invariant 24 — including the note that the reason originally
+written beside it was wrong for this vendor.
 
 Every outbound paid call goes through `common/budget.py`, which calls
 `reserve_vendor_call(vendor, cost_usd, seconds)` and refuses the call on
@@ -469,7 +532,7 @@ config, pinned like a model id.
 POST https://api.cartesia.ai/tts/bytes
 Authorization: Bearer $TTS_API_KEY
 Cartesia-Version: 2026-05-11
-{ "model_id": "sonic-3.5",
+{ "model_id": "sonic-3.6",
   "transcript": "<filled script>",
   "voice": { "mode": "id", "id": "<dashboard voice id>" },
   "output_format": { ... } }
@@ -487,8 +550,11 @@ Two things this stage owns beyond the call, both mandatory:
    duration, and stage C bills per output second — this probe is a billing
    input, not a convenience. Fail closed to the cap, never to zero.
 
-Billing ceils per 1000 characters with a minimum of 1, so a ~550-character
-script bills as a full 1k either way. Roughly $0.10 per video, ~7% of cost.
+**Billing is per CHARACTER with no block rounding** — 1 credit per character
+at 100K credits per $5, i.e. $0.00005/char. This paragraph used to say it ceils
+per 1000 characters with a minimum of 1, and priced the stage at ~$0.10 and ~7%
+of the video. Measured over 11 real runs it is **$0.0226**, about **2%** —
+`USD_PER_TTS_CHAR` in `common/budget.py` is the rate that reserves.
 
 **Language note:** `language_code` was null on every verified Hindi run, and
 the clone call's `language` field does not appear to gate synthesis language.
@@ -496,14 +562,27 @@ Do not assume it needs setting; test before adding it.
 
 ### B — image
 Person replacement on the frozen plate. Prompt is structured
-Change / Preserve / Constrain (see PROJECT_PLAN §4.4). Geometry preservation is
-not cosmetic: the card sits at a fixed pixel position, so subject scale drift
-puts the card over the mechanic's hands.
+Change / Preserve / Constrain (see PROJECT_PLAN §4, "Person replacement").
+Geometry preservation is not cosmetic: the card sits at a fixed pixel position,
+so subject scale drift puts the card over the mechanic's hands.
 
 The plate is a **pose and composition reference, not a frozen asset** — the
-chest and sleeve Castrol marks are re-rendered on a torso whose shape varies
-per person. They cannot be composited. That is why the logo check is
-load-bearing rather than nice-to-have.
+chest mark is re-rendered on a torso whose shape varies per person and cannot
+be composited.
+
+Since the 2026-09-11 artwork there is only the chest mark to protect: the new
+uniforms have **no cap and no sleeve logo**, and the chest panel reads
+`Castrol` alone rather than `Castrol MAGNATEC` on two lines. `IMAGE_PROMPT`'s
+preserve clause used to name all four marks, which asked the model to keep
+branding the garment no longer has — and it duly invented a garbled sleeve
+patch. `image_prompt_version` is therefore **v2**, and unlike the avatar prompt
+(invariant 30) this one is hashed BY VERSION, so it must be bumped by hand or
+open jobs skip stage B and ship the old inventory.
+
+The single-word mark also survives the avatar model's per-frame redraw, which
+the two-line one never did: nine of nine renders on 2026-09-14 read a clean
+`Castrol` where every earlier render smeared `Castrol MAGNAT..`. Months of that
+was blamed on hand motion and on tier resolution. It was the artwork.
 
 **The uniform reference** (migration `0009`) is the answer to that same fact. If
 the garment is going to be redrawn on every job, the model should be copying it
@@ -621,22 +700,41 @@ single design decision that removes text rendering risk from the pipeline.
 
 **Inbound** is [`intake/export_client.py`](../src/castrol_pipeline/intake/export_client.py) and [`intake/runner.py`](../src/castrol_pipeline/intake/runner.py); the photo fetch is [`intake/media.py`](../src/castrol_pipeline/intake/media.py). **Outbound** is `DeliverStage` in [`stages/real.py`](../src/castrol_pipeline/stages/real.py), gated by `DELIVERY_ENABLED`.
 
-> Intake is still written against the pre-CSV export schema. Until it is
-> reworked, create jobs with `castrol seed-job` —
-> [`seed.py`](../src/castrol_pipeline/seed.py).
-
 ### Inbound — export pull
 
 ```
 GET {CLIENT_EXPORT_URL}?from=YYYY-MM-DD&to=YYYY-MM-DD
+Header: apikey: $CLIENT_EXPORT_API_KEY
+→ CSV, 18 columns, UTF-8 with a BOM. Rate limit 100 / 900s.
 ```
 
+**The response is CSV, not JSON**, and the body carries a **UTF-8 BOM** — so
+`export_client.py` decodes `utf-8-sig`. As plain utf-8 the first header becomes
+`﻿id` and `id`, the only unique identifier in the feed, silently reads as
+missing while the other 17 columns parse perfectly. Pinned by
+[`tests/test_export_csv.py`](../tests/test_export_csv.py).
+
+The real header, in order:
+
+```
+id, whatsapp_number, user_name, workshop_name, address, gender,
+mechanic_id_verified, mechanic_id, mechanic_phone_number, background,
+outfit, image_url, image_mime_type, image_validation_status,
+image_rekognition_status, status, createdAt, updatedAt
+```
+
+An unexpected column is carried through to the raw copy untouched rather than
+filtered — `KNOWN_COLUMNS` exists to NOTICE a schema change, not to enforce one.
+
 The pull is **not idempotent**: overlapping windows re-return rows and late
-submissions land in later windows. Dedupe is ours, on
-`submission_hash = sha256(media_key + phone_e164)` where `media_key` is the
-blob path with the query string stripped. Those path segments are unique per
-upload, which makes them a stronger key than anything timestamp-derived —
-`created_at_ist` has no seconds.
+submissions land in later windows. Dedupe is ours, and it has **two** anchors:
+`submission_hash = sha256(media_key + phone_e164)`, where `media_key` is the
+blob path with the query string stripped, and the client's own row `id`. The
+second is what stops an overlapping window turning a re-issued media url into a
+UNIQUE violation that fails the whole batch. Timestamps are ISO 8601
+(`2026-09-07T10:13:49.681Z`, with and without millis) and the format is pinned
+in `EXPORT_TIMESTAMP_FORMAT`, never inferred; the raw string is stored too, so
+a wrong format can be reparsed without re-pulling.
 
 ### Photo fetch — the SAS rule
 
@@ -690,13 +788,13 @@ in-pipeline** — a repaired row is a row whose output nobody can explain.
 | Code | Rule |
 |---|---|
 | `NOT_APPROVED` | `image_validation_status != APPROVED` |
-| `FACE_COUNT_NOT_1` | `image_face_count != 1` (a group photo passes "face detected" and breaks stage B) |
+| `FACE_COUNT_NOT_1` | `image_rekognition_status != FACE_DETECTED`. The name outlived its rule: **the real export carries no `image_face_count`**, only a status string, so the group-photo case this code was named for is no longer detectable at intake and falls to the stage B checks. [`tests/test_intake.py`](../tests/test_intake.py) asserts that gap deliberately |
 | `BAD_MIME` | magic bytes not a recognised image type |
 | `IMAGE_TOO_SMALL` | short edge < 100px |
-| `BAD_PHONE` | not a 10-digit Indian mobile |
-| `NAME_TOO_LONG` | `user_name` > 30 chars (raised from 25, 2026-09-15) |
-| `WORKSHOP_TOO_LONG` | exceeds card width limit (TBC from final artwork) |
-| `BAD_ADDRESS` | not `Locality, City`, or over length |
+| `BAD_PHONE` | `whatsapp_number` or `mechanic_phone_number` not a 10-digit Indian mobile. Both are checked: the client states the card number is never empty, and this is that promise encoded as a check rather than an assumption |
+| `NAME_TOO_LONG` | `user_name` > `MAX_NAME_CHARS` = 30 (raised from 25 on 2026-09-15, after a real row hit 23 — 92% of the old bound, and this code is terminal) |
+| `WORKSHOP_TOO_LONG` | `workshop_name` > `MAX_WORKSHOP_CHARS` = 30 |
+| `BAD_ADDRESS` | empty, or over `MAX_ADDRESS_CHARS` = 90. **Not a shape rule:** the address is free text of any form (client, 2026-09-09), so 90 is a sanity bound that catches a pasted paragraph. It used to require exactly `Locality, City`, which rejected a one-word `Worli` |
 | `GENDER_UNSUPPORTED` | non-male this release |
 | `UNKNOWN_BACKGROUND` / `UNKNOWN_OUTFIT` | value not in the plate mapping |
 | `TEST_ROW` | matched the test heuristics or explicit list |
@@ -723,8 +821,25 @@ generation.
 ```
 Raju Shetty                        full name, bold hero line
 Shetty Motors                      workshop, bold
-Andheri, Mumbai | Mo. 9898989898   locality/city and the whatsapp number
+Andheri, Mumbai | Mo. 9898989898   the address, and the CONTACT number
 ```
+
+**That number is `card_phone_e164` (`mechanic_phone_number`), never
+`phone_e164`.** `_card_fields` read the wrong one until 2026-09-15, so every
+card printed the mechanic's WhatsApp number burned into a video that gets
+shared around. The column existed and intake populated it correctly; only the
+renderer was wrong, which is why nothing looked broken. It falls back to
+`phone_e164` only when the card number is null — the `seed-job` case, where a
+single `--phone` supplies both. Pinned by
+[`tests/test_card_fields.py`](../tests/test_card_fields.py). That fix needed no
+`card_template_version` bump: the value sits inside `media.card_payload`, which
+is already in the composite `input_hash`, so a job whose printed number really
+changes re-burns on its own.
+
+The first line of the address is what the card prints in full; the voice says
+only its last segment (`prep/normalise.py:spoken_place_from`), because Indian
+addresses run most-specific to least and reading it all aloud puts a hospital
+landmark in a 30-second ad.
 
 **Template v2** (`card_template_version` in [`config.py`](../src/castrol_pipeline/config.py))
 runs the panel to the **full frame width** — the client asked for the contact
@@ -778,18 +893,26 @@ composite stage is local ffmpeg and touches no vendor.
 **Implemented in** [`stages/real.py`](../src/castrol_pipeline/stages/real.py) → `ChecksStage`. Results are written to the `checks` table by `orchestrator._persist_result` regardless of outcome.
 
 Run on the final mp4, written to `checks` regardless of outcome. Logged, not
-blocking, this release.
+blocking — a deliberate release decision, not an oversight: there are not yet
+enough real outputs to set a threshold that would not reject good videos, and
+the results are recorded so that threshold can be set from data.
 
-| Check | Why |
-|---|---|
-| card text OCR match | the deterministic path is still worth verifying end-to-end |
-| chest mark template match | re-rendered per job on a varying torso — brand risk |
-| sleeve + cap mark present | same, across both generative passes |
-| face present across sampled frames | catches collapsed generations |
-| subject geometry vs plate | card position depends on scale being preserved |
-| hand skin tone vs face | the most visible tell after the face itself |
-| audio/video duration delta | lipsync desync detector |
-| file integrity, resolution, duration, size | cheap, catches truncated writes |
+**Three checks are implemented.** This table used to list eight, which read as
+a description of what runs; the other five were never built.
+
+| Check | Rule | Why |
+|---|---|---|
+| `duration_matches_audio` | `\|final_ms − audio_ms\| ≤ 1500` | the avatar model is driven by the audio, so a final video that is not the length of the audio means a truncated render |
+| `is_vertical_9x16` | `height > width` | catches a plate or a re-encode that lost its orientation |
+| `bitrate_plausible` | `bytes / seconds > 200 KB/s` | a composite that lost most of its bitrate means the re-encode fell back to defaults |
+
+**Not built, and the risk table should not claim otherwise:** card text OCR
+match, chest-mark template match, face present across sampled frames, subject
+geometry vs plate, hand skin tone vs face. The first two are the brand-risk
+checks named in `PROJECT_PLAN` §13; the geometry one is what spike 0.3 would
+need. Until they exist the chest mark and the hands are protected by the
+artwork and the prompt (§10 B, §10 C), reviewed by eye, and by nothing
+automatic.
 
 ---
 
@@ -802,8 +925,20 @@ Every vendor call logs vendor, model id, task id, latency and outcome.
 
 The batch summary row in `batches` is the single thing to look at each morning:
 pulled / new / rejected / created / completed / failed, plus per-stage failure
-counts. A systemic overnight failure shows up as zero completions rather than
-as silence.
+counts (`castrol report`). A systemic overnight failure shows up as zero
+completions rather than as silence.
+
+**The cycle's two self-heals both log at warning level, on purpose.** A silent
+self-heal is how a recurring crash stays invisible for a month, so
+`_repair_orphans` records `cycle.orphan_job_created` /
+`cycle.orphan_photo_restored` / `cycle.orphan_photo_failed` and
+`_reopen_suppressed_deliveries` records `cycle.redelivering` — see invariants 33
+and 32. Neither is an error; both mean something upstream was interrupted.
+
+`job_costs` reports `cost_usd` net of refunds and `refunded_usd` beside it
+([`0013`](../supabase/migrations/0013_refunded_runs.sql)), so the gap between
+what was reserved and what was billed is auditable rather than invisible. Note
+`castrol costs` does not yet select `refunded_usd`.
 
 No alerting this release, by decision.
 
@@ -819,8 +954,9 @@ No alerting this release, by decision.
 | database | Supabase Postgres |
 | object storage | AWS S3, private |
 | delivery links | CDN in front of S3 |
-| admin panel | Vercel |
-| AI providers | apimart gateway |
+| admin panel | Vercel — live at <https://castrol-pipeline-admin-panel.vercel.app> |
+| AI providers | apimart (image edit), kie (avatar), Cartesia (TTS, direct) |
+| worker image | Docker Hub, `gethooked/castrol-video-pipeline`, built by CI |
 
 The worker runs `castrol cycle` under a systemd timer at 00:00 and 12:00 IST,
 as a container pulled from Docker Hub. The as-built record — resource ids, the
@@ -869,8 +1005,11 @@ Face photos joinable to phone numbers is personal data under DPDP. Practically:
 
 ## 18. Build order
 
-Phase 0 exists to kill assumptions cheaply. Do not start Phase 1 without an
-end-to-end video a human would accept.
+**All of the below has shipped**, and the table is kept as the record of what
+each phase had to prove rather than as a plan. Phase 0 existed to kill
+assumptions cheaply; the exit criterion — one end-to-end video a human would
+accept — was met by [`spikes/prototype.py`](../spikes/prototype.py), which is
+now permanent because the card has one implementation and the spike imports it.
 
 | Phase | Deliverable | Done when |
 |---|---|---|
@@ -884,48 +1023,77 @@ end-to-end video a human would accept.
 | **1.6** composite + checks | card renderer, ffmpeg burn-in, checks | card position verified on all 6 plates |
 | **1.7** publish + deliver | S3, CDN, lifecycle, webhook client | link live, webhook 200 recorded in `deliveries` |
 | **1.8** batch runner | nightly entrypoint, summary, resume | killed mid-batch and restarted without duplicate spend |
-| **2** panel | Vercel read-only over Supabase | failures visible by stage and error code |
+| **2** panel | Vercel over Supabase, writing only `job_reports` | failures visible with a reason — NOT by stage or error code, which a client-facing surface must not show |
 
-1.1 → 1.2 → 1.3 need no vendor at all and should be verified against real
-client data first. 1.4 is provable with stubs. **Only 1.5 spends money**, and
-by then everything around it is known good.
+1.1 → 1.2 → 1.3 need no vendor at all and were verified against real client
+data first. 1.4 is provable with stubs. **Only 1.5 spends money**, and by then
+everything around it was known good.
 
-Plate generation (3 missing Uniform-2 plates) and card artwork are parallel
-tracks, not blockers for 1.1–1.4.
+The plate and card-artwork tracks are also closed: **all six plates exist**,
+were replaced with new artwork on 2026-09-11 (1152x2048, a true 9:16) and
+re-registered on 2026-09-15, and all six carry a uniform reference. The card is
+at template v4. What remains open is not build order — see §19.
 
 ---
 
 ## 19. Open technical questions
 
-Blocking, in order:
+**Actually open, in order:**
 
-1. ~~**TTS provider for stage A.**~~ **Decided: Cartesia, direct API**, with
-   the voice created by hand in the Cartesia dashboard and referenced by id.
-   This is a deliberate exception to "apimart + kie only" — that intersection
-   has no voice-cloning Hindi lane. No cloning call ships in the pipeline. See
-   §10 stage A.
+1. **Geometry / scale drift under a fixed-pixel card** — spike 0.3, and the one
+   question with no prior art: nothing in the existing backend holds a subject
+   at a fixed pixel scale across an image edit. Every path there is "generate a
+   good-looking frame", never "preserve a pixel-locked region".
 
-2. ~~**Script runtime vs model max input duration.**~~ **Answered.**
-   `kling-avatar-v2` has completed at 39s via kie and 60s via fal; the v1
-   sibling has reached 113s. The ~80-word script at 30–40s is comfortably
-   inside proven range and **does not need rewriting**. The real ceiling is
-   *bytes, not seconds* — see invariant 11.
+   What was missing when this was written is now known. The plates are
+   **1152x2048**; the card rect is fixed at **`y 72.27% .. 87.00%`** (template
+   v4); the hands sit at a measured **60–70%** of frame height across nine
+   renders. What is still missing is a per-job measurement: no check compares
+   subject geometry against the plate (§14), so drift would show up as a card
+   over the hands, in a render somebody happens to look at.
 
-3. **Geometry / scale drift under a fixed-pixel card.** Still open, and there
-   is no prior art to lean on: nothing in the existing backend holds a subject
-   at a fixed pixel scale across an image edit — every path there is "generate
-   a good-looking frame", never "preserve a pixel-locked region". Needs the
-   plate dimensions and the card's pixel rect before it can even be reasoned
-   about, and then a real spike.
+2. **Throughput at volume** — the latency half of spike 0.2 is answered
+   (~8–20 min per render, measured), the concurrency half is not. Observed
+   volume is ~40 videos a day against `MAX_CONCURRENCY_VIDEO=10`, and a cycle
+   waits rather than blocking, so this is not pressing. It becomes pressing the
+   first time a batch outlasts the 8-hour deadline.
 
-4. **Timestamp format.** `03-09-2026 14:35` — confirm dd-MM-yyyy with the
-   client before the first real pull.
-3. **Export API auth.** Header scheme still pending from the client.
-4. **`outfit` / `background` enum values.** `Castrol T-shirt` and `SUV`
-   confirmed; the rest unknown, and an unmapped value is a rejected row.
-5. **Card width limits.** Needed to set the `workshop_name` / `address` intake
-   limits, which are currently TBC.
-6. **`has_mechanic_id` semantics.** Reads FALSE while `mechanic_id` is
-   populated. Confirm before the panel displays it as the mechanic's own ID.
-7. **CDN choice** in front of S3 — Cloudflare vs CloudFront. Only matters if
-   cryptographic expiry is required rather than unguessability.
+3. **No automated brand or geometry check.** §14 lists what is built; the
+   chest-mark and hand checks the risk table in `PROJECT_PLAN` §13 names as
+   mitigations do not exist. Either build them or stop calling them mitigations.
+
+**Closed, with the answer, so they are not reopened by accident:**
+
+- ~~**TTS provider for stage A.**~~ **Cartesia, direct API**, voice created by
+  hand in the dashboard and referenced by id. A deliberate exception to
+  "apimart + kie only" — that intersection has no voice-cloning Hindi lane. No
+  cloning call ships. See §10 A.
+- ~~**Script runtime vs model max input duration.**~~ `kling-avatar-v2` has
+  completed at 39s via kie and 60s via fal; the ~80-word script at 30–40s is
+  comfortably inside proven range and **does not need rewriting**. The real
+  ceiling is *bytes, not seconds* — invariant 11.
+- ~~**Timestamp format.**~~ **ISO 8601** (`2026-09-07T10:13:49.681Z`, with and
+  without millis), confirmed against a live pull 2026-09-08.
+  `EXPORT_TIMESTAMP_FORMAT=iso8601` names the standard instead of restating a
+  pattern, and is still never inferred. The earlier `03-09-2026 14:35` /
+  dd-MM-vs-MM-dd worry belonged to the pre-CSV schema.
+- ~~**Export API auth.**~~ An **`apikey` header**. Live since 2026-09-08.
+- ~~**`outfit` / `background` enum values.**~~ Mapped in
+  [`prep/plates.py`](../src/castrol_pipeline/prep/plates.py) against the
+  client's own combination map (2026-09-09). Backgrounds 1|2|3 **are** the SUV,
+  sedan and hatchback — the ids were always right, the lookup keys were not.
+  Uniform ids are `u1_tshirt` / `u2_uniform`, the client's number and the
+  client's word; `polo` / `half_shirt` were ours and one of the two values is
+  literally a t-shirt. The client's phrasings are accepted as aliases, and an
+  unmapped value is still a rejected row rather than a guess.
+- ~~**Card width limits.**~~ Name ≤ 30, workshop ≤ 30, address ≤ 90 as a sanity
+  bound — §12. The rect is fixed and the type scales to fit (invariant 27), so
+  these bound what the renderer is asked to fit rather than expressing a layout.
+- ~~**`has_mechanic_id` semantics.**~~ The export sends
+  `mechanic_id_verified`, a string; the boolean is derived from it (§4). Neither
+  is joined on and the panel does not display either as the mechanic's own ID —
+  it searches on `mechanic_id` as opaque text.
+- ~~**CDN choice.**~~ **CloudFront**, over an unguessable key, with no Origin
+  Path — which is why the full key including `castrol/` must appear in the URL
+  (invariant 20). Cryptographic expiry was not required; the 180-day lifecycle
+  rule is what ends a link (invariant 22).

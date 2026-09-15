@@ -19,9 +19,10 @@ CLI profile from `BeHooked/Webapp` or `behooked_studio_backend` for those.
 **AWS is the exception, and this paragraph used to get it wrong.** It said AWS
 was a separate login too. It is not: `castrol-local` lives in account
 **872515254882**, which is the shared BeHooked account — the same one running
-`behooked-studio-backend-prod`, `hooked-micro-apps`, `hooked-nodeflow`,
-`orchestrator-prod` and `caption-studio`, and holding `behooked-dokploy-backups`
-and `cached-brolls` next to our bucket. What IS dedicated is the **IAM user**
+`behooked-studio-backend-prod`, `hooked-micro-apps`, `hooked-nodeflow` and
+`orchestrator-prod` (plus `caption-studio`, stopped), and holding
+`behooked-dokploy-backups`, `cached-brolls` and `caption-studio` next to our
+bucket. What IS dedicated is the **IAM user**
 and the **bucket**, and that is the whole of the separation. Anything created in
 this account is created next to four running production services, so scope it
 by name and by security group and assume nothing is yours alone. Corrected
@@ -77,8 +78,9 @@ uv run castrol doctor
 ```
 
 **The whole run, unattended.** This is what the EC2 timer fires at 00:00 and
-12:00 IST and the only command the server executes: pull the window, schedule,
-then work and wait until every job is terminal or the deadline hits. See
+12:00 IST and the only command the server executes: lock, pull the window,
+repair half-created intake rows, reopen suppressed deliveries, schedule, then
+work and wait until every job is terminal or the deadline hits. See
 [`deploy/`](deploy/README.md). Holds a database advisory lock, so a second
 cycle starting on top of a running one exits instead of doubling the load on a
 paid vendor. **SPENDS.**
@@ -98,7 +100,7 @@ Idempotent on (photo, phone). `--address` is what the CARD prints; what the
 voice SAYS defaults to the last segment of it, override with `--spoken-place`.
 
 ```bash
-uv run castrol seed-job --photo spikes/in/mechanic2.jpg --plate spikes/in/plate_bg2.png --uniform-ref spikes/in/uniform_u1.png --name "Amit Kumar" --workshop "Ganesh Car Service" --address "Beturkar Pada, Opposite New National Hospital, Andheri" --phone 9773128990 --uniform u1_tshirt --background bg2_dark_sedan
+uv run castrol seed-job --photo spikes/in/mechanic2.jpg --plate spikes/in/plate_bg2.png --uniform-ref uniform/u1_tshirt.png --name "Amit Kumar" --workshop "Ganesh Car Service" --address "Beturkar Pada, Opposite New National Hospital, Andheri" --phone 9773128990 --uniform u1_tshirt --background bg2_dark_sedan
 ```
 
 Register plate artwork for one combination, and the uniform reference the image
@@ -143,6 +145,9 @@ uv run castrol intake --from 2026-09-01 --to 2026-09-01
 → [`cli.py`](src/castrol_pipeline/cli.py) and
 [`seed.py:describe`](src/castrol_pipeline/seed.py), reading `job_costs` and
 `job_events` from [`0004`](supabase/migrations/0004_runtime_observability.sql).
+`job_costs.cost_usd` is what was actually BILLED — refunded attempts are
+excluded from it and carried separately as `refunded_usd`
+([`0013`](supabase/migrations/0013_refunded_runs.sql), invariant 24).
 
 ```bash
 uv run castrol show <job-id>
@@ -490,7 +495,7 @@ rules, not application code.
 |---|---|
 | Every `castrol <cmd>` | [`src/castrol_pipeline/cli.py`](src/castrol_pipeline/cli.py) |
 | Claiming, retries, poller, **all writes to `jobs`** | [`orchestrator.py`](src/castrol_pipeline/orchestrator.py) |
-| The unattended run: lock, window, wait loop | [`cycle.py`](src/castrol_pipeline/cycle.py) |
+| The unattended run: lock, window, orphan repair, wait loop | [`cycle.py`](src/castrol_pipeline/cycle.py) |
 | systemd units + the EC2 runbook | [`deploy/`](deploy/README.md) |
 | **The EC2 deployment as built** — ids, decisions, what was verified | [`docs/EC2_DEPLOYMENT.md`](docs/EC2_DEPLOYMENT.md) |
 | The eight real stages | [`stages/real.py`](src/castrol_pipeline/stages/real.py) |
@@ -619,6 +624,11 @@ invariant 3, `require_cost_estimate` on kie, and per-attempt cost recording.
 The cap day is **IST**, and both timer cycles fall inside one — a heavy 00:00
 run starves the 12:00 one.
 
+**The caps count refunded calls; the cost view does not.** That asymmetry is
+deliberate (0013, invariant 24): a guard that forgave every failure is one a
+retry loop can walk straight through, while a quote built on reservations
+rather than on billings overstates the bill.
+
 ## Invariants
 
 These are the things that break silently and expensively. Do not relax them
@@ -693,9 +703,12 @@ personal data — face photos joinable to phone numbers.
 
 ---
 
-The rest come from [`docs/TALKING_HEAD_PIPELINE_REFERENCE.md`](docs/TALKING_HEAD_PIPELINE_REFERENCE.md),
-which is prod-measured evidence from the existing BeHooked backend. Each one
-below is a failure someone already paid for.
+**11–26 come from
+[`docs/TALKING_HEAD_PIPELINE_REFERENCE.md`](docs/TALKING_HEAD_PIPELINE_REFERENCE.md)**,
+prod-measured evidence from the existing BeHooked backend — each one a failure
+someone there already paid for. **27 onwards were measured on THIS pipeline**,
+and are numbered in the order they were learned rather than grouped by subject.
+They are listed in numeric order; cite them by number.
 
 **11. Ship MP3 to the avatar model, never WAV.**
 *`stages/media.py:to_mp3`, called by `AudioStage`*
@@ -734,9 +747,12 @@ read — the cost of being wrong that way is a retry POSTing an identical
 **15. Copy provider result URLs to our storage immediately.**
 *`stages/vendors.py:download`, called in each stage's `poll()`*
 Treat a provider URL as valid for the duration of the handler and no longer.
-Mirror constraint on the input side: presigned URLs expire in 1 hour, so a job
-that sits queued longer submits a dead URL. Presign at submit time, not at
-enqueue time.
+Mirror constraint on the input side: `presigned_get_url` signs for **6 hours**
+(`expires_in=21600`, the default and the only value any caller uses), so a job
+that sits queued longer than that submits a dead URL. Presign at submit time,
+not at enqueue time. Six and not one because the video step can queue for 20
+minutes and then take 20 more, and a link that dies mid-render fails the stage
+for a reason no log explains.
 
 **16. Hand providers a URL that returns bytes on the first GET.**
 *`common/s3.py:presigned_get_url`, `stages/media.py:normalise_for_apimart`*
@@ -792,12 +808,31 @@ reaper only touches `claimed`. A synchronous paid stage that outlived
 `STAGE_CLAIM_TIMEOUT_S` would be reaped and re-run while the first call was
 still in flight, and billed twice.
 
-**24. Record cost at SUBMIT, per attempt.**
-*`common/db.py:mark_running`, `0004_runtime_observability.sql`*
-The submit is what spent the money; a task that never completes still cost
-money, so recording only on success hides exactly the failures worth counting.
-Cost lives on `stage_runs`, never aggregated onto the job — a job that retried
-the video step really did pay twice.
+**24. Record cost at SUBMIT, per attempt — and record the refund too.**
+*`common/db.py:mark_running` / `mark_failed`, `0004_runtime_observability.sql`, `0013_refunded_runs.sql`*
+The submit is what reserved the money, and recording only on success hides
+exactly the failures worth counting. Cost lives on `stage_runs`, never
+aggregated onto the job.
+
+**The REASON this invariant used to give — "a task that never completes still
+cost money" — is wrong for this vendor, and must not be restated.** Every
+failed vendor job refunds its credits, confirmed against the provider dashboard
+2026-09-15, with no exception for a rejection or for a task that timed out on
+our side. So `mark_failed` sets `stage_runs.refunded` in the same statement
+that makes the run terminal, and only when the run actually reserved something
+(a free stage stays false). `job_costs` excludes refunded attempts from
+`cost_usd` and reports them as `refunded_usd` — visible rather than silently
+dropped. Before 0013 a job that failed twice before succeeding read roughly
+three times its real bill, in the expensive-looking direction, out of the view
+a client quote is built from.
+
+Two consequences worth holding onto. A retry WITHIN one row overwrites the
+previous attempt's `cost_usd`, which read as losing a charge and is exactly
+right: the earlier attempt was refunded, so the last one is the only figure
+ever billed. And `vendor_usage` is deliberately NOT refund-adjusted — its
+reservation is what bounds a runaway loop, and a budget that gives money back
+on failure is one a retry loop can walk straight through, so the daily caps
+still count failed attempts.
 
 **25. Recording an event must never fail a stage.**
 *`common/events.py`, pinned by `tests/test_events.py`*
@@ -812,22 +847,6 @@ double charge on the retry. Note the failure handler logs `failed_event=`, not
 A presigned URL is a bearer credential for one object; the events table is read
 by the admin panel and quoted in support threads. `_scrub()` keeps the path and
 drops the signature.
-
-**31. A plate is never edited in place - and the uniform reference rides on the
-plate row for the same reason.**
-*`seed.py:register_plate`, `0009_plate_uniform_reference.sql`*
-Replacing a combination's artwork RETIRES the active row and inserts a new one.
-Updating in place looks harmless and silently rewrites history: `jobs.plate_id`
-keeps pointing at the same row, so every job built from the old artwork starts
-claiming it used the new. There is no per-job plate asset to fall back on, so
-that link is the only record of what a video was actually made from — and the
-client intends to revise this artwork.
-
-`uniform_ref_key` therefore lives on the plate row, not in a mutable table keyed
-on `uniform_id`: revising the reference would otherwise rewrite what every
-shipped job claims it was built from. Re-registering does NOT inherit the
-previous row's reference — omitting `--uniform-ref` means a plate without one,
-so the absence of a flag cannot mean two different things depending on history.
 
 **27. The card is rendered by Pillow, after generation, and is free.**
 *`stages/media.py:render_card`, geometry pinned by `config.card_template_version`*
@@ -853,6 +872,11 @@ half-covered, and invariant 29 no longer gets to assume the card hides them.
 `card_template_version` covers the composite OUTPUT, not just the card artwork,
 so anything that changes what composite emits bumps it. It is in the composite
 `input_hash`, so bumping re-burns every open job — free, local ffmpeg only.
+
+**28. `DELIVERY_ENABLED` gates the only irreversible action.**
+*`stages/real.py:DeliverStage`, `config.py:delivery_enabled`*
+The client relays the POST to a real mechanic over WhatsApp. While false the
+stage logs exactly what it would have sent. Turning it on is a deliberate act.
 
 **29. The avatar `prompt` steers motion — it is not decorative.**
 *[`stages/vendors.py`](src/castrol_pipeline/stages/vendors.py) `AVATAR_PROMPT`,
@@ -901,10 +925,21 @@ motion. Hashing the text removes the failure mode. The price is real: editing
 `AVATAR_PROMPT` re-runs the video stage on every job that has not completed, at
 $0.036 per output second on standard. Completed jobs are never rescheduled.
 
-**28. `DELIVERY_ENABLED` gates the only irreversible action.**
-*`stages/real.py:DeliverStage`, `config.py:delivery_enabled`*
-The client relays the POST to a real mechanic over WhatsApp. While false the
-stage logs exactly what it would have sent. Turning it on is a deliberate act.
+**31. A plate is never edited in place - and the uniform reference rides on the
+plate row for the same reason.**
+*`seed.py:register_plate`, `0009_plate_uniform_reference.sql`*
+Replacing a combination's artwork RETIRES the active row and inserts a new one.
+Updating in place looks harmless and silently rewrites history: `jobs.plate_id`
+keeps pointing at the same row, so every job built from the old artwork starts
+claiming it used the new. There is no per-job plate asset to fall back on, so
+that link is the only record of what a video was actually made from — and the
+client intends to revise this artwork.
+
+`uniform_ref_key` therefore lives on the plate row, not in a mutable table keyed
+on `uniform_id`: revising the reference would otherwise rewrite what every
+shipped job claims it was built from. Re-registering does NOT inherit the
+previous row's reference — omitting `--uniform-ref` means a plate without one,
+so the absence of a flag cannot mean two different things depending on history.
 
 **32. A suppressed delivery still SUCCEEDS, so the backlog needs reopening.**
 *`cycle.py:_reopen_suppressed_deliveries`*
@@ -917,6 +952,29 @@ would silently strand the entire backlog, and the failure looks like nothing at
 all. Each cycle reopens those jobs once delivery is enabled — the stage is free
 and the client stores `{phone, videoLink}` idempotently (invariant 14), so a
 repeat post is harmless where a missed one is a video nobody ever gets.
+
+**33. Intake writes one mechanic across THREE transactions, so a crash leaves
+a half-created row that no error anywhere reports.**
+*`cycle.py:_repair_orphans`*
+Each db helper opens its own transaction — the submission, then the job, then
+the photo asset — so a process killed between them (deadline, deploy, instance
+reboot) leaves either a valid submission with no job, or a job with no source
+photo. Neither state is an error: no stage fails, no row is marked, the batch
+counters look right, and the mechanic simply never gets a video. The only way
+it surfaces is somebody asking why, which is exactly why it is code and not a
+runbook note — and continuous deploy makes the interruption routine.
+
+Both halves are free and idempotent (`ON CONFLICT (submission_id)` and
+`ON CONFLICT (s3_key)` against the existing constraints), so every cycle
+repairs rather than waiting to be noticed, and every repair records a
+`job_event` at warning level — a silent self-heal is how a recurring crash
+stays invisible for a month. The photo is refetched from `image_url_raw`
+byte-exact (invariant 1); a SAS url that has since expired cannot be recovered
+and is logged as `cycle.orphan_photo_failed` and skipped, because failing the
+whole cycle over one unreachable blob helps nobody.
+
+Known gaps, both open: no test covers it, and `photos_restored` increments on
+an insert that `ON CONFLICT` may have skipped.
 
 ---
 

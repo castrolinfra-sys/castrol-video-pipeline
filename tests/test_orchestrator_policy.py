@@ -102,5 +102,5 @@ class TestRedoBlastRadius:
         from castrol_pipeline.orchestrator import downstream_of
         from castrol_pipeline.stages.base import PipelineStage as S
 
-        # A card-only revision must never re-run the $0.04/s step.
+        # A card-only revision must never re-run the $0.036/s step.
         assert S.VIDEO not in downstream_of(S.COMPOSITE)

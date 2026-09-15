@@ -110,8 +110,8 @@ def _spoken_text(ctx: JobContext) -> str:
 def _card_fields(ctx: JobContext) -> dict[str, str]:
     """What is printed on the card.
 
-    The FULL address, not the spoken `Locality, City` — the card is read, so
-    the landmark is useful there; the voiceover says only the area.
+    The FULL address as submitted, not the spoken form — the card is read, so
+    the landmark is useful there; the voiceover says only the last segment.
     Phone is card-only and never spoken.
 
     The phone is `card_phone_e164` — the export's `mechanic_phone_number`, his
@@ -401,7 +401,8 @@ class VideoStage:
 
         The cost of that is real and worth stating: editing AVATAR_PROMPT
         re-runs the video stage on every job that has not completed, at
-        $0.04 per output second. Completed jobs are never rescheduled.
+        $0.036 per output second on standard and $0.072 on pro. Completed jobs
+        are never rescheduled.
         """
         return {
             # Redundant with model_id, which is hashed separately — kept so

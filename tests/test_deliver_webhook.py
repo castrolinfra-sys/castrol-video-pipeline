@@ -2,9 +2,9 @@
 
 Invariant 14 is usually quoted about the vendor gateways; it applies to the
 delivery POST too, and the consequence there is worse. There is no failure
-channel back to the client (PROJECT_PLAN section 12), so a delivery recorded as
-successful that never happened is a video the mechanic never gets and nobody
-ever looks for.
+channel back to the client (PROJECT_PLAN section 6, TECH_DESIGN section 11), so
+a delivery recorded as successful that never happened is a video the mechanic
+never gets and nobody ever looks for.
 """
 
 from __future__ import annotations

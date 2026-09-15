@@ -54,8 +54,17 @@ second and those frames were generated either way, so the trim is a free
 presentation choice made afterwards and must not reduce what we recover.
 
 `job_usage.video_seconds` names `kind = 'video_raw'` explicitly for that reason
-(migration `0010`) and rounds to one decimal. It used to take `max()` across raw
-and final, which got the same answer only because raw happens to be longer.
+(migration `0010`). It used to take `max()` across raw and final, which got the
+same answer only because raw happens to be longer.
+
+**And it is CEILED per render, not rounded** (migration `0014`). kie charges per
+output second and rounds up, so 24.2s is billed as 25s, and the panel must show
+that number and no other. Two things the old one-decimal shape got wrong, both
+fixable only in the view: `round(27.04, 1)` is `27.0`, which ceils to 27 where
+kie billed 28 — a second SQL had already discarded; and `daily_usage` ceiled the
+SUM instead of summing the ceilings, so nine renders billed at 250s showed as
+246s, a total matching no invoice. `format.ts` still calls `Math.ceil`, now a
+no-op, kept as the guard for the day someone changes the view back.
 
 ## kie credits
 
@@ -77,9 +86,16 @@ actually billed, read out of `stage_runs` on 2026-09-15:
 | `image` | 11 | $0.0140 | — | — |
 
 Billed render length 27–31s, **average 29.4s** — so **$1.093 all-in per video**.
-Use $1.10 for planning and $1.15 if you want a margin. Retry pressure is real
-but small: only `video` has ever retried, one row of eleven reaching three
-attempts.
+Use $1.10 for planning and $1.15 if you want a margin.
+
+**Retry pressure costs nothing.** Only `video` has ever retried, one row of
+eleven reaching three attempts — and every failed vendor job refunds its
+credits, so those attempts are marked `refunded` and excluded from
+`job_costs.cost_usd` (migration `0013`, confirmed against the provider dashboard
+2026-09-15). Read the per-stage figures above as reservations at submit; what
+was BILLED is the unrefunded subset. The daily caps in `vendor_usage` still
+count failed attempts, deliberately: a cap that forgave failures is one a retry
+loop can walk straight through.
 
 ## The discrepancy is closed
 
