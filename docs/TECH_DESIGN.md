@@ -126,7 +126,7 @@ everything local and free.
 | `prep` | `stages/real.py` → `PrepStage`, using `prep/script.py` | — | free |
 | `audio` (A) | `stages/real.py` → `AudioStage`, via `stages/vendors.py:cartesia_tts` | Cartesia | $0.00005/char |
 | `image` (B) | `stages/real.py` → `ImageStage`, via `vendors.py:apimart_submit/_poll` | apimart | $0.014 |
-| `video` (C) | `stages/real.py` → `VideoStage`, via `vendors.py:kie_submit/_poll` | kie | $0.04/s |
+| `video` (C) | `stages/real.py` → `VideoStage`, via `vendors.py:kie_submit/_poll` | kie | $0.036/s |
 | `composite` (D) | `stages/real.py` → `CompositeStage`, using `stages/media.py` | — | free |
 | `checks` | `stages/real.py` → `ChecksStage` | — | free |
 | `publish` | `stages/real.py` → `PublishStage`, using `common/s3.py` | S3 + CDN | free |
@@ -290,15 +290,29 @@ Every outbound paid call goes through `common/budget.py`, which calls
 
 | Step | Model / lane | Cost | Share |
 |---|---|---:|---:|
-| Image edit | `gpt-image-2-max`, apimart, 2K | $0.012 | 0.8% |
-| TTS | ~550 chars, billed as 1k | $0.100 | 6.6% |
-| Avatar | `kling-avatar-v2` standard, kie, 35s | **$1.400** | **92.6%** |
-| | `pro` variant instead | $2.912 total | avatar = 96% |
+| Image edit | `gpt-image-2-max`, apimart, 2K | $0.0140 | 1.3% |
+| TTS | ~450 chars, per character | $0.0226 | 2.1% |
+| Avatar | `kling-avatar-v2` standard, kie, 29.4s | **$1.0567** | **96.7%** |
+| | **all-in per video** | **$1.093** | |
+| | `pro` variant instead | $2.150 total | avatar = 98% |
+
+Measured over 11 real renders on 2026-09-15, not modelled. The earlier row
+(`$0.012` / `$0.100` billed as a 1k block / `$1.400` at $0.04/s) predated both
+the rate correction in `cf00e4a` and the discovery that Cartesia bills per
+character with no block rounding.
 
 A call-count cap bounds volume but bounds *spend* only within ~3× (script
-length) × ~2× (standard vs pro). So `vendor_limits` carries both, and
-`daily_cost_cap_usd` is the one that matters. Capping the image and TTS steps
-is rounding error — those caps exist purely as runaway guards.
+length) × ~2× (standard vs pro), which is why `vendor_limits` carries both.
+That reasoning stands; the conclusion drawn from it has been **inverted in
+practice**. Migration `0011` raised `daily_cost_cap_usd` to $5000 on
+`kie_video` and $500 on the other two, so the cost cap is now the runaway guard
+and `daily_call_cap` is the operative ceiling — 200 kie renders, ~$211/day. If
+you tighten spend again, move the call cap or move both; moving the cost cap
+alone no longer does anything until it drops back under ~$211.
+
+The cap day is **IST** (`now() at time zone 'Asia/Kolkata'` inside
+`reserve_vendor_call`), so both the 00:00 and 12:00 IST cycles spend from one
+bucket.
 
 `require_cost_estimate` is set on every per-second vendor: a reservation of
 zero is **refused**. This closes a specific trap — `kling-avatar-v2`'s
@@ -327,6 +341,24 @@ hold one — async stages submit, store `vendor_task_id`, and release to
 `running`, which the reaper does not touch. **The image stage is currently
 `is_async = False` and should become async when the real stage lands**, since
 apimart is poll-only with a 2700s ceiling and an observed 644s worst case.
+
+These are two different clocks and they are often confused:
+
+| | bounds | applies to | value |
+|---|---|---|---|
+| `STAGE_CLAIM_TIMEOUT_S` | a dead WORKER | rows in `claimed` | 900s (15m) |
+| `VENDOR_TASK_TIMEOUT_S` | a dead VENDOR TASK | rows in `running` | 7200s (2h) |
+
+The claim timeout is the stuck-worker reaper: a process killed by OOM, SIGKILL
+or an instance stop leaves its row `claimed` forever, and nothing else would
+ever pick it up. Fifteen minutes is generous — nothing here takes more than a
+second between claiming and submitting.
+
+The vendor timeout was raised 90m → 2h on 2026-09-15. It errs long on purpose,
+and for the same double-charge reason: cost is recorded at SUBMIT (invariant
+24), so a task failed early has already been paid for and its retry pays a
+second time. Waiting on a genuinely dead task costs wall clock only, and the
+cycle deadline (8h) is the real backstop.
 
 ---
 
@@ -647,7 +679,7 @@ in-pipeline** — a repaired row is a row whose output nobody can explain.
 | `BAD_MIME` | magic bytes not a recognised image type |
 | `IMAGE_TOO_SMALL` | short edge < 100px |
 | `BAD_PHONE` | not a 10-digit Indian mobile |
-| `NAME_TOO_LONG` | `user_name` > 25 chars |
+| `NAME_TOO_LONG` | `user_name` > 30 chars (raised from 25, 2026-09-15) |
 | `WORKSHOP_TOO_LONG` | exceeds card width limit (TBC from final artwork) |
 | `BAD_ADDRESS` | not `Locality, City`, or over length |
 | `GENDER_UNSUPPORTED` | non-male this release |

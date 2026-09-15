@@ -350,7 +350,7 @@ Applied at INTAKE. Non-compliant rows are rejected with a reason code and return
 | `image_mime_type` | Recognised image type; confirm against magic bytes, not the declared value |
 | Photo | Minimum 100px short edge. Sanity check only. |
 | `mechanic_phone_number` | 10-digit Indian mobile, normalise to E.164 |
-| `user_name` | ≤25 chars, no honorifics |
+| `user_name` | ≤30 chars, no honorifics (was 25; a real 2026-09-15 row hit 23) |
 | `workshop_name` | ≤ card width limit (TBC from final card artwork) |
 | `address` | `Locality, City`, ≤ length limit (TBC), abbreviations expanded, no PIN, no shop/plot number, no numerals |
 | `gender` | Male only this release |

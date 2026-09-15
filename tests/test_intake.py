@@ -13,6 +13,7 @@ from castrol_pipeline.common.errors import RejectCode
 from castrol_pipeline.intake.dedupe import compute_submission_hash, media_key_from_url
 from castrol_pipeline.intake.media import sniff_mime
 from castrol_pipeline.intake.validate import (
+    MAX_NAME_CHARS,
     Rejection,
     ValidRow,
     parse_export_timestamp,
@@ -108,7 +109,7 @@ class TestValidation:
             ({"whatsapp_number": "12345"}, RejectCode.BAD_PHONE),
             ({"mechanic_phone_number": ""}, RejectCode.BAD_PHONE),
             ({"id": ""}, RejectCode.MISSING_FIELD),
-            ({"user_name": "R" * 26}, RejectCode.NAME_TOO_LONG),
+            ({"user_name": "R" * (MAX_NAME_CHARS + 1)}, RejectCode.NAME_TOO_LONG),
             ({"workshop_name": "W" * 31}, RejectCode.WORKSHOP_TOO_LONG),
             ({"address": ""}, RejectCode.BAD_ADDRESS),
             ({"address": "x" * 91}, RejectCode.BAD_ADDRESS),

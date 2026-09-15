@@ -28,9 +28,16 @@ job at **~32 seconds per video**, nearly all of it the ffmpeg composite:
     prep 1s | audio <1s | image submit <1s | video submit <1s
     | composite 28s | checks 1s | publish 1s | deliver 1s
 
-At 8 hours that is roughly 900 videos per cycle. The binding limit at a hundred
-a day is `vendor_limits.daily_cost_cap_usd` - $50 on kie is about 44 videos -
-and that is a deliberate guard, not an accident to route around.
+At 8 hours that is roughly 900 videos per cycle, so the deadline is never what
+stops a realistic batch. The binding limit is `vendor_limits`, and since
+migration 0011 it is the CALL cap rather than the cost cap: `daily_call_cap` is
+200 on kie, about 200 videos a day at ~$1.06 each. The cost cap was raised to
+$5000 and is now a runaway guard, not a budget. Both fail closed, and both are
+deliberate guards rather than accidents to route around.
+
+Note the cap day is IST, and the 00:00 and 12:00 IST cycles fall inside the
+same one - a batch that consumes the day's allowance at midnight leaves the
+noon cycle nothing.
 
 Nothing here is a new source of truth. Readiness is still computed from
 `stage_runs`, so a cycle killed at any point — deadline, deploy, instance

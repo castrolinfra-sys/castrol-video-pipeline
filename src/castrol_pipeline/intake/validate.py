@@ -26,7 +26,15 @@ from ..prep.plates import UnknownBackground, UnknownOutfit, resolve_combo
 
 #: Card width limits. These bound what the card renderer will ever be asked to
 #: fit; the renderer scales content down as a block within them.
-MAX_NAME_CHARS = 25
+#:
+#: Names were bounded at 25 and the 2026-09-15 export ran to 23 - 92% of the
+#: bound, on a real row. A limit that close is one long name away from
+#: rejecting a mechanic for having a long name, and NAME_TOO_LONG is terminal:
+#: rejected rows are never repaired (invariant 8), so that person simply never
+#: gets a video. Raised to 30, which is what the workshop field has always
+#: allowed. This costs type size on the card, not layout - the rect is fixed
+#: and the renderer scales to fit (invariant 27).
+MAX_NAME_CHARS = 30
 MAX_WORKSHOP_CHARS = 30
 #: The address is free text (client, 2026-09-09), so this is a SANITY bound and
 #: not a layout one - it catches a pasted paragraph, it does not enforce a

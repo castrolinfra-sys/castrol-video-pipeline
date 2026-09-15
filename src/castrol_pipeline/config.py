@@ -145,9 +145,17 @@ class Settings(BaseSettings):
     delivery_enabled: bool = False
 
     #: Seconds an in-flight vendor task may run before the poller fails it.
-    #: kie has been seen at 20 minutes; 90 is a ceiling, not an expectation.
+    #: kie has been seen at 20 minutes; 2h is a ceiling, not an expectation.
     #: Without it a lost task sits `running` forever and never reports.
-    vendor_task_timeout_s: int = 5400
+    #:
+    #: Raised 90m -> 2h on 2026-09-15, ahead of the first real batch. Failing a
+    #: task the vendor is still working on is the expensive mistake in both
+    #: directions: the render is already paid for (cost is recorded at SUBMIT,
+    #: invariant 24) and the retry pays for it a second time. Waiting longer on
+    #: a genuinely dead task costs nothing but wall clock, and the cycle has 8h
+    #: of that. Still well inside the deadline, so a hung task cannot outlive
+    #: the run that submitted it.
+    vendor_task_timeout_s: int = 7200
 
     @property
     def video_is_pro(self) -> bool:

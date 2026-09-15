@@ -65,10 +65,30 @@ second, which at $0.036/s gives 207. `CLAUDE.md` used to say 166, read off a
 refusal message — wrong by a quarter, and the kind of number worth re-measuring
 after any batch.
 
-## Known discrepancy
+## Measured, not modelled
 
-`common/budget.py` pins `$0.04/s` standard and `$0.08/s` Pro, so every reservation
-over-estimates by **11.1%** against the rates above. The direction is safe — the
-daily cap trips early rather than late — but `job_costs` will read ~11% high and
-will not match the vendor invoice. Reconcile against the provider dashboard
-before these numbers are quoted to anyone.
+The table above is the model. This is what 11 real renders across 9 jobs
+actually billed, read out of `stage_runs` on 2026-09-15:
+
+| stage | runs | avg | min | max |
+|---|---|---|---|---|
+| `video` | 11 | **$1.0567** | $0.9720 | $1.1200 |
+| `audio` | 11 | $0.0226 | $0.0216 | $0.0236 |
+| `image` | 11 | $0.0140 | — | — |
+
+Billed render length 27–31s, **average 29.4s** — so **$1.093 all-in per video**.
+Use $1.10 for planning and $1.15 if you want a margin. Retry pressure is real
+but small: only `video` has ever retried, one row of eleven reaching three
+attempts.
+
+## The discrepancy is closed
+
+This section used to record that `common/budget.py` pinned `$0.04/$0.08` and
+over-reserved by 11.1%. `cf00e4a` corrected the constants to `$0.036/$0.072`,
+so reservations now match the tables above and `job_costs` reconciles against
+the vendor invoice. Re-measure after any batch regardless; a rate that drifted
+once can drift again.
+
+`docs/TALKING_HEAD_PIPELINE_REFERENCE.md` still shows $0.04/s and that is
+correct there — it records what the other BeHooked stack measured, and is not
+a source of truth for this pipeline's config.

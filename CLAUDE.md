@@ -215,9 +215,17 @@ call.
 The gate is unchanged and is still middleware alone: `currentAdmin()` never was
 the gate, it only decided whether to draw the header. The header cannot be
 forged — middleware `delete`s any inbound copy unconditionally before setting
-the verified one, and its matcher runs on every non-static path, so no render is
-reachable without passing through it. Verified by curl: a forged
+the verified one, and its matcher runs on every path that renders anything, so
+no render is reachable without passing through it. Verified by curl: a forged
 `x-castrol-admin` carrying a real allowlisted address still 307s to `/login`.
+
+**The matcher's exclusion list is a security boundary, not housekeeping.** It
+holds `_next/static`, `_next/image`, `favicon.ico` and `icon.svg` — and
+`icon.svg` had to be added, because the app-router icon is served from a real
+route and was therefore gated like a page: signed out, the browser asked for the
+favicon and got a 307 to `/login`, so the one page a signed-out visitor sees was
+the one with no icon. Nothing may be added to that list unless it is a static
+asset with nothing to leak.
 
 **There is no emailed-link route.** `/auth/callback` is gone: magic link is
 replaced and password recovery is not used — a forgotten password is reset in
@@ -400,7 +408,7 @@ keyed on the file's name so a re-run cannot claim a second apply. It did not
 always: 0001–0003 were registered by the Supabase tooling and 0004–0005 were
 not, and a HALF-populated ledger is worse than none, because `supabase db push`
 reads it and would treat applied migrations as pending. Both were backfilled;
-0001–0010 are now applied and registered.
+0001–0011 are now applied and registered.
 
 ### AWS
 
@@ -521,11 +529,23 @@ standing.
 was sent. There is no separate `VIDEO_USE_PRO` — there was, and setting one
 without the other silently under-reserved by 2x on the only expensive step.
 
-**Three different rates are written down in this repo and they do not agree.**
-`common/budget.py` pins $0.04/$0.08, which over-reserves by 11.1% — safe in
-direction (the daily cap trips early) but `job_costs` reads ~11% high and will
-not match the vendor invoice. Reconcile against the provider dashboard before
-quoting any of these to the client.
+**The rates agreed on 2026-09-15 and this paragraph used to say they did
+not.** `common/budget.py` was corrected in `cf00e4a` to $0.036/$0.072 and now
+matches the tables above; the claim that it pins $0.04/$0.08 and over-reserves
+by 11.1% outlived the fix by five days and was still being quoted as current.
+`job_costs` reads true. Reconcile against the provider dashboard after any
+batch anyway — `docs/TALKING_HEAD_PIPELINE_REFERENCE.md` still carries $0.04/s,
+correctly, because it records what the OTHER stack measured and is not our
+config.
+
+**Caps are `vendor_limits`, and the cost cap is no longer the binding one.**
+Raised 2026-09-15 by migration `0011` to $5000 on `kie_video` and $500 on the
+other two, which makes every cost cap a runaway guard rather than a budget.
+What bounds a day's spend now is `daily_call_cap`, left where it was: 200 kie
+renders (~$211/day at the measured $1.0567 each), 600 image calls (~$8.40), 600
+TTS calls (~$13.56). Read the CALL cap when asking what a day can cost. The cap
+day is **IST**, and both timer cycles fall inside one — a heavy 00:00 run
+starves the 12:00 one.
 
 ## Invariants
 
@@ -874,7 +894,7 @@ a deploy. The review gate that removes is real — see the Docker / CI section.
 **The pipeline runs end to end under the orchestrator** against real Supabase,
 real S3 and the real CDN. All eight stages are implemented in
 `stages/real.py`; `USE_STUB_STAGES=true` still swaps in deterministic fakes to
-exercise the DAG without spending. Migrations 0001–0010 are applied.
+exercise the DAG without spending. Migrations 0001–0011 are applied.
 
 Verified on a real job: seed → prep → composite → checks → publish → deliver,
 with the delivered CDN URL returning 200. The three paid stages are the same

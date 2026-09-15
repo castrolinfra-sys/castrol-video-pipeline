@@ -80,12 +80,26 @@ The limit you will actually hit first is money:
 uv run castrol costs
 ```
 
-`vendor_limits.daily_cost_cap_usd` is **$50 on `kie_video`**, which is about 44
-videos a day at $1.12 each. That is a deliberate runaway guard, not an
-oversight — raising it is a decision about spend, taken in the database:
+Since migration `0011` (2026-09-15) the **cost** cap is no longer what stops
+you. It is $5000 on `kie_video` and $500 on the other two — a runaway guard for
+a loop that escaped every other check, not a budget. The real ceiling is
+`daily_call_cap`, deliberately left alone:
+
+| vendor | call cap | × measured unit cost | effective ceiling / day |
+|---|---|---|---|
+| `kie_video` | 200 | $1.0567 per render | **~$211** |
+| `apimart_image` | 600 | $0.014 per call | ~$8.40 |
+| `tts` | 600 | $0.0226 per call | ~$13.56 |
+
+So when asking "how much can this spend today", read the CALL cap. Raising a
+cost cap without the call cap beside it changes nothing.
+
+Both caps fail closed, and the cap day is **IST** — the 00:00 and 12:00 IST
+cycles draw on the same bucket, so a heavy midnight batch starves the noon one.
+Changing either is a decision about spend, taken in the database:
 
 ```sql
-UPDATE vendor_limits SET daily_cost_cap_usd = 150 WHERE vendor = 'kie_video';
+UPDATE vendor_limits SET daily_call_cap = 400 WHERE vendor = 'kie_video';
 ```
 
 If composite ever does become the constraint, the fix is more workers, not a

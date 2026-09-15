@@ -39,7 +39,7 @@ mechanic. The phone number appears on the card but is never read aloud.
   Cartesia         apimart gpt-image-2 @2K
   sonic-3.6        person replacement on the plate
         └───────┬───────┘
-  [C] video    kie kling-avatar-standard    (8-20 MINUTES)     $0.04 / second
+  [C] video    kie kling-avatar-standard    (8-20 MINUTES)     $0.036 / second
         │
   [D] composite  Pillow + ffmpeg, burn in the lower-third      free
         │
@@ -64,7 +64,7 @@ local and free.
 | `prep` | `PrepStage` | — | [`prep/script.py`](src/castrol_pipeline/prep/script.py), [`prep/normalise.py`](src/castrol_pipeline/prep/normalise.py) | free |
 | `audio` **A** | `AudioStage` | [`vendors.py`](src/castrol_pipeline/stages/vendors.py) `cartesia_tts` | [`media.py`](src/castrol_pipeline/stages/media.py) `to_mp3`, `probe_duration_seconds` | $0.00005/char |
 | `image` **B** | `ImageStage` | [`vendors.py`](src/castrol_pipeline/stages/vendors.py) `apimart_submit` / `apimart_poll` | — | $0.014 |
-| `video` **C** | `VideoStage` | [`vendors.py`](src/castrol_pipeline/stages/vendors.py) `kie_submit` / `kie_poll` | — | $0.04/s |
+| `video` **C** | `VideoStage` | [`vendors.py`](src/castrol_pipeline/stages/vendors.py) `kie_submit` / `kie_poll` | — | $0.036/s |
 | `composite` **D** | `CompositeStage` | — | [`media.py`](src/castrol_pipeline/stages/media.py) `render_card`, `composite` | free |
 | `checks` | `ChecksStage` | — | — | free |
 | `publish` | `PublishStage` | — | [`common/s3.py`](src/castrol_pipeline/common/s3.py) `copy`, `cdn_url` | free |
@@ -448,11 +448,15 @@ Rates: apimart `gpt-image-2` $0.014/image @2K; kie $0.036/output second standard
 and $0.072 pro; Cartesia 1 credit per **character** at 100K credits per $5
 ($0.00005/char, no block rounding).
 
-**`common/budget.py` pins $0.04/$0.08, not these.** Reservations therefore
-over-estimate by 11.1% — safe in direction, since the daily cap trips early
-rather than late, but `job_costs` reads ~11% high and will not match the vendor
-invoice. Reconcile against the provider dashboard before quoting a number to
-anyone.
+`common/budget.py` pins exactly these — corrected in `cf00e4a`, so a
+reservation and an invoice agree and `job_costs` can be quoted. Measured over
+11 real renders: 27–31s billed, avg 29.4s, **$1.0567 per render and $1.093
+all-in per video**. Re-measure after any batch.
+
+**Caps live in `vendor_limits` and the COST cap is not the binding one.**
+Migration `0011` raised it to $5000 on `kie_video` and $500 elsewhere, which
+turns it into a runaway guard. `daily_call_cap` is the real ceiling — 200 kie
+renders is ~$211/day. The cap day is IST and both timer cycles share it.
 
 Spend is recorded per **attempt** on `stage_runs`, not per job — a job that
 retried the video step really did pay twice, and a per-job total that hides
@@ -485,7 +489,7 @@ keeps, and the two disagreeing means a paid call happened outside the guard.
 The pipeline runs end to end under the orchestrator against real Supabase, real
 S3 and the real CDN. Every stage is implemented; `USE_STUB_STAGES=true` still
 swaps in deterministic fakes to exercise the DAG without spending. Migrations
-0001–0010 are applied.
+0001–0011 are applied.
 
 Verified: seed → prep → composite → checks → publish → deliver on a real job,
 with the delivered CDN URL returning 200. The three paid stages are the same

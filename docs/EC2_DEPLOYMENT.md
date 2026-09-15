@@ -71,8 +71,9 @@ conclusion. Worked from the measurements instead:
 
 - composite is **28s of ffmpeg per video** and is the only CPU-bound step;
   everything else is ~1s
-- throughput is capped by money, not time — `vendor_limits.daily_cost_cap_usd`
-  is **$50/day on `kie_video`**, about 44 videos
+- throughput is capped by money, not time — `vendor_limits` bounds kie at
+  **200 calls/day**, about 200 videos at the measured $1.0567 each (the cost
+  cap went to $5000 in migration `0011` and is now only a runaway guard)
 
 So the real daily load is roughly **21 minutes of ffmpeg**. The decisive
 detail: `t3.small`, `t3.medium` and `t3.large` all have **2 vCPUs** — they
@@ -248,7 +249,10 @@ midnight.
 
   Submissions arrive continuously — the window grew by one row in eleven
   seconds while this was being measured — so the real figure on the day will be
-  higher. The `$50/day` kie cap will not halt a batch this size.
+  higher. The 2026-09-15 pull bore that out: **44 rows in the 14-day window, 42
+  valid, ~$46 all-in**, which would have hit the original $50 cap with one
+  retry to spare. That is what prompted migration `0011`; the ceiling is now
+  the 200-call kie cap, ~$211/day.
 
 - **Root was used for provisioning.** Switch to `castrol-server` for
   administration; root cannot be scoped, revoked per-action, or attributed to a
