@@ -151,6 +151,123 @@ def _schedule_all() -> int:
     return enqueued
 
 
+def _repair_orphans() -> dict[str, int]:
+    """Finish the intake rows a crash left half-created.
+
+    Intake writes one mechanic across THREE separate transactions - the
+    submission, then the job, then the photo asset - because each db helper
+    opens its own. A process killed between them (deadline, deploy, instance
+    reboot) leaves either a valid submission with no job, or a job with no
+    source photo.
+
+    Neither state is an error anywhere. No stage fails, no row is marked, the
+    batch counters look right, and the mechanic simply never gets a video. The
+    only way it surfaces today is somebody asking why.
+
+    Both halves are free and idempotent, so this runs every cycle rather than
+    waiting to be noticed. A photo whose SAS url has since expired cannot be
+    recovered - that is logged and skipped, because the alternative is failing
+    the whole cycle over one unreachable blob.
+    """
+    from .common.s3 import get_storage, job_key
+    from .intake.media import MediaError, fetch_photo
+    from .intake.runner import _resolve_plate
+
+    settings = get_settings()
+    repaired = {"jobs_created": 0, "photos_restored": 0, "photos_unrecoverable": 0}
+
+    for row in db.fetch_all(
+        """
+        SELECT s.id, s.outfit_choice, s.background_choice, s.batch_id
+          FROM submissions s
+          LEFT JOIN jobs j ON j.submission_id = s.id
+         WHERE s.validation_status = 'valid'
+           AND j.id IS NULL;
+        """
+    ):
+        created = db.fetch_one(
+            """
+            INSERT INTO jobs (submission_id, script_version, voice_id, plate_id, batch_id)
+            VALUES (%(sub)s, %(script)s, %(voice)s, %(plate)s, %(batch)s)
+            ON CONFLICT (submission_id) DO NOTHING
+            RETURNING id;
+            """,
+            {
+                "sub": str(row["id"]),
+                "script": settings.script_version,
+                "voice": settings.tts_voice_id or "stub-voice",
+                "plate": _resolve_plate(
+                    row["outfit_choice"] or "", row["background_choice"] or ""
+                ),
+                "batch": row["batch_id"],
+            },
+        )
+        if created:
+            repaired["jobs_created"] += 1
+            record_event(
+                "cycle.orphan_job_created",
+                job_id=str(created["id"]),
+                level="warning",
+                submission_id=str(row["id"]),
+            )
+
+    for row in db.fetch_all(
+        """
+        SELECT j.id, s.image_url_raw
+          FROM jobs j
+          JOIN submissions s ON s.id = j.submission_id
+          LEFT JOIN assets a ON a.job_id = j.id AND a.kind = 'source_photo'
+         WHERE a.id IS NULL
+           AND j.status <> 'cancelled'
+           AND coalesce(s.image_url_raw, '') <> '';
+        """
+    ):
+        job_id = str(row["id"])
+        try:
+            # Byte-exact, never rebuilt from parts (invariant 1).
+            photo = fetch_photo(row["image_url_raw"])
+        except MediaError as exc:
+            repaired["photos_unrecoverable"] += 1
+            log.warning("cycle.orphan_photo_failed", job_id=job_id, error=str(exc)[:200])
+            record_event(
+                "cycle.orphan_photo_failed",
+                job_id=job_id,
+                level="error",
+                reason=exc.reason,
+            )
+            continue
+
+        obj = get_storage().put(
+            job_key(job_id, f"source.{photo.extension}"),
+            photo.data,
+            content_type=photo.mime_type,
+        )
+        db.execute(
+            """
+            INSERT INTO assets (job_id, kind, s3_key, sha256, bytes,
+                                mime_type, width, height)
+            VALUES (%(job)s, 'source_photo', %(key)s, %(sha)s,
+                    %(bytes)s, %(mime)s, %(w)s, %(h)s)
+            ON CONFLICT (s3_key) DO NOTHING;
+            """,
+            {
+                "job": job_id,
+                "key": obj.key,
+                "sha": obj.sha256,
+                "bytes": obj.bytes,
+                "mime": photo.mime_type,
+                "w": photo.width,
+                "h": photo.height,
+            },
+        )
+        repaired["photos_restored"] += 1
+        record_event("cycle.orphan_photo_restored", job_id=job_id, level="warning")
+
+    if any(repaired.values()):
+        log.warning("cycle.repaired_orphans", **repaired)
+    return repaired
+
+
 def _reopen_suppressed_deliveries() -> list[str]:
     """Re-deliver jobs that finished while DELIVERY_ENABLED was false.
 
@@ -250,6 +367,7 @@ def run_cycle(
                 log.error("cycle.intake_failed", error=str(exc))
                 record_event("cycle.intake_failed", level="error", error=str(exc)[:500])
 
+        summary["repaired"] = _repair_orphans()
         summary["redelivering"] = len(_reopen_suppressed_deliveries())
         summary["scheduled"] = _schedule_all()
 
