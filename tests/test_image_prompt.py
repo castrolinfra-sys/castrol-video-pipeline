@@ -87,6 +87,75 @@ class TestItIsStillOneChange:
             assert verb not in lowered, f"{verb!r} reads as a second change"
 
 
+class TestTheFaceIsRenderedAsAPhotograph:
+    """v3, 2026-09-16. Bearded mechanics came back messy.
+
+    The preserve clause already said "carry over their facial hair", and that
+    is what made the gap easy to miss: naming a feature tells the model the
+    feature is there, not that its STRUCTURE has to be read off the reference.
+    Given only the noun, this model draws a beard-shaped mass — soft at the
+    jawline, smeared into the lips, its density and grey invented.
+
+    So the prompt asks for the structure by name, and the constrain half blocks
+    the two ways "beautify" shows up on a face: smoothed skin and tidied hair.
+    """
+
+    def test_the_structure_of_the_facial_hair_is_named(self):
+        # Each of these is a property the model was inventing rather than
+        # copying. The noun alone is what v2 had, and it was not enough.
+        for flag in (True, False):
+            prompt = vendors.image_prompt(with_uniform_ref=flag).lower()
+            for detail in ("outline", "length", "density", "patchiness", "grey"):
+                assert detail in prompt, f"{detail!r} missing (uniform_ref={flag})"
+
+    def test_the_hair_is_sourced_from_the_mechanic_not_invented(self):
+        # Same ordinal discipline as everything else in this prompt: the beard
+        # comes from image two, the same place the face does.
+        prompt = vendors.image_prompt(with_uniform_ref=True)
+        assert "from the second reference image exactly as they already are" in prompt
+
+    def test_a_clean_shaven_man_is_protected(self):
+        # A paragraph about beards is an invitation to add one. This is the
+        # sentence that stops "render his facial hair as real hair" being read
+        # as a reason to put hair on a face that has none.
+        for flag in (True, False):
+            assert "clean-shaven man stays clean-shaven" in vendors.image_prompt(
+                with_uniform_ref=flag
+            )
+
+    def test_retouching_is_blocked_in_both_prompts(self):
+        # Invariant-6-adjacent: these live in CONSTRAIN, the half that lists
+        # the ways this model is known to drift, so they must survive the
+        # third image exactly as the geometry clauses do.
+        for flag in (True, False):
+            prompt = vendors.image_prompt(with_uniform_ref=flag)
+            assert "Do not smooth, airbrush or even out the skin" in prompt
+            assert "Do not tidy, trim, thin, reshape or fill in the facial hair" in prompt
+
+    def test_it_is_still_exactly_one_change(self):
+        """The naturalness paragraph describes the replacement, it does not add
+        a second edit — the failure mode invariant 29 records, and the same one
+        TestItIsStillOneChange pins for the uniform clause."""
+        prompt = vendors.image_prompt(with_uniform_ref=True)
+        assert prompt.index("Make EXACTLY ONE change") < prompt.index(
+            "ordinary, unretouched photograph"
+        ), "the paragraph must sit inside the change half, not after Constrain"
+        lowered = prompt.lower()
+        for verb in ("regrow", "add a beard", "groom", "restyle his hair"):
+            assert verb not in lowered, f"{verb!r} reads as a second change"
+
+
+class TestVersionGatesTheRewrite:
+    def test_the_prompt_version_was_bumped(self):
+        """This prompt is hashed by VERSION, not by its own text (unlike
+        AVATAR_PROMPT, invariant 30). Editing the words without bumping leaves
+        every open job matching its old image row, so the rewrite ships
+        nothing while the code says otherwise."""
+        from castrol_pipeline.config import Settings
+
+        assert Settings().image_prompt_version == "v3"
+
+
 class TestSubmitOrdering:
     """The URLs must go out in the order the prompt names them."""
 

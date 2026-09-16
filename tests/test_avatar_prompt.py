@@ -171,3 +171,51 @@ class TestHandsStayDown:
         low = AVATAR_PROMPT.lower()
         assert "articulation" in low
         assert "head nods" in low or "head" in low
+
+
+class TestHeadMotionIsReduced:
+    """r5, 2026-09-16, and the client asked for it by name.
+
+    r4 asked for "subtle head nods". A nod is a repeating movement, and this
+    model performs a requested movement for the whole take rather than
+    occasionally — the same mechanism that looped r1's hand gesture, pointed at
+    the head. What ships is a mechanic bobbing continuously for 25 seconds.
+
+    The head is now told where to be (level, facing camera) and how much it may
+    move (slightly), which is exactly the shape that worked for the hands: name
+    the rest position positively, then bound the motion.
+    """
+
+    def test_no_nodding_is_requested(self):
+        # Any word naming a repeatable head movement gets that movement on a
+        # loop. "nod" is the one that shipped; the rest are its neighbours.
+        low = AVATAR_PROMPT.lower()
+        for asks_for_motion in ("nod", "tilt", "shake", "sway", "turns his head"):
+            assert asks_for_motion not in low, (
+                f"{asks_for_motion!r} asks for head motion; r5 exists because "
+                "this model repeats a requested movement for the whole take"
+            )
+
+    def test_the_head_is_placed_and_bounded(self):
+        low = AVATAR_PROMPT.lower()
+        assert "head that stays level" in low, "name the rest position"
+        assert "facing camera" in low
+        assert "only slight natural movement" in low, "bounded, not frozen"
+
+    def test_the_head_is_not_frozen(self):
+        """Same argument as the hands, and it is not a nicety.
+
+        A motionless head over a moving mouth reads as a photograph with a
+        talking head pasted on — which is the defect the inherited "." default
+        produced. Reducing motion to zero trades one visible failure for
+        another, so the bound has to permit movement while limiting it.
+        """
+        low = AVATAR_PROMPT.lower()
+        for freezes in ("head still", "motionless", "perfectly still", "rigid"):
+            assert freezes not in low, f"{freezes!r} freezes the head"
+
+    def test_something_else_carries_the_expression(self):
+        # With the hands low and the head steady, the eyes and mouth are all
+        # the life left in the frame, so the prompt has to ask for them.
+        low = AVATAR_PROMPT.lower()
+        assert "engaged face" in low

@@ -922,10 +922,27 @@ as severed by the panel. The card moved DOWN to 72.27% (invariant 27) and the
 hands are now on screen for the whole take. The prompt is the only thing keeping
 them presentable.
 
-Two rules survive from the revisions that bought them: never pair a placement
+**The HEAD is now bounded too — r5, 2026-09-16, at the client's request.**
+r4 asked for `subtle head nods`, and a nod is a repeating movement: this model
+performs a requested movement for the whole take rather than occasionally, so
+what shipped was a mechanic bobbing continuously for 25 seconds. That is the
+same mechanism that looped r1's hand gesture, pointed at the head. The head is
+now given a rest position and a bound — level, facing camera, `only slight
+natural movement` — which is the shape that already worked for the hands: name
+the position positively, then limit the motion rather than forbidding it.
+
+It is bounded and NOT frozen, for the same reason the hands are not: a
+motionless head over a moving mouth is a photograph with a talking head pasted
+on, which is what the inherited `"."` produced. And with the hands low and the
+head steady, the eyes and mouth are the only life left in the frame, so `a
+warm, engaged face` replaces the nods — asking for the expression directly
+rather than getting it as a side effect of movement.
+
+Three rules survive from the revisions that bought them: never pair a placement
 with an exclusion naming the same region (r2's "at chest height ... clear of the
-chest logo" is how a hand ended up on the logo), and never ask for individuated
-fingers (r2's "counting gesture" is where the claw came from).
+chest logo" is how a hand ended up on the logo), never ask for individuated
+fingers (r2's "counting gesture" is where the claw came from), and never name a
+repeatable movement — of the hands or the head — unless you want it on a loop.
 
 **30. The avatar prompt is hashed as TEXT, not as a version string.**
 *`stages/real.py:VideoStage._params`*
@@ -1142,9 +1159,23 @@ have **no cap and no sleeve logo, and the chest panel reads `Castrol` alone** �
 not `Castrol MAGNATEC` on two lines. `IMAGE_PROMPT`'s preserve clause used to
 name all four marks, so it was asking the model to keep branding the garment no
 longer has, and the model duly invented a garbled sleeve patch.
-`image_prompt_version` is therefore **v2**. Unlike the avatar prompt (invariant
-30) that one is hashed by VERSION, so it must be bumped by hand or open jobs
-skip stage B and ship the old inventory.
+That was **v2**. Unlike the avatar prompt (invariant 30) this one is hashed by
+VERSION, so it must be bumped by hand or open jobs skip stage B and ship the
+old inventory.
+
+**`image_prompt_version` is now v3 (2026-09-16), for naturalness on faces.**
+The preserve clause said "carry over their facial hair", and that is what made
+the gap easy to miss: naming a feature tells the model the feature is there,
+not that its STRUCTURE has to be read off the reference. Given only the noun, a
+bearded mechanic came back with a beard-shaped mass — soft at the jawline,
+smeared into the lips, its density and grey invented. The CHANGE half now has a
+third paragraph asking for the structure by name (outline, jawline edge,
+length, density, patchiness, growth direction, grey), for hair resolved as
+individual hairs, and for skin with its own texture rather than a plastic
+sweep. The CONSTRAIN half blocks the two ways `beautify` shows up on a face —
+smoothing the skin, tidying the hair. It ends with "a clean-shaven man stays
+clean-shaven", because a paragraph about beards is otherwise an invitation to
+add one. Pinned by `tests/test_image_prompt.py`.
 
 A second, unlooked-for win: the single-word chest mark survives the avatar
 model's per-frame redraw where the two-line one never did. Nine of nine renders

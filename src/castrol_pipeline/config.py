@@ -115,7 +115,13 @@ class Settings(BaseSettings):
     # the garment no longer has — which is how a garbled sleeve patch got
     # invented. Bumping is what makes an open job regenerate instead of skip:
     # unlike the avatar prompt (invariant 30) this one is hashed by version.
-    image_prompt_version: str = "v2"
+    # v3 (2026-09-16): naturalness. "carry over their facial hair" named the
+    # feature without asking for its structure, and a bearded mechanic came
+    # back with a beard-shaped mass rather than a beard. The prompt now asks
+    # for the outline, edge, density, patchiness and grey by name, for skin
+    # with its own texture, and blocks smoothing and tidying in the constrain
+    # half. Bumping is what makes an open job regenerate instead of skip.
+    image_prompt_version: str = "v3"
     # v2: full-width band, address and phone on one contact line, fixed rect
     # with the type scaled to fit. In the composite input_hash, so bumping it
     # re-renders and re-burns every open job. That is free — the composite

@@ -580,9 +580,23 @@ uniforms have **no cap and no sleeve logo**, and the chest panel reads
 `Castrol` alone rather than `Castrol MAGNATEC` on two lines. `IMAGE_PROMPT`'s
 preserve clause used to name all four marks, which asked the model to keep
 branding the garment no longer has — and it duly invented a garbled sleeve
-patch. `image_prompt_version` is therefore **v2**, and unlike the avatar prompt
-(invariant 30) this one is hashed BY VERSION, so it must be bumped by hand or
-open jobs skip stage B and ship the old inventory.
+patch. That was **v2**, and unlike the avatar prompt (invariant 30) this one is
+hashed BY VERSION, so it must be bumped by hand or open jobs skip stage B and
+ship the old inventory.
+
+**v3 (2026-09-16) is about the face, not the garment.** "Carry over their
+facial hair" names a feature without asking for its structure, and given only
+the noun this model draws a beard-shaped mass — soft at the jawline, smeared
+into the lips, density and grey invented rather than read off the reference.
+The CHANGE half gained a paragraph naming the structure (outline, jawline edge,
+length, density, patchiness, growth direction, grey), asking for hair resolved
+as individual hairs and skin with its own texture; the CONSTRAIN half blocks
+smoothing the skin and tidying the hair, which are how `beautify` shows up on a
+face. "A clean-shaven man stays clean-shaven" closes the obvious way a
+paragraph about beards goes wrong. The paragraph sits INSIDE the change half —
+placed after `Constrain` it would read as a second edit and contradict
+`Make EXACTLY ONE change`, the self-argument invariant 29 records degrading the
+avatar prompt.
 
 The single-word mark also survives the avatar model's per-frame redraw, which
 the two-line one never did: nine of nine renders on 2026-09-14 read a clean
@@ -644,9 +658,26 @@ It also asks the hands to stay apart and clear of one another - the client's
 words after reviewing a batch. Hands that meet are where this model renders
 fingers worst, because it has to invent an occlusion. Seven of nine renders on
 2026-09-14 held them apart for the whole take; two converged at the belt near
-the end. What carries the video is the face, which is the part this model has
-always done well: the inherited "." default gave correct lipsync and natural
-head motion, and only the hands were ever the problem.
+the end.
+
+**The head is bounded on the same principle — r5, 2026-09-16, at the client's
+request.** r4 asked for "subtle head nods", and a nod is a repeating movement:
+this model performs a requested movement for the whole take rather than
+occasionally, so the renders bobbed continuously for 25 seconds. That is r1's
+looped gesture again, pointed at the head. The prompt now gives the head a rest
+position and a bound — level, facing camera, "only slight natural movement" —
+which is the shape that already worked for the hands: name the position
+positively, then limit the motion rather than forbidding it. The general rule,
+and the third one this prompt has bought with paid renders: never name a
+repeatable movement unless you want it on a loop.
+
+Bounded is not frozen, for the same reason it is not for the hands. What
+carries the video is the face, which is the part this model has always done
+well: the inherited "." default gave correct lipsync, and only the hands were
+ever the problem. But with the hands low and the head steady, the eyes and
+mouth are the only life left in the frame, so "a warm, engaged face" replaces
+the nods — asking for the expression directly rather than taking it as a side
+effect of movement.
 
 **The card used to hide all of this. It no longer does.** The argument was that
 hands resting at ~71-78% of frame height sat behind an opaque overlay across

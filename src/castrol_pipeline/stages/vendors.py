@@ -98,6 +98,25 @@ def voice_tts(text: str, *, voice_id: str, model_id: str, dst: Path) -> Path:
 #: it, then the ways it is known to drift. Geometry preservation is invariant 6
 #: - the card is burned in at a fixed fraction of frame height, so subject
 #: scale drift lands it on the mechanic's hands.
+#:
+#: v3 (2026-09-16) adds a third paragraph to the CHANGE half, because "carry
+#: over their facial hair" was not enough for a bearded mechanic. Naming a
+#: feature tells the model the feature is there; it does not tell it to copy
+#: the feature's structure, and this model answers an unqualified "beard" with
+#: a beard-shaped mass - soft at the jawline, smeared into the lips, its
+#: density and grey invented rather than read off the reference. The paragraph
+#: therefore asks for the STRUCTURE by name (outline, edge, length, density,
+#: patchiness, growth direction, grey) and for hair resolved as hair.
+#:
+#: It opens on the general case - an ordinary, unretouched photograph of an
+#: ordinary man - because the same drift that softens a beard also plastics
+#: the skin, and the constrain half now blocks both directly: smoothing the
+#: skin and tidying the facial hair are the two ways "beautify" shows up here.
+#: The clean-shaven sentence is there so the instruction cannot be read as a
+#: reason to add hair that the reference photo does not have.
+#:
+#: Unlike AVATAR_PROMPT this text is hashed by VERSION, not by its own bytes,
+#: so editing it does nothing until config.image_prompt_version is bumped.
 _PROMPT_PRESERVE = """\
 Reproduce this image EXACTLY as-is. Same camera framing, same crop, same \
 subject scale, same head position, same shoulder line, same belt line, same \
@@ -113,7 +132,16 @@ tone, facial hair, body build, proportions and posture, and keep all of it \
 consistent with one another throughout the frame. Their HANDS, wrists and \
 forearms are theirs too: the age, skin tone, thickness and hair of the hands \
 must match that same person, not the hands in the first image. Keep their \
-eyeglasses if they wear any.\
+eyeglasses if they wear any.
+
+The result is an ordinary, unretouched photograph of an ordinary man. Render \
+his skin as real skin, with its own texture, pores, lines and marks, and \
+render his facial hair as real hair. Take his beard, moustache and stubble \
+from the second reference image exactly as they already are there: the same \
+outline and jawline edge, the same length, density, patchiness, direction of \
+growth and amount of grey, resolved as individual hairs that meet the skin at \
+a clean edge, with the mouth and lips reading clearly through it. A \
+clean-shaven man stays clean-shaven.\
 """
 
 #: Sent ONLY when the job's plate has a uniform reference registered against it.
@@ -149,8 +177,9 @@ frame all come from the first image and do not change.\
 
 _PROMPT_CONSTRAIN = """\
 Do not reframe. Do not zoom. Do not move or rescale the subject within the \
-frame. Do not redesign, restyle, idealise or beautify anything. Do not invent \
-new text, logos or branding.\
+frame. Do not redesign, restyle, idealise or beautify anything. Do not \
+smooth, airbrush or even out the skin. Do not tidy, trim, thin, reshape or \
+fill in the facial hair. Do not invent new text, logos or branding.\
 """
 
 
@@ -253,46 +282,48 @@ def image_poll(task_id: str) -> str | None:
 #: prompt steers expression, head movement and hand gesture, and the field is
 #: required (max 5000 chars).
 #:
-#: THIS IS r1, RESTORED 2026-09-10, and the restore is deliberate. r1 is the
-#: text that was live when the render the client approved was shared to them on
-#: Tuesday 08 Sep. Later revisions r2-r5 each chased a fault seen in a later
-#: render; the client's own verdict outranks all of them, so we are back here.
+#: The comment that used to sit here said this text was r1 restored verbatim.
+#: It has not been r1 since r4 stopped asking for hand gestures - r1 asks for
+#: "natural open-palm hand gestures", which is the one thing the text below is
+#: built to avoid. The revision history, as the renders actually recorded it:
 #:
-#: What the evidence actually says about that approved render, recorded because
-#: it is easy to misread and expensive to relearn:
+#:   r1 looped one gesture and smeared it; r2 clawed both hands across the
+#:   chest panel; r3 produced clean open palms that still rose to chest level
+#:   for no return. r4 stopped asking for gestures at all and named the rest
+#:   position positively instead, which is the shape kept below.
 #:
-#:   The mechanic's arms are FOLDED for the entire take - 4s, 10s, 16s, 22s,
-#:   identical. r1 asks for "natural open-palm hand gestures" and the model
-#:   performed none of them. That render used the OLD plate artwork, in which
-#:   the mechanic stands with his arms crossed, and a locked pose in the source
-#:   image beats prompt text. The stillness came from the plate, not from here.
+#: Two failure modes are permanent, both bought with paid renders:
 #:
-#:   The final plates pose him with his hands free at his thighs, so nothing
-#:   holds them down any more. On those plates this family of prompt has been
-#:   observed producing a looped, smeared gesture (r1) and both hands clawed
-#:   across the chest panel (r2).
+#:   * Never pair a placement with an exclusion naming the same region. "at
+#:     chest height" plus "clear of the chest logo" is how r2 put both hands
+#:     on the chest panel - given both, this model keeps the position and
+#:     drops the exclusion.
+#:   * SPEED must be constrained. Fast movement is what generative video
+#:     smears, and r1's first render came back blurred for exactly that
+#:     reason. "slow" is the guard; "calm" is a different guard, on intent.
 #:
-#: Two known hazards live in the text below. They are left in place because
-#: this is a verbatim restore, not a new revision - do not "fix" them without a
-#: render to justify it, and do not re-derive them from scratch:
+#: r5 (2026-09-16) REDUCES HEAD MOTION, at the client's request. r4's "subtle
+#: head nods" is a request for a repeating movement, and this model repeats a
+#: requested movement for the whole take rather than occasionally - the same
+#: mechanism that looped r1's gesture, applied to the head. The head is now
+#: told to stay level and face camera, moving only slightly.
 #:
-#:   * "at chest height" and "without covering the chest logo" name the SAME
-#:     region. Given a position and an exclusion pointing at one place, this
-#:     model keeps the position and drops the exclusion. That is how r2 - which
-#:     carried the same pairing - put both hands on the chest panel.
-#:   * Nothing here constrains SPEED. Fast hand movement is what generative
-#:     video smears, and r1's first render came back blurred for exactly that
-#:     reason. "slow, deliberate", added in r2, is what fixed it.
+#: It is bounded, NOT frozen, and that is the same argument the hands get: a
+#: motionless head over a moving mouth reads as a photograph with a talking
+#: head pasted on. What replaces the nods is "a warm, engaged face" - with the
+#: hands low and the head still, the eyes and mouth are all the life left, so
+#: the prompt has to ask for them by name.
 #:
 #: This text is part of the video input_hash, so editing it regenerates. See
 #: VideoStage._params.
 AVATAR_PROMPT = (
     "An Indian auto mechanic in his Castrol work uniform, speaking directly to "
     "camera in his garage. Calm, natural and slow, with clear articulation and "
-    "subtle head nods. His hands stay low and mostly still, one on each side "
-    "of his body, apart from each other and clear of one another at all times, "
-    "with only small slow movements that settle back to rest. Keep the "
-    "existing framing, uniform and branding unchanged."
+    "a warm, engaged face, and a steady head that stays level and facing "
+    "camera with only slight natural movement. His hands stay low and mostly "
+    "still, one on each side of his body, apart from each other and clear of "
+    "one another at all times, with only small slow movements that settle back "
+    "to rest. Keep the existing framing, uniform and branding unchanged."
 )
 
 

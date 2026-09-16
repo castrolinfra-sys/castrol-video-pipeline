@@ -130,7 +130,11 @@ marks, not four:
 Only the first has to survive both generative passes. `IMAGE_PROMPT`'s preserve
 clause used to name all four, which asked the model to keep branding the garment
 no longer has — and it invented a garbled sleeve patch. `image_prompt_version`
-is **v2** for that reason.
+went to **v2** for that reason, and to **v3** on 2026-09-16 for a second,
+unrelated fault: bearded mechanics came back messy, because "carry over their
+facial hair" names the feature without asking for its structure. The prompt now
+names the structure (outline, jawline edge, length, density, patchiness, grey)
+and blocks smoothing and tidying.
 
 The single-word mark also turned out to be why the smearing stopped: nine of
 nine renders on 2026-09-14 read a clean `Castrol`, where every earlier render
