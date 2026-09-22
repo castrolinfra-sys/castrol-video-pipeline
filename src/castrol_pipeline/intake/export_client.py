@@ -21,7 +21,8 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -131,17 +132,78 @@ def parse_csv(body: bytes) -> ExportResult:
     )
 
 
+#: Waits between attempts. Four tries in ~50s, which spends 4 of the export's
+#: 100-requests-per-900s allowance at worst.
+#:
+#: Measured, not assumed: on 2026-09-22 the same 9-day window from EC2 timed
+#: out at 07:29, was cut off at 7.6 KB of 270 KB at 07:36 ("peer closed
+#: connection"), and returned all 504 rows in 0.3s at 07:38. Each failure cost
+#: a whole cycle's intake, and without a retry that is 12 hours of delay per
+#: blip. A retry is safe because the pull is a free GET and intake dedupes.
+RETRY_WAITS_S: tuple[float, ...] = (5.0, 15.0, 30.0)
+
+
+def _retryable(exc: Exception | None, status: int | None) -> bool:
+    """A blip worth another try, or an answer that will not change. Pure.
+
+    Transport failures and 5xx / 429 are the server or the path having a bad
+    moment. Any other status - 401, 403, 404 - is a real answer: a wrong key or
+    a moved endpoint, and asking again three times only delays saying so.
+    """
+    if exc is not None:
+        return isinstance(exc, httpx.TransportError)
+    return status is not None and (status >= 500 or status == 429)
+
+
 class ExportClient:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        transport: httpx.BaseTransport | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self.settings = settings
+        self._transport = transport  # tests only
+        self._sleep = sleep
+
+    def _get(self, url: str, window: ExportWindow, headers: dict[str, str],
+             timeout: float) -> httpx.Response:
+        attempts = len(RETRY_WAITS_S) + 1
+        for attempt in range(1, attempts + 1):
+            exc: Exception | None = None
+            response: httpx.Response | None = None
+            try:
+                with httpx.Client(timeout=timeout, transport=self._transport) as client:
+                    response = client.get(url, params=window.params(), headers=headers)
+            except httpx.TransportError as e:
+                exc = e
+            if exc is None and response is not None and response.status_code == 200:
+                return response
+            status = response.status_code if response is not None else None
+            if attempt == attempts or not _retryable(exc, status):
+                if exc is not None:
+                    raise exc
+                assert response is not None
+                return response
+            wait = RETRY_WAITS_S[attempt - 1]
+            log.warning(
+                "intake.export_retry",
+                attempt=attempt,
+                of=attempts,
+                wait_s=wait,
+                status=status,
+                error=str(exc)[:200] if exc else None,
+            )
+            self._sleep(wait)
+        raise AssertionError("unreachable")
 
     def fetch(self, window: ExportWindow, *, timeout: float = 60.0) -> ExportResult:
         url = self.settings.require("client_export_url")
         headers = {"apikey": self.settings.require("client_export_api_key")}
 
         log.info("intake.export_pull", **window.params())
-        with httpx.Client(timeout=timeout) as client:
-            response = client.get(url, params=window.params(), headers=headers)
+        response = self._get(url, window, headers, timeout)
 
         if response.status_code != 200:
             raise ExportError(

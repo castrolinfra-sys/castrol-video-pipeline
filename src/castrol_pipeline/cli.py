@@ -629,12 +629,12 @@ def report(batch_id: Annotated[str | None, typer.Option(help="Defaults to latest
 
     stages = db.fetch_all(
         """
-        SELECT stage, status, count(*) AS n
+        SELECT sr.stage, sr.status, count(*) AS n
           FROM stage_runs sr
           JOIN jobs j ON j.id = sr.job_id
          WHERE j.batch_id = %(id)s
-         GROUP BY stage, status
-         ORDER BY stage, status;
+         GROUP BY sr.stage, sr.status
+         ORDER BY sr.stage, sr.status;
         """,
         {"id": str(batch["id"])},
     )
