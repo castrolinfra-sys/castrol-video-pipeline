@@ -24,8 +24,8 @@ export default async function Login({
 
         {params.denied ? (
           <p className="bad" style={{ margin: 0 }}>
-            That account is signed in but not on the admin list. Ask for access,
-            or sign in as a different address.
+            That account is signed in but not on the admin list. Contact the
+            development team for access, or sign in as a different address.
           </p>
         ) : (
           <p className="dim" style={{ margin: 0 }}>
@@ -70,8 +70,11 @@ export default async function Login({
         </form>
 
         <p className="dim" style={{ fontSize: "var(--t-sm)", margin: 0 }}>
-          Accounts are created in the Supabase dashboard, not here. There is no
-          sign-up.
+          {/* Who provides accounts, not WHERE. Naming the auth provider on a
+              client-facing page tells a stranger what to probe and tells the
+              client nothing they can act on. */}
+          Accounts are set up by the development team — there is no sign-up
+          here. Contact them for access or a password reset.
         </p>
       </div>
     </div>

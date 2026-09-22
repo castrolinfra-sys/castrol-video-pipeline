@@ -102,7 +102,10 @@ async function FailuresTable({ page }: { page: number }) {
     return (
       <>
         <PageHead title="Failures" />
-        <p className="empty">Nothing has failed. Every job so far has produced a video.</p>
+        {/* Only what is always true. "Every job so far has produced a video" was
+            false for as long as a batch was still running - no failures is not
+            the same as every job finished - and the client reads this page. */}
+        <p className="empty">Nothing has failed.</p>
       </>
     );
   }
