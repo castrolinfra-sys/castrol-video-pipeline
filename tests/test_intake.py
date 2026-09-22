@@ -14,6 +14,7 @@ from castrol_pipeline.intake.dedupe import compute_submission_hash, media_key_fr
 from castrol_pipeline.intake.media import sniff_mime
 from castrol_pipeline.intake.validate import (
     MAX_NAME_CHARS,
+    MAX_WORKSHOP_CHARS,
     Rejection,
     ValidRow,
     parse_export_timestamp,
@@ -110,7 +111,7 @@ class TestValidation:
             ({"mechanic_phone_number": ""}, RejectCode.BAD_PHONE),
             ({"id": ""}, RejectCode.MISSING_FIELD),
             ({"user_name": "R" * (MAX_NAME_CHARS + 1)}, RejectCode.NAME_TOO_LONG),
-            ({"workshop_name": "W" * 31}, RejectCode.WORKSHOP_TOO_LONG),
+            ({"workshop_name": "W" * (MAX_WORKSHOP_CHARS + 1)}, RejectCode.WORKSHOP_TOO_LONG),
             ({"address": ""}, RejectCode.BAD_ADDRESS),
             ({"address": "x" * 91}, RejectCode.BAD_ADDRESS),
             ({"outfit": "Castrol Overall"}, RejectCode.UNKNOWN_OUTFIT),
@@ -123,6 +124,23 @@ class TestValidation:
         result = validate_row(good_row(**overrides))
         assert isinstance(result, Rejection)
         assert result.code == code
+
+    @pytest.mark.parametrize(
+        "workshop",
+        [
+            "Tarama Engineering Repiyaring shop",               # 34, two real mechanics
+            "Santosh auto repair and service centre Achrol",    # 45, the longest real one
+        ],
+    )
+    def test_real_long_workshop_names_from_the_first_pull_are_accepted(self, workshop):
+        """Each of these was rejected at 30 - a mechanic with no video, for good."""
+        assert isinstance(validate_row(good_row(workshop_name=workshop)), ValidRow)
+
+    def test_an_address_typed_as_the_workshop_is_still_caught_when_long(self):
+        workshop = "25,number, garage. bhawanipur.kolkata.west Bengal"  # 49, real row
+        result = validate_row(good_row(workshop_name=workshop))
+        assert isinstance(result, Rejection)
+        assert result.code == RejectCode.WORKSHOP_TOO_LONG
 
     def test_a_group_photo_is_no_longer_detectable_at_intake(self):
         """Documents a capability the real export took away.

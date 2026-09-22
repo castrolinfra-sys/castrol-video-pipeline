@@ -35,7 +35,21 @@ from ..prep.plates import UnknownBackground, UnknownOutfit, resolve_combo
 #: allowed. This costs type size on the card, not layout - the rect is fixed
 #: and the renderer scales to fit (invariant 27).
 MAX_NAME_CHARS = 30
-MAX_WORKSHOP_CHARS = 30
+#: Raised 30 -> 45 on 2026-09-22, from the first real 9-day pull (367 rows).
+#: Workshop names run longer than names (p50 15, p99 34) and three genuine ones
+#: sat just past 30 - "Tarama Engineering Repiyaring shop" (34) for two
+#: mechanics and "Santosh auto repair and service centre Achrol" (45), which
+#: renders on one line of the card. At 30 all three got no video, permanently.
+#:
+#: Names were NOT raised: every genuine name was <= 25, and the only ones over
+#: 30 were one person's name and business typed onto five other mechanics'
+#: forms. There the limit is catching bad data, and a wrong name is SPOKEN.
+#:
+#: The trade taken knowingly: 45 also accepts an address typed into the
+#: workshop field when it is short ("Kolaghat,East Medinipur, West Bengal",
+#: 36), which then reads as the workshop. An odd line beats no video. A longer
+#: address (49) is still rejected.
+MAX_WORKSHOP_CHARS = 45
 #: The address is free text (client, 2026-09-09), so this is a SANITY bound and
 #: not a layout one - it catches a pasted paragraph, it does not enforce a
 #: shape. It was 34, which assumed a two-part `Locality, City`; the address in

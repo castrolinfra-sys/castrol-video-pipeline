@@ -832,7 +832,7 @@ in-pipeline** — a repaired row is a row whose output nobody can explain.
 | `IMAGE_TOO_SMALL` | short edge < 100px |
 | `BAD_PHONE` | `whatsapp_number` or `mechanic_phone_number` not a 10-digit Indian mobile. Both are checked: the client states the card number is never empty, and this is that promise encoded as a check rather than an assumption |
 | `NAME_TOO_LONG` | `user_name` > `MAX_NAME_CHARS` = 30 (raised from 25 on 2026-09-15, after a real row hit 23 — 92% of the old bound, and this code is terminal) |
-| `WORKSHOP_TOO_LONG` | `workshop_name` > `MAX_WORKSHOP_CHARS` = 30 |
+| `WORKSHOP_TOO_LONG` | `workshop_name` > `MAX_WORKSHOP_CHARS` = 45 (raised from 30, 2026-09-22) |
 | `BAD_ADDRESS` | empty, or over `MAX_ADDRESS_CHARS` = 90. **Not a shape rule:** the address is free text of any form (client, 2026-09-09), so 90 is a sanity bound that catches a pasted paragraph. It used to require exactly `Locality, City`, which rejected a one-word `Worli` |
 | `GENDER_UNSUPPORTED` | non-male this release |
 | `UNKNOWN_BACKGROUND` / `UNKNOWN_OUTFIT` | value not in the plate mapping |
