@@ -33,6 +33,41 @@ SCRIPT_TEMPLATES: dict[str, str] = {
         "pehle hi protection dena shuru karta hai.\n"
         "Aaiye {locality} par, ya screen par diye number par call kare."
     ),
+    #: v2 (2026-09-16). SAME WORDS AS v1 — only punctuation differs.
+    #:
+    #: The middle block was two sentences, the second of them ~130 characters
+    #: with no internal break, and the voice ran it as one continuous push. A
+    #: long unbroken clause is where the lipsync visibly degrades: the avatar
+    #: model has no rest to land on, so the mouth never closes and the take
+    #: reads as gabbling.
+    #:
+    #: Sonic 3.6 adapts pause length to context rather than to SSML — there is
+    #: no markup on this endpoint — so punctuation IS the pause control. Commas
+    #: at the clause boundaries, and em-dashes around the product name, which
+    #: give a longer rest than a comma and set the brand off on both sides.
+    #: The v1 hyphen in "Oil- jo" is gone; it was tight against the word and
+    #: bought no rest at all.
+    #:
+    #: Not a speed change. `generation_config.speed` slows every word evenly,
+    #: including the ones that were already clear, and measured on this script
+    #: it buys 6% more duration for a 20% speed cut — the model re-paces rather
+    #: than stretches, trimming pauses as it slows. Punctuation puts the time
+    #: where the take actually needs it.
+    #:
+    #: Approved 2026-09-22 off an A/B on one image: v1 and v2 audio rendered
+    #: against the same face and prompt, the only variable. v2 runs 28.7s
+    #: against v1's 25.9s, so it costs ~+3 billed seconds (~$0.10) a video.
+    #: A heavier version (ellipses, the brand line split into its own sentence)
+    #: was tried and declined as over-paused.
+    "v2": (
+        "Mai hoon {name}, {workshop} se. Service ho, repair ho ya engine ki "
+        "dikkat, mai har gaadi ka khayal rakhta hoon.\n"
+        "Gaadi start hote hi, pehle 8 seconds mein, engine parts ka sabse "
+        "zyada wear hota hai. Isi wear se bachane ke liye, mai recommend "
+        "karta hoon — Castrol Magnatec Full Synthetic Premium Oil — "
+        "jo engine start hone se pehle hi, protection dena shuru karta hai.\n"
+        "Aaiye {locality} par, ya screen par diye number par call kare."
+    ),
 }
 
 #: Applied to the SPOKEN text only, after the fill. The card still renders the

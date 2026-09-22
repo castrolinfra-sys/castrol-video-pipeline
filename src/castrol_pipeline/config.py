@@ -107,7 +107,9 @@ class Settings(BaseSettings):
 
 
     # -------------------------------------------------------------- pipeline --
-    script_version: str = "v1"
+    # v2 (2026-09-22): same words, punctuation for pauses in the middle block.
+    # In the prep hash, so bumping regenerates audio and video on open jobs.
+    script_version: str = "v2"
     normalise_rules_version: str = "v1"
     # v2 (2026-09-14): the new uniforms dropped the cap and the sleeve logo, and
     # the chest panel now reads "Castrol" alone. IMAGE_PROMPT's preserve clause

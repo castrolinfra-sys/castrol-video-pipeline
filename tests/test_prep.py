@@ -283,3 +283,26 @@ class TestPlateMapping:
     def test_unmapped_background_raises(self):
         with pytest.raises(UnknownBackground):
             resolve_combo(outfit="Castrol T-shirt", background="Motorbike")
+
+
+class TestScriptV2:
+    """v2 is v1 re-punctuated for pauses, and nothing else.
+
+    Changing a word is a different kind of change - a client-approved script -
+    and must not ride in on a punctuation revision.
+    """
+
+    @staticmethod
+    def _words(version: str) -> list[str]:
+        import re
+
+        text = fill_script(version=version, name="A", workshop="B", locality="C").spoken_text
+        return re.findall(r"[A-Za-z0-9]+", text)
+
+    def test_same_words_as_v1(self):
+        assert self._words("v2") == self._words("v1")
+
+    def test_is_the_live_version(self):
+        from castrol_pipeline.config import Settings
+
+        assert Settings().script_version == "v2"
