@@ -97,10 +97,25 @@ def to_mp3(src: Path, dst: Path, *, seconds: float | None = None) -> Path:
 
 
 def normalise_for_image_provider(src: Path, dst: Path) -> Path:
-    """The image provider rejects images outside [300, 6000] px on EITHER axis."""
-    from PIL import Image
+    """The image provider rejects images outside [300, 6000] px on EITHER axis.
+
+    APPLY EXIF ORIENTATION FIRST, and do it here rather than at any call site.
+    A phone camera writes the sensor's own pixels and records the rotation as
+    an EXIF tag; a portrait photo is therefore landscape bytes plus a "turn
+    this" flag. We re-encode to PNG, which has no orientation tag at all, so
+    without the transpose the flag is silently dropped and the mechanic is
+    submitted lying on his side. Nothing downstream can recover it - the bytes
+    are all the provider gets - and it does not read as a bug: the file opens
+    upright in every viewer that honours EXIF, which is every viewer anyone
+    would check it in.
+    """
+    from PIL import Image, ImageOps
 
     with Image.open(src) as im:
+        rotated = im.getexif().get(0x0112, 1) not in (1, 0)
+        im = ImageOps.exif_transpose(im)
+        if rotated:
+            log.info("media.exif_rotated", to=f"{im.size[0]}x{im.size[1]}")
         im = im.convert("RGB")
         w, h = im.size
         scale = 1.0

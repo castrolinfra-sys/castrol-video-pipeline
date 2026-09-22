@@ -45,3 +45,8 @@ Thumbs.db
 !spikes/out/.gitkeep
 spikes/out/
 agent-skills/
+
+# Real mechanic photos pulled by hand for the final test batch (invariant 10).
+# Note .jpg/.png are NOT ignored by extension anywhere in this repo - only
+# whole directories are - so this line is what keeps these faces out of git.
+final_test/
