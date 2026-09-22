@@ -14,6 +14,16 @@ OnCalendar=*-*-* 00,12:00:00 Asia/Kolkata
 # by anything downstream - nobody notices the videos that were never made.
 Persistent=true
 
+# ...and resume a cycle that a reboot INTERRUPTED. Persistent only covers a run
+# that never started; a cycle killed mid-batch by a reboot, a stop/start or a
+# kernel update was not "missed", so without this its queued stages and its
+# in-flight renders sit untouched until the next 00:00/12:00 - up to 12 hours
+# later, while the provider's result URLs age (invariant 15). Five minutes lets
+# docker and the network settle. It is an ordinary cycle: the advisory lock makes
+# it a no-op if one is somehow already running, re-pulling is free, and nothing
+# finished is re-rendered.
+OnBootSec=5min
+
 # Enough jitter that we are not hitting the client's export API on the stroke of
 # the hour, small enough that the run is still recognisably "the midnight one".
 RandomizedDelaySec=120

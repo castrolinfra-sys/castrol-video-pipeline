@@ -112,6 +112,29 @@ retired and a new one inserted. Free, runs nothing.
 uv run castrol register-plate --plate plates/plate_02.png --uniform u1_tshirt --background bg2_dark_sedan --uniform-ref uniform/u1_tshirt.png --approved-by "new artwork 2026-09-11 - Castrol-only chest, plain sleeves"
 ```
 
+**One job, by any identifier** — job id, submission id, client row `id`,
+WhatsApp or card phone in any shape, `mechanic_id`, stage run id, vendor task
+id. `show`, `events` and `redo` accept the same. → [`jobref.py`](src/castrol_pipeline/jobref.py)
+
+```bash
+uv run castrol find 9773128990
+```
+
+```bash
+uv run castrol find --status failed --since 2026-09-16
+```
+
+Drive that ONE job to a finish — claims and polls only its runs, so nothing else
+queued is paid for. Lists the paid stages it may submit and asks. Resumable:
+run it again after Ctrl-C or a reboot. `--retry` re-attempts terminally failed
+stages (invariant 34). **SPENDS.** → [`jobrun.py`](src/castrol_pipeline/jobrun.py).
+On EC2 it is `castrol run …` through [`deploy/castrol`](deploy/castrol), and
+`castrol --bg run … --yes` to survive the SSM session closing.
+
+```bash
+uv run castrol run 9773128990
+```
+
 ```bash
 uv run castrol drain
 ```
@@ -501,6 +524,9 @@ rules, not application code.
 | Every `castrol <cmd>` | [`src/castrol_pipeline/cli.py`](src/castrol_pipeline/cli.py) |
 | Claiming, retries, poller, **all writes to `jobs`** | [`orchestrator.py`](src/castrol_pipeline/orchestrator.py) |
 | The unattended run: lock, window, orphan repair, wait loop | [`cycle.py`](src/castrol_pipeline/cycle.py) |
+| Any identifier → job | [`jobref.py`](src/castrol_pipeline/jobref.py) |
+| One job to a finish (`castrol run`), per-job lock | [`jobrun.py`](src/castrol_pipeline/jobrun.py) |
+| The `castrol` command on the EC2 box | [`deploy/castrol`](deploy/castrol) |
 | systemd units + the EC2 runbook | [`deploy/`](deploy/README.md) |
 | **The EC2 deployment as built** — ids, decisions, what was verified | [`docs/EC2_DEPLOYMENT.md`](docs/EC2_DEPLOYMENT.md) |
 | The eight real stages | [`stages/real.py`](src/castrol_pipeline/stages/real.py) |
@@ -1003,6 +1029,22 @@ whole cycle over one unreachable blob helps nobody.
 Known gaps, both open: no test covers it, and `photos_restored` increments on
 an insert that `ON CONFLICT` may have skipped.
 
+**34. A terminal failure stays failed at the same inputs.**
+*`orchestrator.failure_holds`, called by `schedule_ready`, pinned by [`tests/test_job_run.py`](tests/test_job_run.py)*
+The in-flight unique index only covers `pending/claimed/running`, so until
+2026-09-16 a `failed` row did not stop `schedule_ready` inserting a fresh
+`pending` one at `attempts = 0` — and `execute_one` calls `schedule_ready` in
+its `finally`, right after marking the failure. `retry_delay_for` returning None
+meant nothing: a content-safety rejection would resubmit the same inputs inside
+one `drain_stage` until its limit, and `BUDGET_EXHAUSTED` would hot-loop against
+the cap. It never fired only because no run had yet failed terminally.
+
+A failure now stops holding in exactly two cases: the stage's `input_hash`
+changed, or it was `BUDGET_EXHAUSTED` on an earlier **IST** day (the cap day).
+Anything else is a person's decision — `castrol run <ref> --retry`.
+`advance_job` judges by the LATEST run per stage for the same reason, so a job
+being retried reads `running`, not `failed`.
+
 ---
 
 ## Conventions
@@ -1222,6 +1264,12 @@ by id: **there is no cloning call in the pipeline.**
 **There is no repair pass.** A second lipsync pass was considered and dropped
 — quality is solved in the main flow. If stage C output is unacceptable the
 fix is its inputs, not a patch stage. Do not reintroduce it.
+
+**A reboot resumes itself.** The timer also fires `OnBootSec=5min`, because
+`Persistent=true` only covers a run that never started — a cycle killed
+mid-batch was not "missed". The docker unit removes a leftover `castrol-cycle`
+container first, which a hard stop leaves behind and which would otherwise fail
+that very start on a name conflict.
 
 **The run is automated, twice a day.** `castrol cycle` is the whole flow —
 pull, schedule, work, wait, stop — driven by a systemd timer at 00:00 and 12:00

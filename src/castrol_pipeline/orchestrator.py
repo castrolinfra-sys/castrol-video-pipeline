@@ -17,6 +17,7 @@ import socket
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from psycopg.types.json import Jsonb
 
@@ -163,15 +164,67 @@ def ready_stages(job_id: str, done: dict[str, dict[str, Any]] | None = None) -> 
     return ready
 
 
-def schedule_ready(job_id: str) -> list[PipelineStage]:
+def latest_runs(job_id: str) -> dict[str, dict[str, Any]]:
+    """The newest run per stage, whatever its status. `skipped` is history, not state."""
+    rows = db.fetch_all(
+        """
+        SELECT DISTINCT ON (stage) stage, status, input_hash, error_code, finished_at
+          FROM stage_runs
+         WHERE job_id = %(job_id)s AND status <> 'skipped'
+         ORDER BY stage, created_at DESC;
+        """,
+        {"job_id": job_id},
+    )
+    return {str(r["stage"]): r for r in rows}
+
+
+def failure_holds(
+    latest: dict[str, Any] | None, input_hash: str, *, now: datetime | None = None
+) -> bool:
+    """Does a terminal failure still stand, so the stage must NOT be re-enqueued?
+
+    The in-flight unique index only covers pending/claimed/running, so without
+    this a terminal `failed` row does not stop `schedule_ready` from inserting a
+    fresh `pending` one with attempts back at zero — and `execute_one` calls
+    `schedule_ready` in its `finally`, straight after marking the failure. A
+    content-safety rejection would resubmit the same inputs forever inside one
+    `drain_stage`; a BUDGET_EXHAUSTED stop would hot-loop against the cap. That
+    is the opposite of what `retry_delay_for` returning None is meant to say.
+
+    A failure stops holding when:
+      * the inputs changed — a new prompt or plate is a different question
+      * it was BUDGET_EXHAUSTED on an earlier IST day — the cap is per day
+        (`vendor_usage.usage_date`), so the stop is for the day, not forever
+
+    Everything else waits for a person: `castrol run <ref> --retry`.
+    """
+    if latest is None or str(latest["status"]) != "failed":
+        return False
+    if latest["input_hash"] != input_hash:
+        return False
+    if latest["error_code"] == str(StageErrorCode.BUDGET_EXHAUSTED):
+        finished = latest["finished_at"]
+        if finished is None:
+            return True
+        tz = ZoneInfo(get_settings().export_timezone)
+        today = (now or datetime.now(UTC)).astimezone(tz).date()
+        return finished.astimezone(tz).date() >= today
+    return True
+
+
+def schedule_ready(job_id: str, *, retry_failed: bool = False) -> list[PipelineStage]:
     """Enqueue a pending run for every ready stage. Idempotent.
 
     Two guards make double-work impossible rather than merely unlikely:
       * a stage whose exact input_hash already succeeded is skipped outright
       * the partial unique index rejects a second in-flight run per (job, stage)
+
+    And one makes a terminal failure terminal (`failure_holds`). `retry_failed`
+    overrides it — that is a person deciding to pay for another attempt.
     """
     registry = get_stage_registry()
     ctx = load_context(job_id)
+    latest = latest_runs(job_id)
     enqueued: list[PipelineStage] = []
 
     for stage in ready_stages(job_id, ctx.upstream):
@@ -183,6 +236,9 @@ def schedule_ready(job_id: str) -> list[PipelineStage]:
         if db.find_succeeded_run(job_id, str(stage), input_hash):
             # Already done at this exact input. Nothing to do — this is what
             # makes a re-run after a code change redo only what actually moved.
+            continue
+
+        if not retry_failed and failure_holds(latest.get(str(stage)), input_hash):
             continue
 
         if db.enqueue_stage_run(job_id, str(stage), input_hash):
@@ -298,10 +354,18 @@ def advance_job(job_id: str) -> None:
         )
         return
 
+    # The LATEST run per stage decides, not any failed row ever. Once a person
+    # retries a failed stage, the old row is history; judging by it would show
+    # the job `failed` for the whole of the retry that is fixing it.
     dead = db.fetch_one(
         """
-        SELECT stage, error_code, error_message FROM stage_runs
-         WHERE job_id = %(id)s AND status = 'failed'
+        SELECT stage, error_code, error_message
+          FROM (SELECT DISTINCT ON (stage) stage, status, error_code,
+                       error_message, finished_at
+                  FROM stage_runs
+                 WHERE job_id = %(id)s AND status <> 'skipped'
+                 ORDER BY stage, created_at DESC) latest
+         WHERE status = 'failed'
          ORDER BY finished_at DESC LIMIT 1;
         """,
         {"id": job_id},
@@ -428,10 +492,15 @@ def redo_stage(job_id: str, stage: PipelineStage) -> dict[str, Any]:
 # ------------------------------------------------------------- worker loop --
 
 
-def execute_one(stage: PipelineStage, worker: str | None = None) -> bool:
-    """Claim and execute a single run of `stage`. False if the queue was empty."""
+def execute_one(
+    stage: PipelineStage, worker: str | None = None, *, job_id: str | None = None
+) -> bool:
+    """Claim and execute a single run of `stage`. False if the queue was empty.
+
+    `job_id` restricts the claim to one job; see `jobrun.run_job`.
+    """
     worker = worker or worker_identity()
-    run = db.claim_stage_run(str(stage), worker)
+    run = db.claim_stage_run(str(stage), worker, job_id)
     if run is None:
         return False
 
@@ -492,9 +561,9 @@ def execute_one(stage: PipelineStage, worker: str | None = None) -> bool:
     return True
 
 
-def drain_stage(stage: PipelineStage, *, limit: int = 1000) -> int:
+def drain_stage(stage: PipelineStage, *, limit: int = 1000, job_id: str | None = None) -> int:
     processed = 0
-    while processed < limit and execute_one(stage):
+    while processed < limit and execute_one(stage, job_id=job_id):
         processed += 1
     return processed
 
@@ -538,17 +607,18 @@ def _fail_if_overdue(run: dict[str, Any], stage: PipelineStage) -> None:
     )
 
 
-def poll_once(*, limit: int = 100) -> int:
+def poll_once(*, limit: int = 100, job_id: str | None = None) -> int:
     """Reconcile in-flight async vendor tasks. Returns how many completed."""
     registry = get_stage_registry()
     rows = db.fetch_all(
         """
         SELECT * FROM stage_runs
          WHERE status = 'running' AND vendor_task_id IS NOT NULL
+           AND (%(job_id)s::uuid IS NULL OR job_id = %(job_id)s::uuid)
          ORDER BY started_at
          LIMIT %(limit)s;
         """,
-        {"limit": limit},
+        {"limit": limit, "job_id": job_id},
     )
 
     completed = 0

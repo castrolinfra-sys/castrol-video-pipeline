@@ -130,6 +130,7 @@ UPDATE stage_runs
         WHERE stage = %(stage)s
           AND status = 'pending'
           AND next_attempt_at <= now()
+          AND (%(job_id)s::uuid IS NULL OR job_id = %(job_id)s::uuid)
         ORDER BY next_attempt_at
         FOR UPDATE SKIP LOCKED
         LIMIT 1
@@ -138,9 +139,15 @@ RETURNING *;
 """
 
 
-def claim_stage_run(stage: str, worker: str) -> dict[str, Any] | None:
-    """Claim one ready run of `stage`, or return None if the queue is empty."""
-    return fetch_one(_CLAIM_SQL, {"stage": stage, "worker": worker})
+def claim_stage_run(
+    stage: str, worker: str, job_id: str | None = None
+) -> dict[str, Any] | None:
+    """Claim one ready run of `stage`, or return None if the queue is empty.
+
+    `job_id` narrows the queue to one job — `castrol run`. Without it, running
+    one mechanic by hand would claim, and pay for, everything else queued.
+    """
+    return fetch_one(_CLAIM_SQL, {"stage": stage, "worker": worker, "job_id": job_id})
 
 
 def enqueue_stage_run(

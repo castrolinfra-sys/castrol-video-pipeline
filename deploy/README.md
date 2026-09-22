@@ -335,6 +335,12 @@ run `sudo timedatectl set-timezone Asia/Kolkata` instead.
 happens at the next boot rather than being skipped. A missed pull is not
 recoverable by anything downstream — nobody notices videos that were never made.
 
+`OnBootSec=5min` covers the other half: a cycle that had already *started* when
+the instance went down. That run was not missed, so `Persistent` does nothing for
+it, and its queued stages and in-flight renders would otherwise wait for the next
+00:00 / 12:00. Five minutes after any boot a normal cycle runs and picks up
+exactly where the rows say. See [After a restart](#after-a-restart).
+
 ---
 
 ## Running it as a container instead
@@ -463,6 +469,22 @@ Everything section 6 says about the timer applies unchanged: it carries its own
 `Asia/Kolkata` timezone so the box can stay on UTC, and `Persistent=true` runs a
 window missed to a reboot at the next boot rather than skipping the batch.
 
+### 7. Install the `castrol` command
+
+Copy `deploy/castrol` to the instance the same way, then:
+
+```bash
+sudo install -m 755 castrol /usr/local/bin/castrol
+```
+
+```bash
+castrol doctor
+```
+
+Every command in this README that reads `uv run castrol ...` now runs on the box
+as plain `castrol ...` — same image tag as the timer, same `.env` mount, same
+uid. See [Finding and running one job](#finding-and-running-one-job).
+
 Note the unit *mounts* `.env` rather than passing `--env-file`: Docker's
 `--env-file` parser does not strip quotes, so `KEY="value"` would arrive with
 the quotes attached.
@@ -497,6 +519,105 @@ sudo -u castrol -H docker image inspect --format '{{index .RepoDigests 0}}' "$(.
 
 ---
 
+## Finding and running one job
+
+Nobody on the box has a job UUID. Every per-job command takes **any** identifier
+and tries all of them at once: job id, submission id, the client's export row
+`id`, the WhatsApp number (any shape — `9773128990`, `+91 97731 28990`), the
+card phone, `mechanic_id`, a stage run id, or a vendor task id lifted from a log.
+Each hit says what it matched on; if one string matches two jobs you get both
+and pass the job id.
+
+```bash
+castrol find 9773128990
+```
+
+```bash
+castrol find --status failed --since 2026-09-16
+```
+
+```bash
+castrol show 9773128990
+```
+
+```bash
+castrol events 9773128990
+```
+
+**Run one job to a finish, now, without touching anything else queued:**
+
+```bash
+castrol run 9773128990
+```
+
+It prints each stage's latest state, lists the paid stages it may submit, and
+asks before spending. Only that job's runs are claimed and polled — `work` and
+`drain` would take the whole queue. It is fine alongside a running cycle
+(claiming is `SKIP LOCKED`), and a per-job lock stops two people running the
+same job at once (exit 3). It waits up to 150 min, which is past the 2h vendor
+timeout, so it ends on `completed` (exit 0) or `failed` (exit 1).
+
+**A render is 8–20 minutes, and an SSM session that drops kills a foreground
+command.** That loses nothing, since running it again carries on from the
+database, but the detached form just finishes on its own:
+
+```bash
+castrol --bg run 9773128990 --yes
+```
+
+It prints the `journalctl -u castrol-run-…` line to follow. `--bg` refuses
+`run`/`redo` without `--yes` because there is no terminal to confirm on — look
+at `castrol show` first.
+
+**Failed stages stay failed unless you say otherwise.** A terminal failure —
+content-safety rejection, vendor timeout, attempts exhausted — is not retried by
+the cycle at the same inputs. To pay for another attempt:
+
+```bash
+castrol run 9773128990 --retry
+```
+
+Two things reopen a failure without `--retry`: its inputs changing (a new prompt
+or plate is a different question), and `BUDGET_EXHAUSTED` from an earlier IST
+day, because the cap is per day.
+
+A **completed** job has nothing to run; re-rendering one is still
+`castrol redo <any-id> --stage video`, followed by `castrol run <any-id>`.
+
+Every manual command is also in journald, so what someone ran overnight is
+readable in the morning. `castrol run` additionally writes `job.manual_run` and
+`job.manual_run_done` into that job's `events`.
+
+```bash
+journalctl -t castrol-manual --since today -o cat
+```
+
+---
+
+## After a restart
+
+Nothing needs doing. The pipeline keeps no state outside Postgres: readiness is
+recomputed from `stage_runs`, a render submitted before the reboot keeps going at
+the vendor, and a claim orphaned mid-stage is returned to the queue by the reaper
+after `STAGE_CLAIM_TIMEOUT_S` (15 min).
+
+What brings it back:
+
+| what was happening | what resumes it |
+|---|---|
+| a cycle was running | `OnBootSec=5min` starts a cycle after boot |
+| a cycle was due while the box was down | `Persistent=true` runs it at boot |
+| a `castrol run` / `--bg run` was running | nothing automatic. The boot cycle collects that job with everything else; or run the same command again |
+| a stale `castrol-cycle` container survived a hard stop | `ExecStartPre` removes it before the next start |
+
+To confirm the boot run happened:
+
+```bash
+journalctl -u castrol-cycle -b -o cat | jq -c 'select(.event=="cycle.start" or .event=="cycle.done")'
+```
+
+---
+
 ## Reading what happened
 
 Everything goes to journald as structlog JSON.
@@ -527,7 +648,7 @@ the same, but the SAS url had expired and the photo is unrecoverable; that job
 will never render and needs the row cancelling or the client re-issuing the
 media.
 
-Against the database, from any machine with the `.env`:
+Against the database, on the box as `castrol …` or from any machine with the `.env`:
 
 ```bash
 uv run castrol report

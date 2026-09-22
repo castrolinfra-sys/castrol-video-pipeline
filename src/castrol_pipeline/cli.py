@@ -9,11 +9,17 @@
     work        drain one stage                           -> orchestrator.py
     poll        reconcile in-flight vendor tasks          -> orchestrator.py
     redo        re-run a stage on a finished job (SPENDS) -> orchestrator.py
+    find        any identifier -> job(s), or list jobs    -> jobref.py
+    run         drive ONE job to a finish (SPENDS)        -> jobrun.py
     drain       sweep every stage until nothing moves     -> orchestrator.py
     show        one job: runs, cost, assets, checks       -> seed.py:describe
     events      one job's durable timeline                -> common/events.py
     costs       per-generation spend + today's caps       -> job_costs view
     report      the morning number for a batch
+
+Every per-job command (show, events, run, redo) takes ANY identifier - job id,
+submission id, client row id, WhatsApp or card phone, mechanic id, stage run id,
+vendor task id - and resolves it through jobref.py.
 """
 
 from __future__ import annotations
@@ -35,6 +41,34 @@ log = get_logger("cli")
 def _boot() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
+
+
+def _job(ref: str) -> str:
+    """Resolve any identifier to exactly one job id, or exit with the candidates."""
+    from .jobref import AmbiguousRef, resolve_one
+
+    try:
+        return resolve_one(ref)
+    except AmbiguousRef as exc:
+        typer.echo(str(exc), err=True)
+        _print_jobs(exc.matches, err=True)
+        raise typer.Exit(2) from None
+    except LookupError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+
+
+def _print_jobs(rows: list[dict], *, err: bool = False) -> None:
+    for r in rows:
+        stamp = r["created_at"].strftime("%Y-%m-%d %H:%M")
+        why = f"  [{r['matched_on']}]" if r.get("matched_on") else ""
+        fail = f"  {r['failure_reason']}" if r.get("failure_reason") else ""
+        typer.echo(
+            f"{r['job_id']}  {stamp}  {r['status']:<9} {str(r['current_stage']):<9} "
+            f"{r['phone_e164'] or '-':<13}  client_id={r['client_submission_id'] or '-'}  "
+            f"{r['user_name'] or ''}{fail}{why}",
+            err=err,
+        )
 
 
 def _parse_date(value: str) -> date:
@@ -226,17 +260,119 @@ def register_plate_cmd(
 
 
 @app.command()
-def show(job_id: Annotated[str, typer.Argument(help="Job UUID")]) -> None:
+def find(
+    ref: Annotated[
+        str | None,
+        typer.Argument(help="Any identifier. Omit to list recent jobs instead."),
+    ] = None,
+    status: Annotated[
+        str | None, typer.Option(help="pending | running | completed | failed | cancelled")
+    ] = None,
+    since: Annotated[str | None, typer.Option(help="Created on or after, YYYY-MM-DD")] = None,
+    limit: Annotated[int, typer.Option(help="Max jobs listed")] = 50,
+) -> None:
+    """Which job is this? Or: which jobs are failed / running / from today?
+
+    With an identifier, every kind is tried at once and each hit says what it
+    matched on — a ten-digit string can be a phone and a client row id both.
+    """
+    _boot()
+    from .jobref import list_jobs, resolve
+
+    rows = resolve(ref) if ref else list_jobs(status=status, since=since, limit=limit)
+    if not rows:
+        typer.echo("no matching jobs", err=True)
+        raise typer.Exit(1)
+    _print_jobs(rows)
+
+
+@app.command()
+def run(
+    ref: Annotated[str, typer.Argument(help="Any identifier for ONE job")],
+    retry: Annotated[
+        bool,
+        typer.Option(
+            "--retry",
+            help="Also re-attempt stages that failed terminally. Without it a "
+                 "failed stage stays failed.",
+        ),
+    ] = False,
+    timeout_minutes: Annotated[
+        int, typer.Option("--timeout-minutes", help="Stop waiting after this long")
+    ] = 150,
+    interval: Annotated[int, typer.Option(help="Seconds between polls")] = 30,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the spend confirmation")] = False,
+) -> None:
+    """Drive ONE job to a finish: schedule, work, poll, wait. SPENDS.
+
+    Only this job's runs are claimed or polled, so nothing else queued is paid
+    for. Safe to interrupt and safe to repeat — after Ctrl-C, a dropped session
+    or a reboot, run it again and it carries on from the database. Fine to run
+    while a cycle is running.
+
+    A completed job has nothing to run; re-rendering one is `redo`.
+
+    EXIT CODES: 0 completed, 1 failed or timed out, 2 no such job / ambiguous,
+    3 another `run` already holds this job.
+    """
+    _boot()
+    from .common import db
+    from .jobrun import paid_stages_left, run_job, stage_table
+
+    job_id = _job(ref)
+    job = db.fetch_one(
+        "SELECT status, failure_reason FROM jobs WHERE id = %(id)s;", {"id": job_id}
+    )
+    table = stage_table(job_id)
+    typer.echo(f"job {job_id}  status={job['status']}"
+               + (f"  ({job['failure_reason']})" if job["failure_reason"] else ""))
+    for row in table:
+        extra = f"  {row['error_code']}" if row.get("error_code") else ""
+        typer.echo(f"  {row['stage']:<10} {row['status'] or '-':<10}{extra}")
+
+    if job["status"] == "completed":
+        typer.echo(
+            "Already completed - nothing to run. "
+            "To re-render: castrol redo <ref> --stage <stage>"
+        )
+        return
+    if job["status"] == "cancelled":
+        typer.echo("Job is cancelled - not running it.")
+        raise typer.Exit(1)
+
+    blocked = [r["stage"] for r in table if r["status"] == "failed"]
+    if blocked and not retry:
+        typer.echo(f"Failed stage(s) {blocked} stay failed without --retry.")
+
+    paid = paid_stages_left(table, retry_failed=retry)
+    if paid and not get_settings().use_stub_stages:
+        typer.echo(
+            f"May SPEND on: {paid}  (video ~ $0.014 + $0.036/s standard, "
+            "$0.072/s pro, ~$0.91 for 25s)"
+        )
+        if not yes and not typer.confirm("Proceed?"):
+            raise typer.Abort()
+
+    out = run_job(job_id, retry_failed=retry, timeout_minutes=timeout_minutes, interval_s=interval)
+    typer.echo(json.dumps(out, indent=2, default=str))
+    if out.get("skipped"):
+        raise typer.Exit(3)
+    if out.get("timed_out") or out.get("status") != "completed":
+        raise typer.Exit(1)
+
+
+@app.command()
+def show(ref: Annotated[str, typer.Argument(help="Any job identifier")]) -> None:
     """Everything known about one job: runs, cost, assets, checks."""
     _boot()
     from .seed import describe
 
-    typer.echo(describe(job_id))
+    typer.echo(describe(_job(ref)))
 
 
 @app.command()
 def events(
-    job_id: Annotated[str, typer.Argument(help="Job UUID")],
+    ref: Annotated[str, typer.Argument(help="Any job identifier")],
     limit: Annotated[int, typer.Option(help="Max events")] = 200,
 ) -> None:
     """The durable timeline for one job, oldest first.
@@ -247,7 +383,7 @@ def events(
     _boot()
     from .common.events import job_timeline
 
-    rows = job_timeline(job_id, limit)
+    rows = job_timeline(_job(ref), limit)
     for row in reversed(rows):
         stamp = row["created_at"].strftime("%H:%M:%S")
         stage = row["stage"] or "-"
@@ -303,7 +439,7 @@ def costs(
 
 @app.command()
 def redo(
-    job_id: Annotated[str, typer.Argument(help="Job UUID")],
+    ref: Annotated[str, typer.Argument(help="Any job identifier")],
     stage: Annotated[str, typer.Option("--stage", help="Stage to re-run")],
     yes: Annotated[
         bool, typer.Option("--yes", help="Skip the confirmation prompt")
@@ -321,6 +457,7 @@ def redo(
     from .common import db
     from .orchestrator import redo_stage
 
+    job_id = _job(ref)
     try:
         target = PipelineStage(stage)
     except ValueError:

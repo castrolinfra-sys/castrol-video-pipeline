@@ -1,0 +1,73 @@
+#!/bin/sh
+# castrol - run any pipeline command on the EC2 worker, in the image the timer uses.
+#
+# Install once:   sudo install -m 755 castrol /usr/local/bin/castrol
+#
+#   castrol find 9773128990                  which job is this number?
+#   castrol find --status failed             what broke?
+#   castrol show 9773128990                  runs, cost, assets
+#   castrol events 9773128990                the durable timeline
+#   castrol run 9773128990                   drive that ONE job to a finish (SPENDS, asks)
+#   castrol --bg run 9773128990 --yes        same, detached - survives the SSM session closing
+#
+# Why a wrapper and not `docker exec`: there is no long-running container to exec
+# into. The cycle is a oneshot, so between runs nothing is up. Each command is a
+# fresh container of the SAME image tag as the timer (/etc/castrol-image.env),
+# with the same .env mount, as the same uid - so what you see by hand is what
+# the timer sees, not what some other build on the box happens to do.
+#
+# Logs: every run, foreground or --bg, also goes to journald tagged
+# `castrol-manual`, so a command someone ran at 3am is still readable at 9:
+#     journalctl -t castrol-manual --since today -o cat
+#
+# --bg matters for `run`: a render is 8-20 minutes and an SSM session that drops
+# kills a foreground process. Killing one loses nothing - the job resumes on the
+# next `run` or cycle - but a detached unit just finishes. Follow it with the
+# `journalctl -u` line it prints.
+set -eu
+
+IMAGE_ENV=/etc/castrol-image.env
+ENV_FILE=/opt/castrol-video-pipeline/.env
+# `always` matches the timer, so a merge to main is what runs here too. Set
+# CASTROL_PULL=missing to skip the registry round trip on quick reads.
+PULL="${CASTROL_PULL:-always}"
+
+[ -r "$IMAGE_ENV" ] || { echo "castrol: $IMAGE_ENV missing - see deploy/README.md" >&2; exit 78; }
+. "$IMAGE_ENV"
+: "${CASTROL_IMAGE:?castrol: CASTROL_IMAGE not set in $IMAGE_ENV}"
+
+bg=0
+if [ "${1:-}" = "--bg" ]; then bg=1; shift; fi
+if [ $# -eq 0 ]; then
+    echo "usage: castrol [--bg] <command> [args]    e.g. castrol find 9773128990" >&2
+    exit 64
+fi
+
+if [ "$bg" = 1 ]; then
+    case " $* " in
+        *" run "*|*" redo "*)
+            case " $* " in *" --yes "*) ;; *)
+                echo "castrol: --bg has no terminal to confirm spend on; add --yes after checking \`castrol show\`" >&2
+                exit 64 ;;
+            esac ;;
+    esac
+    unit="castrol-$1-$(date -u +%Y%m%d-%H%M%S)"
+    sudo systemd-run --unit="$unit" --uid=castrol --gid=castrol --collect \
+        --property=After=docker.service --property=Requires=docker.service \
+        /usr/bin/docker run --rm --pull "$PULL" --name "$unit" \
+            --volume "$ENV_FILE:/app/.env:ro" \
+            --log-driver journald --log-opt tag=castrol-manual \
+            "$CASTROL_IMAGE" "$@"
+    echo "started $unit"
+    echo "  follow:  journalctl -u $unit -f -o cat"
+    echo "  status:  systemctl status $unit"
+    exit 0
+fi
+
+tty=""
+if [ -t 0 ] && [ -t 1 ]; then tty="-it"; fi
+# shellcheck disable=SC2086 # $tty is deliberately unquoted: empty or one flag
+exec sudo -u castrol -H /usr/bin/docker run --rm $tty --pull "$PULL" \
+    --volume "$ENV_FILE:/app/.env:ro" \
+    --log-driver journald --log-opt tag=castrol-manual \
+    "$CASTROL_IMAGE" "$@"

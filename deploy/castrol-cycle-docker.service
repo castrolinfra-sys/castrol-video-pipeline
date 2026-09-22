@@ -46,6 +46,13 @@ EnvironmentFile=/etc/castrol-image.env
 # `--pull always` needs the pull to be authenticated: the Hub repo is private,
 # so `docker login` must have been run AS castrol - systemd reads that user's
 # ~/.docker/config.json, not root's.
+#
+# The pre-clean is for REBOOTS. ExecStopPost below only runs when systemd stops
+# the unit; a power-off or a hard stop of the instance skips it, and dockerd does
+# not reliably reap a --rm container it never saw exit. The next start then dies
+# on "container name castrol-cycle is already in use" - and after a reboot the
+# next start is the resume run the timer's OnBootSec exists for.
+ExecStartPre=-/usr/bin/docker rm -f castrol-cycle
 ExecStart=/usr/bin/docker run --rm \
     --pull always \
     --name castrol-cycle \
