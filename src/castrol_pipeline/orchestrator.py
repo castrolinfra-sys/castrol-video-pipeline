@@ -50,14 +50,37 @@ def get_stage_registry() -> dict[PipelineStage, Any]:
     a provider account. USE_STUB_STAGES is the only difference between a dry
     run and a real one.
     """
-    if get_settings().use_stub_stages:
+    mode = _checked_mode()
+    if mode == "stub":
         from .stages.stubs import STUB_STAGES
 
         return STUB_STAGES
+    if mode == "mock":
+        from .stages.mocks import MOCK_STAGES
+
+        return MOCK_STAGES
 
     from .stages.real import REAL_STAGES
 
     return REAL_STAGES
+
+
+_MODE_CHECKED: str | None = None
+
+
+def _checked_mode() -> str:
+    """`dryrun.check_mode_is_safe`, once per process.
+
+    Every path that executes a stage comes through the registry, so this is the
+    one place the rehearsal/real guard cannot be walked around. Once, because
+    the registry is consulted per job and the answer cannot change mid-process.
+    """
+    global _MODE_CHECKED
+    if _MODE_CHECKED is None:
+        from .dryrun import check_mode_is_safe
+
+        _MODE_CHECKED = check_mode_is_safe()
+    return _MODE_CHECKED
 
 
 # --------------------------------------------------------------- retry policy --

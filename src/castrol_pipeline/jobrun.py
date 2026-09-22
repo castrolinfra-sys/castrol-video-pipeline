@@ -132,7 +132,7 @@ def run_job(
         "job_id": job_id,
         "started_at": datetime.now(UTC),
         "retry_failed": retry_failed,
-        "stub": get_settings().use_stub_stages,
+        "stage_mode": get_settings().effective_stage_mode,
         "passes": 0,
         "stage_runs": {},
         "timed_out": False,

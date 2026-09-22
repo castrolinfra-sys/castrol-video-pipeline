@@ -11,6 +11,7 @@
     redo        re-run a stage on a finished job (SPENDS) -> orchestrator.py
     find        any identifier -> job(s), or list jobs    -> jobref.py
     run         drive ONE job to a finish (SPENDS)        -> jobrun.py
+    reset-for-launch  wipe rehearsal job data, keep plates -> dryrun.py
     drain       sweep every stage until nothing moves     -> orchestrator.py
     show        one job: runs, cost, assets, checks       -> seed.py:describe
     events      one job's durable timeline                -> common/events.py
@@ -93,6 +94,9 @@ def intake(
     """Pull one export window, validate, land photos, create jobs."""
     _boot()
     from .intake.runner import run_intake
+    from .orchestrator import _checked_mode
+
+    _checked_mode()  # a real pull over rehearsal data would dedupe it away
 
     counters = run_intake(
         from_date=_parse_date(from_),
@@ -345,7 +349,7 @@ def run(
         typer.echo(f"Failed stage(s) {blocked} stay failed without --retry.")
 
     paid = paid_stages_left(table, retry_failed=retry)
-    if paid and not get_settings().use_stub_stages:
+    if paid and get_settings().effective_stage_mode == "real":
         typer.echo(
             f"May SPEND on: {paid}  (video ~ $0.014 + $0.036/s standard, "
             "$0.072/s pro, ~$0.91 for 25s)"
@@ -661,6 +665,36 @@ def report(batch_id: Annotated[str | None, typer.Option(help="Defaults to latest
     )
 
 
+@app.command("reset-for-launch")
+def reset_for_launch_cmd(
+    confirm: Annotated[
+        str | None,
+        typer.Option("--confirm", help="Type RESET to skip the prompt (no terminal)"),
+    ] = None,
+) -> None:
+    """Empty every job table before launch. Keeps plates, caps and panel logins.
+
+    For after the rehearsal: the rehearsal pulled the client's real rows, and a
+    real run would treat each of those mechanics as already done. Frees nothing
+    in S3 - the rehearsal's files are under castrol-dryrun/ and are removed with
+    an admin session (deploy/README.md).
+    """
+    _boot()
+    from .dryrun import JOB_TABLES, KEPT_TABLES, reset_for_launch, table_counts
+
+    typer.echo("Will EMPTY these tables:")
+    for table, n in table_counts().items():
+        typer.echo(f"  {table:<14} {n} rows")
+    typer.echo(f"Keeps: {', '.join(KEPT_TABLES)}, the panel logins, the migrations ledger.")
+    typer.echo(f"Database: {get_settings().require('supabase_db_url').split('@')[-1]}")
+    answer = confirm or typer.prompt("Type RESET to wipe", default="", show_default=False)
+    if answer != "RESET":
+        typer.echo("Not wiped.")
+        raise typer.Exit(1)
+    out = reset_for_launch()
+    typer.echo(json.dumps({**out, "tables": list(JOB_TABLES)}, indent=2))
+
+
 @app.command()
 def doctor() -> None:
     """Check that config and the database are actually usable."""
@@ -669,7 +703,9 @@ def doctor() -> None:
     out: dict[str, object] = {
         "environment": settings.environment,
         "storage_backend": settings.storage_backend,
-        "use_stub_stages": settings.use_stub_stages,
+        "stage_mode": settings.effective_stage_mode,
+        "s3_prefix": settings.s3_prefix,
+        "delivery_enabled": settings.delivery_enabled,
         "script_version": settings.script_version,
     }
 
@@ -678,6 +714,14 @@ def doctor() -> None:
 
         row = db.fetch_one("SELECT count(*) AS n FROM jobs;")
         out["db"] = "ok"
+        from .dryrun import DryRunGuard, check_mode_is_safe, rehearsal_residue
+
+        out["rehearsal_residue"] = rehearsal_residue()
+        try:
+            check_mode_is_safe()
+            out["mode_guard"] = "ok"
+        except (DryRunGuard, ValueError) as exc:
+            out["mode_guard"] = f"REFUSED: {exc}"
         out["jobs"] = row["n"] if row else 0
         caps = db.fetch_all("SELECT vendor, daily_call_cap, enabled FROM vendor_limits;")
         out["vendor_limits"] = [dict(c) for c in caps]

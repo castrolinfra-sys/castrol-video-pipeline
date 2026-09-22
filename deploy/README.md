@@ -594,6 +594,185 @@ journalctl -t castrol-manual --since today -o cat
 
 ---
 
+## Rehearsal before launch (dry run)
+
+One full run against the client's **real** export, into the **real** database,
+with only the three paid steps faked. Everything else is the production code:
+the card is burned with real names and addresses, ffmpeg runs, the result is
+uploaded to the CDN. **Nothing is spent and nothing is sent to the client.**
+
+| stage | in the rehearsal |
+|---|---|
+| intake, prep, composite, checks, publish | real |
+| audio | a quiet tone as long as the real voiceover would be |
+| image | the job's own plate artwork, unedited |
+| video | that frame held still over the audio, "rendering" for 2 min |
+| deliver | real, with `DELIVERY_ENABLED=false`: logs what it would post |
+
+`MOCK_FAILURES` fails a fixed share of jobs on purpose, the same jobs every
+time. `castrol costs` afterwards is a **quote** for the real batch - the mocks
+record what each call would have cost.
+
+It is kept apart from a real run by the code, not by memory: mock mode refuses
+to start unless files go under `castrol-dryrun/` and delivery is off, and a real
+run refuses to start while any rehearsal row is left in the database.
+
+### 1. Stop the timer
+
+```bash
+sudo systemctl disable --now castrol-cycle.timer
+```
+
+It must stay off until launch. A reboot during the rehearsal would otherwise
+fire `OnBootSec` with the **real** `.env` and start a paid cycle.
+
+### 2. Get this code onto the box
+
+**The image first.** Mock mode lives in the image, not on the box. Push this
+commit to `main` and wait for CI to go green; the wrapper pulls `:latest` on
+every command. An older image does not know `STAGE_MODE` and would quietly run
+the REAL stages — the dummy keys in step 4 would stop them at the provider's
+login, and step 5's `doctor` check is what catches it: no `"stage_mode":
+"mock"` in the output means the image is too old.
+
+Then copy `deploy/castrol` from this commit to the box:
+
+```bash
+sudo install -m 755 castrol /usr/local/bin/castrol
+```
+
+### 3. Save the paid test history
+
+The wipe at step 7 removes it. Write it to your own home directory - the
+pipeline directory belongs to `castrol`:
+
+```bash
+castrol costs --since 2026-09-14 > ~/costs-before-dryrun.json
+```
+
+### 4. Create `.env.dryrun`
+
+A copy of the real `.env`, with overrides appended. Later lines win, so nothing
+in the copy needs editing by hand:
+
+```bash
+sudo cp -p /opt/castrol-video-pipeline/.env /opt/castrol-video-pipeline/.env.dryrun
+```
+
+```bash
+sudo tee -a /opt/castrol-video-pipeline/.env.dryrun > /dev/null <<'EOF'
+
+# ---- rehearsal overrides ----
+STAGE_MODE=mock
+MOCK_FAILURES=image:VENDOR_REJECTED:10,video:VENDOR_TIMEOUT:5,audio:TRANSIENT:10
+S3_PREFIX=castrol-dryrun/
+VENDOR_TASK_TIMEOUT_S=300
+DELIVERY_ENABLED=false
+CLIENT_WEBHOOK_URL=
+KIE_API_KEY=dryrun-invalid
+APIMART_API_KEY=dryrun-invalid
+CARTESIA_API_KEY=dryrun-invalid
+EOF
+```
+
+The dummy keys are a second lock: even a bug that reached a real provider could
+not authenticate. `VENDOR_TASK_TIMEOUT_S=300` makes the injected video timeouts
+fail in 5 minutes instead of 2 hours.
+
+### 5. Check it, then run it
+
+```bash
+castrol --dryrun doctor
+```
+
+Expect `"stage_mode": "mock"`, `"s3_prefix": "castrol-dryrun/"` and
+`"mode_guard": "ok"`. Anything else - stop.
+
+```bash
+castrol --dryrun --bg cycle --lookback-days 7
+```
+
+**`--dryrun` must come first on every command in the rehearsal.** Without it
+the real `.env` is mounted. It is a flag rather than an environment variable on
+purpose: `sudo` drops environment variables, a flag cannot be dropped.
+
+### 6. Look at it
+
+```bash
+castrol --dryrun report
+```
+
+```bash
+castrol --dryrun find --status failed
+```
+
+```bash
+castrol --dryrun events <any id from the list>
+```
+
+```bash
+castrol --dryrun run <a failed id> --retry
+```
+
+- Roughly 75% of jobs should be `completed`, and the failures split across image
+  rejections, video timeouts, and audio errors that recovered on retry.
+- Open 3-4 CDN links from `castrol --dryrun show <id>` and check the card: long
+  names, long addresses, the phone number.
+- The admin panel shows these jobs - check Jobs and Failures read correctly for
+  the client. Do not give the client a login until after step 7.
+- Every job logs one `checks.failed` warning for `bitrate_plausible`. **Expected
+  here:** a still frame compresses far below real video. The check is
+  non-blocking and real renders pass it.
+- Reboot test: `sudo reboot` mid-cycle, then run the step-5 command again and
+  confirm it carries on. (The timer is off, so the boot run does not fire.)
+
+### 7. Wipe before launch
+
+Real `.env` - no `--dryrun`:
+
+```bash
+castrol reset-for-launch
+```
+
+It lists every table and row count, keeps `plates`, `vendor_limits`, the panel
+logins and the migrations ledger, and wipes only when you type `RESET`.
+
+Then, from an **admin** session (`castrol-local` cannot delete):
+
+```bash
+aws s3 rm s3://<S3_BUCKET>/castrol-dryrun/ --recursive
+```
+
+**Only `castrol-dryrun/`.** Never `castrol/` - it holds the plates, the uniform
+references and the real renders.
+
+```bash
+sudo rm /opt/castrol-video-pipeline/.env.dryrun
+```
+
+```bash
+castrol doctor
+```
+
+Expect `"rehearsal_residue": {"mock_runs": 0, "dryrun_assets": 0}` and
+`"mode_guard": "ok"`. If you skipped the wipe, every real command refuses here
+with a message naming `reset-for-launch`.
+
+### 8. Launch
+
+The first real run reaches back to the campaign's first submission - a normal
+cycle only looks back one day:
+
+```bash
+castrol --bg cycle --lookback-days <days since first submission>
+```
+
+```bash
+sudo systemctl enable --now castrol-cycle.timer
+```
+
+---
+
 ## After a restart
 
 Nothing needs doing. The pipeline keeps no state outside Postgres: readiness is

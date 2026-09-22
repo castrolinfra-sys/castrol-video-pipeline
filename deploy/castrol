@@ -10,6 +10,13 @@
 #   castrol run 9773128990                   drive that ONE job to a finish (SPENDS, asks)
 #   castrol --bg run 9773128990 --yes        same, detached - survives the SSM session closing
 #
+# The rehearsal mounts .env.dryrun instead of .env - the only thing that differs:
+#   castrol --dryrun doctor
+#   castrol --dryrun --bg cycle --lookback-days 7
+# A FLAG, deliberately not an environment variable: `sudo` drops environment
+# variables, so `sudo CASTROL_ENV_FILE=... castrol cycle` would have silently
+# mounted the REAL .env and turned a rehearsal into a paid run.
+#
 # Why a wrapper and not `docker exec`: there is no long-running container to exec
 # into. The cycle is a oneshot, so between runs nothing is up. Each command is a
 # fresh container of the SAME image tag as the timer (/etc/castrol-image.env),
@@ -27,7 +34,8 @@
 set -eu
 
 IMAGE_ENV=/etc/castrol-image.env
-ENV_FILE=/opt/castrol-video-pipeline/.env
+REAL_ENV=/opt/castrol-video-pipeline/.env
+DRYRUN_ENV=/opt/castrol-video-pipeline/.env.dryrun
 # `always` matches the timer, so a merge to main is what runs here too. Set
 # CASTROL_PULL=missing to skip the registry round trip on quick reads.
 PULL="${CASTROL_PULL:-always}"
@@ -37,9 +45,24 @@ PULL="${CASTROL_PULL:-always}"
 : "${CASTROL_IMAGE:?castrol: CASTROL_IMAGE not set in $IMAGE_ENV}"
 
 bg=0
-if [ "${1:-}" = "--bg" ]; then bg=1; shift; fi
+ENV_FILE=$REAL_ENV
+tag=castrol-manual
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --bg) bg=1; shift ;;
+        --dryrun) ENV_FILE=$DRYRUN_ENV; tag=castrol-dryrun; shift ;;
+        *) break ;;
+    esac
+done
+
+# The pipeline itself refuses a mock run under the real S3 prefix and a real run
+# over rehearsal data (dryrun.py). This only chooses which file is mounted.
+sudo test -r "$ENV_FILE" || { echo "castrol: $ENV_FILE does not exist" >&2; exit 78; }
+if [ "$tag" = castrol-dryrun ]; then
+    echo "castrol: DRY RUN - mounting $ENV_FILE" >&2
+fi
 if [ $# -eq 0 ]; then
-    echo "usage: castrol [--bg] <command> [args]    e.g. castrol find 9773128990" >&2
+    echo "usage: castrol [--dryrun] [--bg] <command> [args]    e.g. castrol find 9773128990" >&2
     exit 64
 fi
 
@@ -51,12 +74,12 @@ if [ "$bg" = 1 ]; then
                 exit 64 ;;
             esac ;;
     esac
-    unit="castrol-$1-$(date -u +%Y%m%d-%H%M%S)"
+    unit="$tag-$1-$(date -u +%Y%m%d-%H%M%S)"
     sudo systemd-run --unit="$unit" --uid=castrol --gid=castrol --collect \
         --property=After=docker.service --property=Requires=docker.service \
         /usr/bin/docker run --rm --pull "$PULL" --name "$unit" \
             --volume "$ENV_FILE:/app/.env:ro" \
-            --log-driver journald --log-opt tag=castrol-manual \
+            --log-driver journald --log-opt tag="$tag" \
             "$CASTROL_IMAGE" "$@"
     echo "started $unit"
     echo "  follow:  journalctl -u $unit -f -o cat"
@@ -69,5 +92,5 @@ if [ -t 0 ] && [ -t 1 ]; then tty="-it"; fi
 # shellcheck disable=SC2086 # $tty is deliberately unquoted: empty or one flag
 exec sudo -u castrol -H /usr/bin/docker run --rm $tty --pull "$PULL" \
     --volume "$ENV_FILE:/app/.env:ro" \
-    --log-driver journald --log-opt tag=castrol-manual \
+    --log-driver journald --log-opt tag="$tag" \
     "$CASTROL_IMAGE" "$@"

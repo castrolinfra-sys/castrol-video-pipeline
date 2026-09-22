@@ -351,7 +351,13 @@ def run_cycle(
             record_event("cycle.skipped", level="warning", reason="lock_held")
             return {**summary, "skipped": True, "reason": "another cycle holds the lock"}
 
-        log.info("cycle.start", deadline_minutes=deadline_minutes, fetch=fetch)
+        # Before intake, not at the first schedule: a real cycle over rehearsal
+        # data would otherwise pull and dedupe first, and only then refuse.
+        from .orchestrator import _checked_mode
+
+        summary["stage_mode"] = _checked_mode()
+        log.info("cycle.start", deadline_minutes=deadline_minutes, fetch=fetch,
+                 stage_mode=summary["stage_mode"])
 
         if fetch:
             from_date, to_date = intake_window(lookback_days)

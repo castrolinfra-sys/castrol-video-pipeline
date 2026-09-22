@@ -157,6 +157,21 @@ class Settings(BaseSettings):
     # This is what makes the orchestrator provable without spending money.
     use_stub_stages: bool = False
 
+    # The rehearsal mode. `mock` runs the REAL free stages (prep, composite,
+    # checks, publish, deliver) and fakes only the three paid ones, so a dry
+    # run pulls the client's real export and burns the real card, and spends
+    # nothing. See stages/mocks.py for the guards that keep it from mixing
+    # with a real run. `stub` is the same as USE_STUB_STAGES=true.
+    stage_mode: Literal["real", "stub", "mock"] = "real"
+
+    #: Which jobs a mock run fails, and how: "stage:CODE:percent,...", e.g.
+    #: "image:VENDOR_REJECTED:10,video:VENDOR_TIMEOUT:5,audio:TRANSIENT:10".
+    #: Picked by a hash of the job id, so a re-run fails the same jobs.
+    mock_failures: str = ""
+    #: How long a mock image / video "renders" before its poll returns.
+    mock_image_seconds: int = 20
+    mock_video_seconds: int = 120
+
     # The deliver stage POSTs a real URL to the client's real webhook, which is
     # the one irreversible action in the pipeline. It stays OFF and logs what it
     # would have sent until the client confirms the contract — an accidental
@@ -176,6 +191,11 @@ class Settings(BaseSettings):
     #: of that. Still well inside the deadline, so a hung task cannot outlive
     #: the run that submitted it.
     vendor_task_timeout_s: int = 7200
+
+    @property
+    def effective_stage_mode(self) -> str:
+        """USE_STUB_STAGES predates STAGE_MODE and still means stub."""
+        return "stub" if self.use_stub_stages else self.stage_mode
 
     @property
     def video_is_pro(self) -> bool:

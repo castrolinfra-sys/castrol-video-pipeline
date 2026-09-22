@@ -135,6 +135,22 @@ On EC2 it is `castrol run …` through [`deploy/castrol`](deploy/castrol), and
 uv run castrol run 9773128990
 ```
 
+**The rehearsal** - `STAGE_MODE=mock`: real export, real free stages, only
+audio/image/video faked, failures injected by `MOCK_FAILURES`, nothing spent or
+sent. Shares the real database, so the code keeps the two apart: mock refuses
+unless `S3_PREFIX=castrol-dryrun/` and delivery is off; real refuses while any
+`vendor='mock'` run or `castrol-dryrun/` asset remains. On EC2 every rehearsal
+command is `castrol --dryrun ...` (a flag, because `sudo` drops env vars). Step
+by step: [`deploy/README.md`](deploy/README.md#rehearsal-before-launch-dry-run).
+-> [`stages/mocks.py`](src/castrol_pipeline/stages/mocks.py), [`dryrun.py`](src/castrol_pipeline/dryrun.py)
+
+Empty the job tables before launch. Keeps plates, `vendor_limits`, panel logins
+and the ledger; asks for `RESET`:
+
+```bash
+uv run castrol reset-for-launch
+```
+
 ```bash
 uv run castrol drain
 ```
@@ -527,6 +543,8 @@ rules, not application code.
 | Any identifier → job | [`jobref.py`](src/castrol_pipeline/jobref.py) |
 | One job to a finish (`castrol run`), per-job lock | [`jobrun.py`](src/castrol_pipeline/jobrun.py) |
 | The `castrol` command on the EC2 box | [`deploy/castrol`](deploy/castrol) |
+| Rehearsal: mock paid stages, failure injection | [`stages/mocks.py`](src/castrol_pipeline/stages/mocks.py) |
+| Rehearsal/real guard, `reset-for-launch` | [`dryrun.py`](src/castrol_pipeline/dryrun.py) |
 | systemd units + the EC2 runbook | [`deploy/`](deploy/README.md) |
 | **The EC2 deployment as built** — ids, decisions, what was verified | [`docs/EC2_DEPLOYMENT.md`](docs/EC2_DEPLOYMENT.md) |
 | The eight real stages | [`stages/real.py`](src/castrol_pipeline/stages/real.py) |
