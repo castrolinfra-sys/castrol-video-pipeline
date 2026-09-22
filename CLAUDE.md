@@ -372,10 +372,54 @@ because two ways of under-recovering could not be fixed in the panel at all:
 `0010` is gone. `Math.ceil` in `format.ts` stays as a no-op guard for the day
 someone edits that expression back.
 
-**Jobs fetches `limit(501)` and drops the 501st.** It does not use
-`{ count: "exact" }` — that makes PostgREST run a real `COUNT(*)` over the
-filtered view on every load, a second scan to print a total nobody acts on.
-"First 500" answers the only question that matters.
+**Jobs, Failures and Submissions are PAGINATED — 100 rows a page, numbered.**
+Changed 2026-09-22, replacing a hard cap: Jobs and Submissions showed the first
+500 and nothing after, and Failures read with no limit at all, which is worse —
+Supabase silently truncates an unbounded read at its max-rows setting, so that
+page would have printed a confident total over a partial list. At 532 jobs the
+cap was already hiding 32; the expected volume is ~10k. Shared pieces:
+[`lib/paging.ts`](panel/lib/paging.ts) and [`app/pager.tsx`](panel/app/pager.tsx).
+
+This REVERSES the earlier "`limit(501)`, never `count: exact`" rule, and the
+reason it held no longer does: a total nobody acts on is waste, but with pages
+the total is what says how many there are. `{ count: "exact" }` rides on the
+page query itself, so it costs no extra round trip.
+
+- **Offset, not keyset — measured, not assumed.** Keyset cannot jump to page 40
+  and makes Previous awkward. Offset's cost is that the view's per-row
+  subqueries also run for every row an OFFSET skips: ~5µs each, so the deepest
+  page at 10k rows is ~60ms against 4–5ms for page 1, and `count(*)` is 0.5ms.
+  Every subquery path is indexed. There is no index on `jobs.created_at`;
+  sorting 10k rows does not need one.
+- **`job_id` is a tiebreaker on every paged ORDER BY.** `created_at` is not
+  unique — a batch written in one transaction shares `now()` — and offset pages
+  over a non-total order can repeat or skip a row at the boundary. None share
+  one today; nothing promises that.
+- **A page past the end is not an error screen.** PostgREST answers a range
+  starting beyond the last row with a 416 (`PGRST103`), not an empty page;
+  `isPastEnd()` turns that into a link back to page 1 — the stale-bookmark case.
+- **`page` is in every Suspense key**, for the same reason `range:q` is: paging
+  alters only the query string, so without it no skeleton appears.
+- **Failures embeds its reports** (`job_reports(...)`) rather than reading the
+  whole table, so that read is bounded by the page, and counts **untriaged**
+  across ALL failures with an anti-join (`.is("job_reports", null)` on an empty
+  embed) — one exact COUNT however many pages there are.
+- **The Jobs heading's totals come from a SQL function, `job_usage_totals`**
+  ([`0015`](supabase/migrations/0015_job_usage_totals.sql)) — jobs, delivered and
+  seconds of video, exact across every page for the current window and search.
+  PostgREST aggregates are disabled on this project (`PGRST123`), and a sum over
+  the visible page would read as a total while being one page's worth. Not
+  `db-aggregates-enabled` instead: that opens sum/avg over every exposed table to
+  any caller, a project-wide surface for one heading. EXECUTE is revoked from
+  `anon`/`authenticated`. **The function restates the page's date window and
+  search in SQL — change one, change both.** Verified equal to the table's own
+  query path for all five ranges and both kinds of search, 1.9ms over all rows.
+  If the panel ships before the migration is applied, the call returns
+  `PGRST202` and the heading simply omits the totals instead of erroring.
+- **Submissions discovers its columns per page**, so a field present only in
+  rows on a later page is not a column on page 1 — those rows did not carry it.
+- Under 520px the numbered row gives way to "Page N of M", because Previous,
+  seven numbers and Next do not fit in 343px and wrapping orphaned Next.
 
 **Jobs STREAMS, and the page itself fetches nothing.** It returns the shell
 and the filter chips immediately and awaits the table inside a `<Suspense>`
@@ -521,7 +565,7 @@ keyed on the file's name so a re-run cannot claim a second apply. It did not
 always: 0001–0003 were registered by the Supabase tooling and 0004–0005 were
 not, and a HALF-populated ledger is worse than none, because `supabase db push`
 reads it and would treat applied migrations as pending. Both were backfilled;
-0001–0014 are now applied and registered.
+0001–0015 are now applied and registered.
 
 ### AWS
 
@@ -1136,7 +1180,7 @@ a deploy. The review gate that removes is real — see the Docker / CI section.
 **The pipeline runs end to end under the orchestrator** against real Supabase,
 real S3 and the real CDN. All eight stages are implemented in
 `stages/real.py`; `USE_STUB_STAGES=true` still swaps in deterministic fakes to
-exercise the DAG without spending. Migrations 0001–0014 are applied.
+exercise the DAG without spending. Migrations 0001–0015 are applied.
 
 Verified on a real job: seed → prep → composite → checks → publish → deliver,
 with the delivered CDN URL returning 200. The three paid stages are the same

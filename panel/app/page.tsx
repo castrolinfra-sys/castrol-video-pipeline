@@ -3,15 +3,15 @@ import Link from "next/link";
 import { Filters } from "./filters";
 import { PageHead } from "./ui";
 import { Problem } from "./problem";
+import { Pager, PastEnd } from "./pager";
 import { Bar, Loading, SkeletonRows } from "./skeleton";
 import { db, queryDeadline } from "@/lib/db";
 import { duration, num, pill, secs, ts } from "@/lib/format";
+import { isPastEnd, pageBounds, pageCount, parsePage } from "@/lib/paging";
 import { bounds, isRange, type RangeKey } from "@/lib/range";
 
 export const metadata = { title: "Jobs" };
 export const dynamic = "force-dynamic";
-
-const PAGE_SIZE = 500;
 
 // The page itself fetches nothing, and that is the point.
 //
@@ -28,15 +28,18 @@ const PAGE_SIZE = 500;
 export default async function Jobs({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; range?: string }>;
+  searchParams: Promise<{ q?: string; range?: string; page?: string }>;
 }) {
   const params = await searchParams;
   const q = (params.q ?? "").trim();
   const range: RangeKey = isRange(params.range) ? params.range : "7d";
+  const page = parsePage(params.page);
 
+  // `page` is in the key for the same reason range and q are: without it,
+  // paging is a same-segment navigation and the skeleton never shows.
   return (
-    <Suspense key={`${range}:${q}`} fallback={<JobsPending q={q} range={range} />}>
-      <JobsTable q={q} range={range} />
+    <Suspense key={`${range}:${q}:${page}`} fallback={<JobsPending q={q} range={range} />}>
+      <JobsTable q={q} range={range} page={page} />
     </Suspense>
   );
 }
@@ -62,63 +65,120 @@ function JobsPending({ q, range }: { q: string; range: RangeKey }) {
 // Reads job_usage (migration 0007), not `jobs` joined to anything. That view
 // carries no cost, vendor, model or stage column, so nothing on this page can
 // grow one by accident.
-async function JobsTable({ q, range }: { q: string; range: RangeKey }) {
-  const { from, to } = bounds(range);
+async function JobsTable({ q, range, page }: { q: string; range: RangeKey; page: number }) {
+  const span = bounds(range);
 
-  let query = db
+  // Both identifiers, one box. The mechanic ID is what the client's own system
+  // calls this person; the WhatsApp number is what they are reached on. Someone
+  // chasing a specific mechanic has one or the other to hand.
+  //
+  // PostgREST builds `or=` from a comma- and dot-separated grammar, and SQL LIKE
+  // reads % and _ as wildcards. Both sets are stripped rather than escaped: a
+  // mechanic ID or a phone number contains none of them, so there is nothing to
+  // lose, and a search box that can extend the filter it is interpolated into
+  // is a search box that can read other columns. Stripped ONCE, here, because
+  // the same string goes to the rows and to the totals.
+  const term = q.replace(/[%_,.()*\\]/g, "");
+
+  let rowsQuery = db
     .from("job_usage")
     .select(
       "job_id, status, created_at, failure_reason, mechanic_id, " +
         "whatsapp_number, user_name, workshop_name, video_seconds, video_url",
-    )
-    .order("created_at", { ascending: false })
-    // 500 is the cap; the 501st row is fetched only to find out whether there
-    // IS one, then dropped. This replaced `{ count: "exact" }`, which makes
-    // PostgREST run a real COUNT(*) over the filtered view on every page load
-    // — a second scan, to print a number nobody acts on. "First 500" answers
-    // the only question that matters: am I seeing everything?
-    .limit(PAGE_SIZE + 1)
-    // Without this the fetch has no deadline and a stalled read waits forever.
-    .abortSignal(queryDeadline());
-
-  if (from) query = query.gte("created_at", from);
-  if (to) query = query.lt("created_at", to);
-
-  // Both identifiers, one box. The mechanic ID is what the client's own system
-  // calls this person; the WhatsApp number is what they are reached on. Someone
-  // chasing a specific mechanic has one or the other to hand, not both.
-  if (q) {
-    // PostgREST builds `or=` from a comma- and dot-separated grammar, and SQL
-    // LIKE reads % and _ as wildcards. Both sets are stripped rather than
-    // escaped: a mechanic ID or a phone number contains none of them, so there
-    // is nothing to lose, and a search box that can extend the filter it is
-    // interpolated into is a search box that can read other columns.
-    const like = `%${q.replace(/[%_,.()*\\]/g, "")}%`;
-    query = query.or(`mechanic_id.ilike.${like},whatsapp_number.ilike.${like}`);
+      { count: "exact" },
+    );
+  if (span.from) rowsQuery = rowsQuery.gte("created_at", span.from);
+  if (span.to) rowsQuery = rowsQuery.lt("created_at", span.to);
+  if (term) {
+    rowsQuery = rowsQuery.or(`mechanic_id.ilike.%${term}%,whatsapp_number.ilike.%${term}%`);
   }
 
-  const { data: jobs, error } = await query;
-  if (error) return <Problem what="jobs" message={error.message} />;
+  const { from, to } = pageBounds(page);
 
-  const fetched = jobs ?? [];
-  const truncated = fetched.length > PAGE_SIZE;
-  const rows = truncated ? fetched.slice(0, PAGE_SIZE) : fetched;
-  const delivered = rows.filter((j: any) => j.status === "completed");
-  const totalSeconds = delivered.reduce(
-    (n: number, j: any) => n + Number(j.video_seconds ?? 0),
-    0,
-  );
+  // Two queries, in parallel.
+  //
+  // The rows, with `count: "exact"` riding on them so the page count costs no
+  // extra round trip. Measured on the live view: a page 4-5ms, and the deepest
+  // page at ~10k rows extrapolates to ~60ms - the view's per-row subqueries
+  // also run for every row an OFFSET skips, at ~5us each.
+  //
+  // And the heading's totals - jobs, delivered, seconds of video - exact across
+  // EVERY page, from `job_usage_totals` (migration 0015). A sum over the rows
+  // on screen would read as a total while being one page's worth, and
+  // PostgREST aggregates are off on this project, so the sum is done in SQL.
+  // That function restates the window and search above in SQL, so the two MUST
+  // stay in step: it was verified against this exact query path for every range
+  // and for both kinds of search when it was written. Change one, change both.
+  const [rowsQ, totalsQ] = await Promise.all([
+    rowsQuery
+      .order("created_at", { ascending: false })
+      // Tiebreaker. created_at is not unique - a batch written in one transaction
+      // shares `now()` - and offset pages over a non-total order can repeat or
+      // skip a row at the boundary. None share one today; nothing promises that.
+      .order("job_id", { ascending: false })
+      .range(from, to)
+      // Without this the fetch has no deadline and a stalled read waits forever.
+      .abortSignal(queryDeadline()),
+    db
+      .rpc("job_usage_totals", {
+        p_from: span.from ?? null,
+        p_to: span.to ?? null,
+        p_q: term || null,
+      })
+      .abortSignal(queryDeadline())
+      .single(),
+  ]);
+
+  const params: Record<string, string> = { range };
+  if (q) params.q = q;
+
+  if (isPastEnd(rowsQ.error)) {
+    return (
+      <>
+        <PageHead title="Jobs" />
+        <Filters action="/" q={q} range={range} />
+        <PastEnd path="/" params={params} />
+      </>
+    );
+  }
+  if (rowsQ.error) return <Problem what="jobs" message={rowsQ.error.message} />;
+
+  // PGRST202 is "no such function" - the panel deployed before migration 0015
+  // was applied. That degrades to a heading without the totals rather than to
+  // an error page, so the deploy order cannot take the Jobs table down with it.
+  // Any other failure of the totals is a real one and says so.
+  const totalsMissing = totalsQ.error?.code === "PGRST202";
+  if (totalsQ.error && !totalsMissing) {
+    return <Problem what="job totals" message={totalsQ.error.message} />;
+  }
+  const totals = totalsMissing
+    ? null
+    : (totalsQ.data as { jobs: number; delivered: number; seconds: number | string });
+
+  const rows = rowsQ.data ?? [];
+  const total = rowsQ.count ?? rows.length;
+  const pages = pageCount(total);
   return (
     <>
       <PageHead
         title="Jobs"
         meta={
           <>
-            {truncated ? `First ${num(PAGE_SIZE)}` : `${num(rows.length)} shown`}
-            <Sep />
-            {num(delivered.length)} delivered
-            <Sep />
-            {duration(totalSeconds)} of video
+            {num(total)} {total === 1 ? "job" : "jobs"}
+            {totals ? (
+              <>
+                <Sep />
+                {num(Number(totals.delivered))} delivered
+                <Sep />
+                {duration(totals.seconds)} of video
+              </>
+            ) : null}
+            {pages > 1 ? (
+              <>
+                <Sep />
+                page {num(page)} of {num(pages)}
+              </>
+            ) : null}
           </>
         }
       />
@@ -199,6 +259,8 @@ async function JobsTable({ q, range }: { q: string; range: RangeKey }) {
           </table>
         </div>
       )}
+
+      <Pager path="/" params={params} page={page} total={total} label="Jobs" />
     </>
   );
 }

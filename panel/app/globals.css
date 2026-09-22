@@ -498,6 +498,41 @@ a.range[aria-current="true"] {
 }
 a.btn { text-decoration: none; display: inline-block; }
 
+/* ---- pager -----------------------------------------------------------------
+   Under the table, where you are when you finish reading a page. Wraps on a
+   phone rather than squeezing the count against the buttons. A disabled end
+   (Previous on page 1) is a span, not a link, so it takes the same muted
+   treatment as a disabled button and is skipped by Tab. */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s4);
+  margin-top: var(--s3);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+}
+.pager-links { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.pager-pages { display: flex; align-items: center; gap: var(--s1); }
+.pager-compact { display: none; }
+@media (max-width: 520px) {
+  .pager-pages { display: none; }
+  .pager-compact { display: inline; }
+  .pager-links { flex-wrap: nowrap; }
+}
+.pager-pages .btn { min-width: 2.4em; text-align: center; padding-inline: var(--s2); }
+/* The current page is ink on the accent, like an active range chip — it is a
+   "you are here", not a control, so it is a span and never a link. */
+.pager-pages .btn.current {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  cursor: default;
+}
+.btn[aria-disabled="true"] { opacity: 0.55; cursor: default; }
+.btn[aria-disabled="true"]:hover { background: var(--surface); border-color: var(--line-strong); }
+
 /* The in-flight marker on a filter chip.
    ----------------------------------------------------------------------------
    A searchParams-only Link re-renders the same route segment, so loading.tsx

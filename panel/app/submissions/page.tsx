@@ -1,6 +1,10 @@
+import { Suspense } from "react";
 import { db, queryDeadline } from "@/lib/db";
 import { Problem } from "../problem";
-import { ts } from "@/lib/format";
+import { num, ts } from "@/lib/format";
+import { isPastEnd, pageBounds, pageCount, parsePage } from "@/lib/paging";
+import { Pager, PastEnd } from "../pager";
+import { Bar, Loading, SkeletonRows } from "../skeleton";
 import { PageHead } from "../ui";
 
 export const metadata = { title: "Submissions" };
@@ -13,15 +17,50 @@ export const dynamic = "force-dynamic";
 // mechanic_id, the second phone, their own status - and needs them to still be
 // here if they add a column next month. Columns are discovered from the data,
 // so a new field appears without a code change.
-export default async function Submissions() {
-  const { data: rows, error } = await db
+//
+// Streams, keyed on the page, for the reasons written up in app/page.tsx.
+export default async function Submissions({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
+  const page = parsePage((await searchParams).page);
+  return (
+    <Suspense key={page} fallback={<SubmissionsPending />}>
+      <SubmissionsTable page={page} />
+    </Suspense>
+  );
+}
+
+function SubmissionsPending() {
+  return (
+    <Loading>
+      <PageHead title="Submissions" meta={<Bar width="260px" />} />
+      <SkeletonRows cols={10} />
+    </Loading>
+  );
+}
+
+async function SubmissionsTable({ page }: { page: number }) {
+  const { from, to } = pageBounds(page);
+  const { data: rows, count, error } = await db
     .from("export_rows")
-    .select("id, row_index, raw, submission_id, created_at, pull_id")
+    .select("id, row_index, raw, submission_id, created_at, pull_id", { count: "exact" })
     .order("id", { ascending: false })
-    .limit(500)
+    .range(from, to)
     .abortSignal(queryDeadline());
+
+  if (isPastEnd(error)) {
+    return (
+      <>
+        <PageHead title="Submissions" />
+        <PastEnd path="/submissions" params={{}} />
+      </>
+    );
+  }
   if (error) return <Problem what="client export rows" message={error.message} />;
 
+  const total = count ?? rows?.length ?? 0;
   if (!rows?.length) {
     return (
       <>
@@ -33,10 +72,14 @@ export default async function Submissions() {
     );
   }
 
-  // Union of every key seen, first-seen order. A renamed or added client
-  // column shows up here immediately instead of being silently dropped.
-  // The Set is what keeps membership O(1) — this is 500 rows by ~18 keys, and
-  // `cols.includes` made it quadratic (js-set-map-lookups).
+  // Union of every key seen on THIS page, first-seen order. A renamed or added
+  // client column shows up here immediately instead of being silently dropped.
+  // The Set is what keeps membership O(1) — `cols.includes` made it quadratic
+  // (js-set-map-lookups).
+  //
+  // Per page, which means a column that appears only in rows on page 30 is not
+  // a column on page 1. That is the honest reading of "exactly as your system
+  // returned them": these rows did not carry it.
   const cols: string[] = [];
   const seen = new Set<string>();
   for (const r of rows) {
@@ -48,11 +91,17 @@ export default async function Submissions() {
     }
   }
 
+  const pages = pageCount(total);
+
   return (
     <>
       <PageHead
         title="Submissions"
-        meta={`${rows.length} rows, ${cols.length} columns exactly as your system returned them`}
+        meta={
+          `${num(total)} rows` +
+          (pages > 1 ? ` · page ${num(page)} of ${num(pages)}` : "") +
+          `, ${cols.length} columns exactly as your system returned them`
+        }
       />
       <div className="scroll" role="region" aria-label="Client submissions" tabIndex={0}>
         <table>
@@ -96,6 +145,8 @@ export default async function Submissions() {
           </tbody>
         </table>
       </div>
+
+      <Pager path="/submissions" params={{}} page={page} total={total} label="Submissions" />
     </>
   );
 }
