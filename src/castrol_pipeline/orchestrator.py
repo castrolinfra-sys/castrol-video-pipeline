@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import httpx
 from psycopg.types.json import Jsonb
 
 from .common import db
@@ -630,6 +631,18 @@ def _fail_if_overdue(run: dict[str, Any], stage: PipelineStage) -> None:
     )
 
 
+#: Failures of OUR connection while polling or fetching a result, as opposed to
+#: a verdict from the vendor. `httpx.TransportError` covers connect / read /
+#: write / protocol errors and timeouts; ConnectionError and TimeoutError catch
+#: the same thing raised raw from a socket (WinError 10054 is a
+#: ConnectionResetError). A vendor rejection is a PipelineError and is NOT here.
+_TRANSIENT_POLL_ERRORS: tuple[type[BaseException], ...] = (
+    httpx.TransportError,
+    ConnectionError,
+    TimeoutError,
+)
+
+
 def poll_once(*, limit: int = 100, job_id: str | None = None) -> int:
     """Reconcile in-flight async vendor tasks. Returns how many completed."""
     registry = get_stage_registry()
@@ -666,6 +679,25 @@ def poll_once(*, limit: int = 100, job_id: str | None = None) -> int:
                 _persist_result(ctx, run, result)
                 completed += 1
                 log.info("stage.polled_complete", output_key=result.output_key)
+            except _TRANSIENT_POLL_ERRORS as exc:
+                # The vendor task is untouched by OUR connection dropping, so
+                # the run stays `running` and the next pass polls the same
+                # task id again. Failing it here is what cost real money: the
+                # retry path re-SUBMITS, so a render the vendor had already
+                # finished and billed was thrown away and paid for again -
+                # twice on one job on 2026-09-22, both times a WinError 10054
+                # while fetching a completed result. Invariant 13: reconcile,
+                # never resubmit something that may have landed. The overdue
+                # check still bounds a task that never comes back.
+                record_event(
+                    "stage.poll_transient",
+                    job_id=job_id,
+                    stage=str(stage),
+                    stage_run_id=str(run["id"]),
+                    level="warning",
+                    error=str(exc)[:500],
+                )
+                _fail_if_overdue(run, stage)
             except Exception as exc:  # noqa: BLE001
                 code = exc.code if isinstance(exc, PipelineError) else StageErrorCode.INTERNAL
                 delay = retry_delay_for(int(run["attempts"]), code)
