@@ -37,14 +37,34 @@ class StageErrorCode(StrEnum):
     ASSET_MISSING = "ASSET_MISSING"
     FFMPEG_FAILED = "FFMPEG_FAILED"
     CHECK_FAILED = "CHECK_FAILED"
+    DELIVERY_NOT_ACCEPTED = "DELIVERY_NOT_ACCEPTED"
     INTERNAL = "INTERNAL"
 
 
-#: Codes that must not be retried. BUDGET_EXHAUSTED is a hard stop for the day,
-#: not a throttle — retrying it is precisely the bug the budget guard exists to
-#: stop.
+#: Codes that must not be retried, read by `orchestrator.retry_delay_for`.
+#:
+#: BUDGET_EXHAUSTED is a hard stop for the day, not a throttle - retrying it is
+#: precisely the bug the budget guard exists to stop.
+#:
+#: VENDOR_REJECTED means the provider looked at these exact inputs and said no,
+#: so the next attempt sends the same bytes to the same filter and gets the same
+#: answer. Invariant 18 and the comment in `vendors.py:image_poll` both said so
+#: from the start; the policy just never implemented it, and the 2026-09-22
+#: rehearsal measured the consequence - all 57 injected content-safety
+#: rejections carried `attempts = 3`. The wasted money is small because failed
+#: calls are refunded (invariant 24), but `vendor_usage` is deliberately NOT
+#: refund-adjusted, so each rejection burned three reservations against the
+#: daily cap instead of one. A person overrides this with
+#: `castrol run <ref> --retry` (invariant 34), which is the decision that
+#: retrying a rejection actually requires.
+#:
+#: DELIVERY_NOT_ACCEPTED is deliberately NOT here. See invariant 14: the client
+#: webhook has no failure channel, `webhook_accepted()` fails CLOSED on anything
+#: it cannot read, and the retry re-POSTing an identical {phone, videoLink} is
+#: the entire point - the client stores it idempotently, and a missed delivery
+#: is a video a mechanic never gets.
 TERMINAL_STAGE_ERRORS: frozenset[StageErrorCode] = frozenset(
-    {StageErrorCode.BUDGET_EXHAUSTED}
+    {StageErrorCode.BUDGET_EXHAUSTED, StageErrorCode.VENDOR_REJECTED}
 )
 
 

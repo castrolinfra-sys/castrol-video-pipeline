@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from castrol_pipeline.common.errors import StageErrorCode
+from castrol_pipeline.common.errors import TERMINAL_STAGE_ERRORS, StageErrorCode
 from castrol_pipeline.orchestrator import backoff_seconds, retry_delay_for
 from castrol_pipeline.stages.base import (
     DEFAULT_PLAN,
@@ -24,6 +24,26 @@ class TestRetryPolicy:
         # A hard stop for the day, not a throttle. Retrying it is the exact bug
         # the budget guard exists to stop.
         assert retry_delay_for(1, StageErrorCode.BUDGET_EXHAUSTED) is None
+
+    def test_a_vendor_rejection_is_never_retried(self):
+        """Invariant 18: the same inputs trip the same filter.
+
+        Measured on the 2026-09-22 rehearsal, where every one of the 57
+        injected content-safety rejections carried `attempts = 3` - three
+        reservations against the daily cap for one deterministic refusal.
+        """
+        assert retry_delay_for(1, StageErrorCode.VENDOR_REJECTED) is None
+
+    def test_a_delivery_the_client_did_not_accept_IS_retried(self):
+        """Invariant 14. The webhook has no failure channel, so we fail closed
+        and re-POST; the client stores an identical body idempotently. This is
+        the case a blanket "rejected means terminal" rule would have broken."""
+        assert retry_delay_for(1, StageErrorCode.DELIVERY_NOT_ACCEPTED) is not None
+
+    def test_the_policy_reads_the_taxonomy_rather_than_restating_it(self):
+        # The bug was a second copy of the rule inside retry_delay_for.
+        for code in StageErrorCode:
+            assert (retry_delay_for(1, code) is None) == (code in TERMINAL_STAGE_ERRORS)
 
     def test_a_transient_error_is_retried_while_attempts_remain(self):
         assert retry_delay_for(1, StageErrorCode.VENDOR_TIMEOUT) is not None

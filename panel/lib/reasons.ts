@@ -16,6 +16,7 @@ const BY_CODE: Record<string, string> = {
   ASSET_MISSING: "A required file was missing.",
   FFMPEG_FAILED: "The final video could not be assembled.",
   CHECK_FAILED: "The finished video did not pass quality checks.",
+  DELIVERY_NOT_ACCEPTED: "The video was made, but delivery was not confirmed.",
   INTERNAL: "Processing failed unexpectedly.",
 };
 

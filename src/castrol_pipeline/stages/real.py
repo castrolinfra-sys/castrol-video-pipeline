@@ -807,9 +807,17 @@ class DeliverStage:
             phone=ctx.phone_e164,
         )
         if not accepted:
+            # Its own code, and NOT a terminal one. This used to be
+            # VENDOR_REJECTED, which was wrong twice over: the panel translated
+            # it as "the photo was rejected by content checks" on a failure that
+            # has nothing to do with the photo, and once VENDOR_REJECTED became
+            # terminal it would have stopped the retry that invariant 14 is
+            # built on - the client stores an identical {phone, videoLink}
+            # idempotently, so re-POSTing is cheap and a missed delivery is a
+            # video the mechanic never gets.
             raise StageFailure(
                 f"client webhook did not accept the video - {why}",
-                code=StageErrorCode.VENDOR_REJECTED,
+                code=StageErrorCode.DELIVERY_NOT_ACCEPTED,
             )
 
         return StageResult(

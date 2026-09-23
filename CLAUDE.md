@@ -842,6 +842,13 @@ nobody ever looks for. `webhook_accepted()` fails CLOSED on anything it cannot
 read — the cost of being wrong that way is a retry POSTing an identical
 `{phone, videoLink}`, which the client stores idempotently.
 
+That retry is why a rejected delivery has its OWN code, `DELIVERY_NOT_ACCEPTED`,
+and is **not** in `TERMINAL_STAGE_ERRORS`. It used to raise `VENDOR_REJECTED`,
+which was wrong twice: the panel translated it as "the photo was rejected by
+automated content checks" on a failure that has nothing to do with the photo,
+and when invariant 18 was finally enforced it would have made a missed delivery
+terminal — a finished video nobody ever sends.
+
 **15. Copy provider result URLs to our storage immediately.**
 *`stages/vendors.py:download`, called in each stage's `poll()`*
 Treat a provider URL as valid for the duration of the handler and no longer.
@@ -868,6 +875,19 @@ references at ~4.
 this exact model. Swapping a real person into a branded plate is precisely the
 trigger. Needs a softened-prompt retry path and a visible terminal state.
 *`stages/vendors.py:image_poll` raises `VendorRejected`, which is not retryable — the same inputs trip the same filter*
+
+**That sentence was aspirational until 2026-09-23 and is now true.** The code
+said it, this invariant said it, and `retry_delay_for` restated the rule as a
+bare `code == BUDGET_EXHAUSTED` instead of reading `TERMINAL_STAGE_ERRORS`, so
+every rejection was retried to `STAGE_MAX_ATTEMPTS`. The rehearsal measured it:
+all 57 injected content-safety rejections carried `attempts = 3`. The money was
+small (failed calls refund, invariant 24) but `vendor_usage` is deliberately NOT
+refund-adjusted, so each one burned three reservations against the daily cap.
+`VENDOR_REJECTED` is in `TERMINAL_STAGE_ERRORS` now and the policy reads the set
+rather than restating it; `castrol run <ref> --retry` is the human override
+(invariant 34). Two sites had to stop borrowing the code first, because both are
+things a second attempt genuinely fixes: the voice provider raises
+`VendorTimeout` on 5xx/429, and `download()`'s 200-with-HTML is `INTERNAL`.
 
 **19. Log which provider was tried and why it lost.**
 *`common/events.py`, `job_events`*

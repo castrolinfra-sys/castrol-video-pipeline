@@ -46,9 +46,13 @@ def download(url: str, dst: Path, *, expect_image: bool = False) -> Path:
         r = c.get(url)
         r.raise_for_status()
         if expect_image and not _sniff_is_image(r.content[:16]):
+            # Retryable on purpose: the provider already produced a result, and
+            # a 200 carrying HTML is its CDN having a bad moment, not a refusal.
+            # VENDOR_REJECTED is terminal now, so borrowing it here would throw
+            # away a finished render over one bad GET.
             raise StageFailure(
                 f"{url[:80]} did not return an image (HTML error page?)",
-                code=StageErrorCode.VENDOR_REJECTED,
+                code=StageErrorCode.INTERNAL,
             )
         dst.write_bytes(r.content)
     return dst
@@ -84,6 +88,10 @@ def voice_tts(text: str, *, voice_id: str, model_id: str, dst: Path) -> Path:
                 },
             },
         )
+    if r.status_code >= 500 or r.status_code == 429:
+        # A bad moment, not an answer about this text. Kept separate from the
+        # refusal below because VENDOR_REJECTED is terminal.
+        raise VendorTimeout(f"voice provider {r.status_code}: {r.text[:400]}")
     if r.status_code != 200:
         raise VendorRejected(f"voice provider {r.status_code}: {r.text[:400]}")
     dst.parent.mkdir(parents=True, exist_ok=True)

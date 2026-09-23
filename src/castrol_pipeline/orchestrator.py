@@ -23,7 +23,7 @@ import httpx
 from psycopg.types.json import Jsonb
 
 from .common import db
-from .common.errors import PipelineError, StageErrorCode
+from .common.errors import TERMINAL_STAGE_ERRORS, PipelineError, StageErrorCode
 from .common.events import record_event
 from .common.logging import get_logger, job_context
 from .config import get_settings
@@ -97,13 +97,17 @@ def backoff_seconds(attempts: int) -> int:
 
 
 def retry_delay_for(attempts: int, code: StageErrorCode) -> int | None:
-    """None means terminal: do not schedule another attempt."""
-    settings = get_settings()
-    if code == StageErrorCode.BUDGET_EXHAUSTED:
-        # A hard stop for the day, not a throttle. Retrying this is exactly the
-        # bug the budget guard exists to stop.
+    """None means terminal: do not schedule another attempt.
+
+    Which codes are terminal is decided in ONE place, `TERMINAL_STAGE_ERRORS`,
+    and that set carries the reasoning for each. It used to be restated here as
+    a bare `code == BUDGET_EXHAUSTED`, which is how VENDOR_REJECTED came to be
+    retried three times while both the invariant and the raising code said it
+    must not be - the set existed and nothing read it.
+    """
+    if code in TERMINAL_STAGE_ERRORS:
         return None
-    if attempts >= settings.stage_max_attempts:
+    if attempts >= get_settings().stage_max_attempts:
         return None
     return backoff_seconds(attempts)
 
