@@ -592,6 +592,39 @@ readable in the morning. `castrol run` additionally writes `job.manual_run` and
 journalctl -t castrol-manual --since today -o cat
 ```
 
+### Stopping a `--bg` run
+
+```bash
+systemctl list-units --all 'castrol-*'
+```
+
+```bash
+sudo systemctl stop castrol-dryrun-cycle-20260923-062950
+```
+
+Stopping is always safe: readiness is recomputed from `stage_runs`, so nothing
+is lost and no vendor task is paid for twice. Confirm with `docker ps` and not
+with `systemctl`, because they can disagree:
+
+```bash
+sudo docker ps --filter name=castrol
+```
+
+**`systemctl stop` alone did not stop the container until 2026-09-23, and the
+failure looked exactly like success.** systemd owns the `docker run` CLIENT; the
+container belongs to the docker daemon and sits in its cgroup, so `KillMode`
+never reached it. Stop SIGTERMed the client, the cycle was asleep in its wait
+loop and did not answer, systemd waited out `TimeoutStopSec` and killed the
+client — and the container carried on with nothing attached to it, still
+working, still writing to the database. `deploy/castrol` now attaches
+`ExecStopPost=-docker stop -t 30 <unit>` to the transient unit, which is what
+makes the command above true. On a box whose `/usr/local/bin/castrol` predates
+that change, stop the container directly:
+
+```bash
+sudo docker stop castrol-dryrun-cycle-20260923-062950
+```
+
 ---
 
 ## Rehearsal before launch (dry run)

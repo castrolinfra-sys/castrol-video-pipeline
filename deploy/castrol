@@ -30,7 +30,8 @@
 # --bg matters for `run`: a render is 8-20 minutes and an SSM session that drops
 # kills a foreground process. Killing one loses nothing - the job resumes on the
 # next `run` or cycle - but a detached unit just finishes. Follow it with the
-# `journalctl -u` line it prints.
+# `journalctl -u` line it prints, and stop it with the `systemctl stop` line -
+# which works because of the ExecStopPost below, and did NOT before it.
 set -eu
 
 IMAGE_ENV=/etc/castrol-image.env
@@ -75,8 +76,27 @@ if [ "$bg" = 1 ]; then
             esac ;;
     esac
     unit="$tag-$1-$(date -u +%Y%m%d-%H%M%S)"
+    # ExecStopPost is what makes `systemctl stop` actually stop anything.
+    #
+    # systemd only owns the `docker run` CLIENT. The container belongs to the
+    # docker daemon and lives in ITS cgroup, so the default KillMode never
+    # reaches it: stop SIGTERMs the client, the client forwards it, the cycle is
+    # asleep in its wait loop and does not answer, systemd waits out
+    # TimeoutStopSec and SIGKILLs the client - and the container carries on with
+    # nothing attached to it. Measured 2026-09-23: `systemctl stop` appeared to
+    # hang, and `docker ps` afterwards still showed the cycle up and running.
+    #
+    # The container is named after the unit precisely so this line can find it.
+    # The `-` prefix matters: a container that already exited on its own is not
+    # a failure and must not leave the unit in `failed`. 30s is docker's own
+    # SIGTERM-then-SIGKILL grace, and TimeoutStopSec is cut to 30 so a stop does
+    # not sit through the default 90s first - the container is being killed
+    # either way, and killing it loses nothing, because readiness is recomputed
+    # from stage_runs on the next run.
     sudo systemd-run --unit="$unit" --uid=castrol --gid=castrol --collect \
         --property=After=docker.service --property=Requires=docker.service \
+        --property=TimeoutStopSec=30 \
+        --property="ExecStopPost=-/usr/bin/docker stop -t 30 $unit" \
         /usr/bin/docker run --rm --pull "$PULL" --name "$unit" \
             --volume "$ENV_FILE:/app/.env:ro" \
             --log-driver journald --log-opt tag="$tag" \
@@ -84,6 +104,7 @@ if [ "$bg" = 1 ]; then
     echo "started $unit"
     echo "  follow:  journalctl -u $unit -f -o cat"
     echo "  status:  systemctl status $unit"
+    echo "  stop:    sudo systemctl stop $unit"
     exit 0
 fi
 
