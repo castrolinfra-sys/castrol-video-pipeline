@@ -441,6 +441,29 @@ page query itself, so it costs no extra round trip.
 - Under 520px the numbered row gives way to "Page N of M", because Previous,
   seven numbers and Next do not fit in 343px and wrapping orphaned Next.
 
+**`.scroll` is `position: relative`, and removing it costs the page thousands
+of pixels of empty scroll.** Found 2026-09-23 from a screenshot: the table
+clipped correctly, the pager sat right under it, and then the page went on
+scrolling through ~3,500px of bare background. `.visually-hidden` is
+`position: absolute` with auto offsets, and every row's "Watch" link carries
+one. Against a STATIC scroller those spans resolve against the initial
+containing block rather than the box that clips them, so a row 4,000px down the
+table placed an absolutely positioned box 4,000px down the DOCUMENT, and `html`
+grew by the table's whole overflow. Measured at 100 rows: a 4,206px document
+for 711px of content; 759px with the one line. It is not needed for the sticky
+header - `relative` neither helps nor harms that - so nothing else in the file
+explains why it is there.
+
+**The shell is a flex column and ends in a `.foot`.** `body` is
+`min-height: 100dvh` with `main { flex: 1 }`, so the footer's `margin-top: auto`
+puts it at the bottom of the window on a three-row Failures page instead of
+half way up it. It exists because a table that simply stops, with the ground
+colour running on below it, reads as a page that failed to finish loading. It
+says only things true on every page and every row, which is why it names the
+campaign and the timezone and nothing else - it is rendered for a signed-in
+admin only, like the header, because `/login` is one card on an empty ground
+and a rule across the bottom of it would be furniture.
+
 **Jobs STREAMS, and the page itself fetches nothing.** It returns the shell
 and the filter chips immediately and awaits the table inside a `<Suspense>`
 boundary, because awaiting the whole query first means one slow read holds up

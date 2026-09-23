@@ -100,6 +100,23 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </header>
         )}
         <main id="main">{children}</main>
+        {/* Only when signed in, like the header: /login is one card on an empty
+            ground and a rule across the bottom of it would be furniture.
+            Both lines are things that are true on every page and on every
+            row - IST is the timezone every "Created" column is printed in. */}
+        {admin && (
+          <footer className="foot">
+            <span>
+              {/* translate="no" on the mark alone - the words after it are
+                  prose and should translate with the rest of the page. */}
+              <span translate="no">
+                Castrol<b>&nbsp;MAGNATEC</b>
+              </span>{" "}
+              — mechanic video delivery
+            </span>
+            <span>All times shown in IST</span>
+          </footer>
+        )}
       </body>
     </html>
   );
