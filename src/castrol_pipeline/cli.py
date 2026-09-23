@@ -12,6 +12,7 @@
     find        any identifier -> job(s), or list jobs    -> jobref.py
     run         drive ONE job to a finish (SPENDS)        -> jobrun.py
     reset-for-launch  wipe rehearsal job data, keep plates -> dryrun.py
+    seed-panel-data   fabricate panel history (mock only)  -> panelseed.py
     drain       sweep every stage until nothing moves     -> orchestrator.py
     show        one job: runs, cost, assets, checks       -> seed.py:describe
     events      one job's durable timeline                -> common/events.py
@@ -663,6 +664,47 @@ def report(batch_id: Annotated[str | None, typer.Option(help="Defaults to latest
             default=str,
         )
     )
+
+
+@app.command("seed-panel-data")
+def seed_panel_data_cmd(
+    days: Annotated[int, typer.Option("--days", help="How many days of history")] = 14,
+    per_day: Annotated[int, typer.Option("--per-day", help="Average jobs per day")] = 40,
+    seed_value: Annotated[
+        int, typer.Option("--seed", help="Same seed, same history")
+    ] = 20260923,
+) -> None:
+    """Fabricate panel history: N days of finished jobs, with durations.
+
+    For checking the admin panel, not for checking the pipeline. A rehearsal
+    dates every job today, which is the wrong shape for a usage chart. This
+    writes rows straight in, then re-reads `daily_usage`, `job_usage` and
+    `job_usage_totals` and prints whether they agree with what it inserted -
+    so a wrong number on screen is either a view bug or a panel bug, and you
+    can tell which. Mock mode only. Removed by `reset-for-launch`.
+    """
+    _boot()
+    from .panelseed import seed, verify
+
+    expected = seed(days=days, per_day=per_day, seed_value=seed_value)
+    result = verify(expected)
+    typer.echo(json.dumps({
+        "seeded": {
+            "jobs": expected.jobs,
+            "completed": expected.completed,
+            "failed": expected.failed,
+            "running": expected.running,
+            "seconds_of_video": expected.seconds,
+            "reported_failures": expected.reports,
+            "days": len(expected.per_day),
+        },
+        "views_agree": result["agree"],
+        "checks": {k: v for k, v in result.items() if k != "mismatches"},
+        "mismatches": result["mismatches"],
+        "per_day": {str(d): v for d, v in sorted(expected.per_day.items())},
+    }, indent=2, default=str))
+    if not result["agree"]:
+        raise typer.Exit(1)
 
 
 @app.command("reset-for-launch")

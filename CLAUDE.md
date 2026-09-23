@@ -144,6 +144,26 @@ command is `castrol --dryrun ...` (a flag, because `sudo` drops env vars). Step
 by step: [`deploy/README.md`](deploy/README.md#rehearsal-before-launch-dry-run).
 -> [`stages/mocks.py`](src/castrol_pipeline/stages/mocks.py), [`dryrun.py`](src/castrol_pipeline/dryrun.py)
 
+**Panel test data** - N days of finished jobs with durations, written straight
+into the tables. For checking the ADMIN PANEL, not the pipeline: a rehearsal
+dates every job today, which is the wrong shape for a usage chart, date filters
+or paged totals. It then re-reads `daily_usage`, `job_usage` and
+`job_usage_totals` and prints whether they moved by exactly what it inserted -
+so a wrong figure on screen is either a view bug or a panel bug and you can tell
+which. Compared as a DELTA, so it is honest on a database that already holds a
+rehearsal. Mock mode only, tagged `vendor='mock'` under `castrol-dryrun/`, and
+removed by `reset-for-launch`. -> [`panelseed.py`](src/castrol_pipeline/panelseed.py)
+
+```bash
+uv run castrol seed-panel-data --days 21 --per-day 45
+```
+
+The data is chosen to break things rather than to look plausible: durations
+whose ceiling crosses an integer (0014's case), names and workshops at exactly
+the 30/45 intake limits, blank `mechanic_id`s the search has to survive, a
+failure code `lib/reasons.ts` does not know so the generic fallback is
+exercised, and a deliberately partial final day.
+
 Empty the job tables before launch. Keeps plates, `vendor_limits`, panel logins
 and the ledger; asks for `RESET`:
 
@@ -589,6 +609,7 @@ rules, not application code.
 | The `castrol` command on the EC2 box | [`deploy/castrol`](deploy/castrol) |
 | Rehearsal: mock paid stages, failure injection | [`stages/mocks.py`](src/castrol_pipeline/stages/mocks.py) |
 | Rehearsal/real guard, `reset-for-launch` | [`dryrun.py`](src/castrol_pipeline/dryrun.py) |
+| Fabricated panel history + view verification | [`panelseed.py`](src/castrol_pipeline/panelseed.py) |
 | systemd units + the EC2 runbook | [`deploy/`](deploy/README.md) |
 | **The EC2 deployment as built** — ids, decisions, what was verified | [`docs/EC2_DEPLOYMENT.md`](docs/EC2_DEPLOYMENT.md) |
 | The eight real stages | [`stages/real.py`](src/castrol_pipeline/stages/real.py) |
