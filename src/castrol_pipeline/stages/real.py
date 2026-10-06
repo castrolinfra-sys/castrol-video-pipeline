@@ -702,6 +702,33 @@ class PublishStage:
 # --------------------------------------------------------- [deliver] -----
 
 
+def webhook_phone(phone_e164: str) -> str:
+    """The delivery phone in the CLIENT's shape: the bare 10-digit number.
+
+    We store E.164 (`+919773128990`), but the client's webhook spec, re-sent on
+    2026-10-06, posts `"phone": "8355837844"` - and that is also exactly how
+    their own export and Batch 1 CSV spell `whatsapp_number`. The client relays
+    on this value, so `+91...` is a key that may match no mechanic: their
+    endpoint would still answer `success: "true"` and save it, and the video
+    would silently never go out. Sending their own spelling back is the only
+    form we know matches.
+
+    Only the POST changes. Storage, `deliver_hash` and the `deliveries` row stay
+    E.164, so nothing re-delivers because of this.
+    """
+    digits = "".join(ch for ch in phone_e164 if ch.isdigit())
+    if len(digits) == 12 and digits.startswith("91"):
+        digits = digits[2:]
+    if len(digits) != 10:
+        # normalise_phone only ever stores +91 and ten digits; anything else
+        # means the row did not come through intake. Refuse rather than guess.
+        raise StageFailure(
+            f"Delivery phone is not a 10-digit Indian mobile: {phone_e164!r}",
+            code=StageErrorCode.INTERNAL,
+        )
+    return digits
+
+
 def webhook_accepted(status_code: int, body_text: str) -> tuple[bool, str]:
     """Did the client's webhook actually take the video?
 
@@ -769,7 +796,7 @@ class DeliverStage:
     def run(self, ctx: JobContext) -> StageResult:
         s = get_settings()
         url = self._url(ctx)
-        payload = {"phone": ctx.phone_e164, "videoLink": url}
+        payload = {"phone": webhook_phone(ctx.phone_e164), "videoLink": url}
 
         if not s.delivery_enabled:
             record_event(
