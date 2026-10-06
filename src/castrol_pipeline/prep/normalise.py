@@ -48,6 +48,9 @@ def normalise_phone(raw: str | None) -> str | None:
 #: own, last — anchored so it cannot eat a house number mid-string.
 _TRAILING_PIN = re.compile(r"[\s,-]*\b\d{6}\b\s*$")
 
+#: A comma segment that is nothing but a PIN code.
+_PIN_ONLY = re.compile(r"\d{6}")
+
 
 def normalise_address(raw: str | None) -> str | None:
     """Tidy an address. Any shape is legal; only empty is a rejection.
@@ -84,8 +87,16 @@ def spoken_place_from(address: str) -> str:
     very end goes; a house number keeps its digits, and a PIN in the middle of
     an address is left alone because removing it could strip a building number
     that happens to be six digits long.
+
+    A PIN typed as its OWN segment is dropped before the last segment is chosen.
+    Until 2026-10-06 it was not: "Hanamkonda, Telangana, 506001" picked
+    "506001" as the area, the PIN rule then stripped it to nothing, and the
+    `or said` fallback put the six digits straight back - so the voice said the
+    PIN and nothing else. A segment that is only six digits is never a place.
+    If the PIN is all there is, it is kept, as before.
     """
     parts = [p.strip() for p in address.split(",") if p.strip()]
+    parts = [p for p in parts if not _PIN_ONLY.fullmatch(p)] or parts
     said = ", ".join(parts) if len(parts) <= 2 else parts[-1]
     return collapse_whitespace(_TRAILING_PIN.sub("", said)) or said
 

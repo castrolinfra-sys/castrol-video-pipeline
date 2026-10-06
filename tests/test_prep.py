@@ -107,6 +107,11 @@ class TestSpokenPlace:
             ("Ashram chowk opposite ashram metro station 110014",
              "Ashram chowk opposite ashram metro station"),
             ("Beturkar Pada, Opposite Hospital, Andheri 400053", "Andheri"),
+            # The PIN as its own segment. The real Batch 1 row this came from
+            # was spoken as "506001" and nothing else.
+            ("Hanamkonda, Telangana, 506001", "Hanamkonda, Telangana"),
+            ("Shop 4, Auto Nagar, Kurnool, 518003", "Kurnool"),
+            ("Andheri, 400053", "Andheri"),
         ],
     )
     def test_a_trailing_pin_code_is_not_spoken(self, address, said):
