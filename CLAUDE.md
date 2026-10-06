@@ -721,14 +721,18 @@ rupees at ₹100 = $1. The video step is ~96% of it and bills per output second,
 so runtime is the only lever worth pulling. The provider ceils to whole
 seconds, so 24.8s bills as 25s — negligible at a 25s script, a 100% overcharge on a 1s clip.
 
-**`ai-avatar-pro` is the 1080p route and is NOT ruled out.** It was declined on
-2026-09-10 as too expensive, then reinstated on **2026-09-12** when the client
-asked for 1080p: `kling/ai-avatar-standard` returns 720x1280 whatever it is fed
-and `kling/ai-avatar-pro` returns 1072x1920. There is no resolution parameter on
-either endpoint — the model id is the whole switch. The earlier "720x1280 is the
-ceiling" claim measured a *standard* render and generalised it into a property
-of the model; it is a property of the TIER. Do not cite the old decision as
-standing.
+**Standard tier, always. Pro is ruled out — decided 2026-10-06, final.** The
+pipeline runs `kling/ai-avatar-standard` (720x1280) and does not switch to
+`kling/ai-avatar-pro`, the 1080p route at twice the per-second rate. This
+closes the back and forth: pro was declined on 2026-09-10, reinstated on
+2026-09-12 when the client asked for 1080p, and dropped for good before Batch 1.
+Do not propose it, price it, or offer it as an option.
+
+The facts behind it still hold and are worth knowing so nobody re-derives them:
+standard returns 720x1280 whatever it is fed, pro returns 1072x1920, and there is
+no resolution parameter on either endpoint — the model id is the whole switch.
+The code still derives the rate from `VIDEO_MODEL_ID`, so the switch exists; it
+is a decision not to use it, not a missing capability.
 
 **`VIDEO_MODEL_ID` alone decides both what is submitted and what is reserved.**
 `Settings.video_is_pro` derives from it, so the budget cannot disagree with what
