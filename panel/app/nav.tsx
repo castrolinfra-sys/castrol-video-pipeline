@@ -15,11 +15,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+// Usage first, from 2026-10-19. It is the page the client opens to answer
+// "how much have we had", and the order of this list is the only thing that
+// says which page the panel is for. Jobs is still the ROOT route - the two are
+// independent, and swapping which one lives at "/" would change every
+// bookmark and the post-login redirect for a nav decision.
 const LINKS = [
+  { href: "/usage", label: "Usage" },
   { href: "/", label: "Jobs" },
   { href: "/failures", label: "Failures" },
   { href: "/submissions", label: "Submissions" },
-  { href: "/usage", label: "Usage" },
 ] as const;
 
 export function Nav() {

@@ -132,11 +132,36 @@ async function SubmissionsTable({ page }: { page: number }) {
                 {cols.map((c) => {
                   const v = r.raw?.[c];
                   const long = typeof v === "string" && v.length > 60;
+                  const text = long ? v.slice(0, 40) + "…" : String(v ?? "");
+                  // Any http(s) value becomes a link, not `image_url` by name:
+                  // these columns are DISCOVERED from the client's data, so a
+                  // rule keyed on one column name would stop working the day
+                  // they add a second url. Truncation stays - the photo url is
+                  // ~300 characters and would set the width of the table.
+                  //
+                  // rel="noreferrer" is doing work, not boilerplate: the photo
+                  // url is a signed Azure link, and noreferrer also stops the
+                  // panel's own url being sent on as a Referer.
+                  const url = typeof v === "string" && /^https?:\/\//i.test(v) ? v : null;
                   return (
-                    <td key={c} title={long ? v : undefined} className={long ? "mono dim" : undefined}>
-                      {v === undefined || v === null || v === ""
-                        ? <span className="dim">—</span>
-                        : long ? v.slice(0, 40) + "…" : String(v)}
+                    <td
+                      key={c}
+                      title={long ? v : undefined}
+                      className={long && !url ? "mono dim" : undefined}
+                    >
+                      {v === undefined || v === null || v === "" ? (
+                        <span className="dim">—</span>
+                      ) : url ? (
+                        <a href={url} target="_blank" rel="noopener noreferrer">
+                          {text}
+                          <span className="visually-hidden">
+                            {" "}
+                            — {c}, opens in a new tab
+                          </span>
+                        </a>
+                      ) : (
+                        text
+                      )}
                     </td>
                   );
                 })}
