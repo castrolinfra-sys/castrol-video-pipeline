@@ -50,3 +50,8 @@ agent-skills/
 # Note .jpg/.png are NOT ignored by extension anywhere in this repo - only
 # whole directories are - so this line is what keeps these faces out of git.
 final_test/
+
+# The client's approved-mechanics sheet, kept at the repo root by hand. It holds
+# WhatsApp numbers joined to face-photo links (invariant 10), and *.csv is not
+# ignored anywhere, so without this line one `git add .` commits it.
+Castrol Mechanics Approved Data*.csv
