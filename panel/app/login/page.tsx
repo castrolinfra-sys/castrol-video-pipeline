@@ -14,9 +14,11 @@ export default async function Login({
 }) {
   const params = await searchParams;
 
-  // `.screen` centres against the VIEWPORT, not against <main>. main is
-  // max-width:1400px and flush left, so on a monitor wider than that the card
-  // was centred inside the left 1400px and sat visibly left of centre.
+  // `.screen` centres against the VIEWPORT, not against <main>. It was added
+  // when main was capped at 1400px and flush left, so on a wider monitor the
+  // card sat visibly left of centre; main is full width now, but this still
+  // has to be fixed positioning because it must also centre VERTICALLY, which
+  // main cannot do.
   return (
     <div className="screen">
       <div className="center card stack">

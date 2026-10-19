@@ -441,6 +441,31 @@ page query itself, so it costs no extra round trip.
 - Under 520px the numbered row gives way to "Page N of M", because Previous,
   seven numbers and Next do not fit in 343px and wrapping orphaned Next.
 
+**`<main>` is full width, and the cap it used to carry moved to the prose.**
+Changed 2026-10-19. `max-width: 1400px` left a band of dead ground down the
+right of a 1920 screen while the sticky header ran edge to edge, so the table
+looked inset for no reason visible on the page. These pages ARE tables -
+Submissions carries 19 client columns and scrolls sideways at any width, so a
+pixel given back is a column that no longer has to be scrolled to. Nothing
+below 1400px changed, because below 1400px the cap was never doing anything,
+which is what makes this safe for the narrow layouts; measured at 2560, 1920,
+1520, 1280, 768 and 375, `main` matches the header exactly at every one and no
+width overflows the page. What the cap was really protecting is sentences, and
+`.card.stack` (an error, a 404, `<Problem>`) now carries a 72ch measure
+instead. Login is unaffected either way - `.screen` is fixed positioning
+because it centres VERTICALLY, not because main was capped.
+
+**Jobs is sorted OLDEST FIRST; the other three tables are newest first.**
+Changed 2026-10-19 at the client's request: they read Jobs as a batch running
+forward, so page 1 is where the batch started and Next walks towards now,
+rather than the end of the story being on page 1 and the beginning on the last
+page. The `job_id` tiebreaker was flipped with it, but only for reading: a
+group sharing one timestamp now runs the same way as the page. That is
+presentation and NOT correctness - any unique tiebreaker in either direction
+makes the order total, which is the thing paging actually needs. Failures,
+Submissions and Usage were not changed and their captions still say "most
+recent first", correctly.
+
 **`.scroll` is `position: relative`, and removing it costs the page thousands
 of pixels of empty scroll.** Found 2026-09-23 from a screenshot: the table
 clipped correctly, the pager sat right under it, and then the page went on

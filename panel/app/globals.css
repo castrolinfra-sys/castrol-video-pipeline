@@ -224,8 +224,17 @@ main {
   padding-left: max(var(--s5), env(safe-area-inset-left));
   padding-right: max(var(--s5), env(safe-area-inset-right));
   padding-bottom: max(var(--s7), env(safe-area-inset-bottom));
-  max-width: 1400px;
 }
+/* main used to stop at max-width:1400px, which on a 1920 screen left a band of
+   dead ground down the right while the sticky header ran edge to edge - the
+   table looked inset for no reason anyone could see. These pages ARE tables:
+   Submissions carries 19 client columns and scrolls sideways at any width, so
+   every pixel given back is a column that no longer has to be scrolled to.
+   Nothing below 1400px changes, because below 1400px the cap was never doing
+   anything - which is why this cannot affect the narrow layouts.
+
+   What the cap was really protecting is prose, and that is now capped where
+   the prose is (.card.stack), not across the whole page. */
 
 /* ---- page header ----------------------------------------------------------
    One pattern on every page: what this is, then the count that qualifies it. */
@@ -425,6 +434,12 @@ input:hover, textarea:hover { border-color: var(--dim); }
 input::placeholder, textarea::placeholder { color: #a3a3a0; }
 textarea { resize: vertical; min-height: 64px; font-family: var(--font); }
 
+/* The prose cards - an error, a 404, <Problem>. A measure, because these are
+   sentences and main no longer caps the page: without it a one-line apology
+   runs the full width of a wide monitor. Login is inside .center (380px), so
+   this never reaches it. */
+.card.stack { max-width: 72ch; }
+
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -434,9 +449,10 @@ textarea { resize: vertical; min-height: 64px; font-family: var(--font); }
 }
 
 /* A standalone screen (login), centred against the VIEWPORT rather than against
-   <main> — main is max-width:1400px and flush left, so on a wide monitor a card
-   centred inside it sits visibly left of centre. `safe` keeps the top reachable
-   when the card is taller than the window instead of clipping it. */
+   <main>. It predates main going full width - main was capped and flush left,
+   so a card centred inside it sat visibly left of centre - and it stays fixed
+   because it must also centre VERTICALLY, which main cannot do. `safe` keeps
+   the top reachable when the card is taller than the window. */
 .screen {
   position: fixed;
   inset: 0;

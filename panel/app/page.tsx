@@ -111,11 +111,21 @@ async function JobsTable({ q, range, page }: { q: string; range: RangeKey; page:
   // and for both kinds of search when it was written. Change one, change both.
   const [rowsQ, totalsQ] = await Promise.all([
     rowsQuery
-      .order("created_at", { ascending: false })
-      // Tiebreaker. created_at is not unique - a batch written in one transaction
-      // shares `now()` - and offset pages over a non-total order can repeat or
-      // skip a row at the boundary. None share one today; nothing promises that.
-      .order("job_id", { ascending: false })
+      // Oldest first, asked for 2026-10-19. The client reads this as a batch
+      // running forward, so page 1 is where the batch started and Next walks
+      // towards now - a newest-first list puts the end of the story on page 1
+      // and the beginning on the last page.
+      .order("created_at", { ascending: true })
+      // Tiebreaker. created_at is not unique - a batch written in one
+      // transaction shares `now()` - and two tied rows can come back in a
+      // different sequence on the page 1 query than on the page 2 query, which
+      // is how an offset page repeats or skips a row at the boundary. job_id
+      // is unique, so every row gets one reproducible position.
+      //
+      // The DIRECTION is presentation, not correctness: any unique tiebreaker
+      // either way round makes the order total. It is ascending here only so
+      // that a group sharing one timestamp reads the same way as the page.
+      .order("job_id", { ascending: true })
       .range(from, to)
       // Without this the fetch has no deadline and a stalled read waits forever.
       .abortSignal(queryDeadline()),
@@ -198,7 +208,7 @@ async function JobsTable({ q, range, page }: { q: string; range: RangeKey; page:
         >
           <table>
             <caption className="visually-hidden">
-              Jobs, most recent first. Columns: mechanic ID, WhatsApp number,
+              Jobs, oldest first. Columns: mechanic ID, WhatsApp number,
               mechanic, workshop, status, duration, created, video.
             </caption>
             <thead>
