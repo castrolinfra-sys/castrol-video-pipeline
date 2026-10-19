@@ -1,11 +1,15 @@
 import Link from "next/link";
 import { LinkPending } from "./pending";
+import { SearchForm } from "./search-form";
 import { RANGES, type RangeKey } from "@/lib/range";
 
-// Search and date range, as a plain GET form and prefetched links.
+// Search and date range.
 //
-// No client JavaScript: the state lives in the URL, which means a filtered view
-// can be bookmarked, shared in a message, and reloaded without going stale.
+// The state lives in the URL, which means a filtered view can be bookmarked,
+// shared in a message, and reloaded without going stale. The search box is a
+// real <form> with a real action for the same reason - see ./search-form, which
+// intercepts the submit so it is a client transition instead of a full document
+// load, without giving up the form underneath.
 //
 // The range chips are `Link` rather than `<a>`, so changing a filter is a client
 // transition rather than a full document reload. They carry aria-current,
@@ -34,27 +38,7 @@ export function Filters({
 }) {
   return (
     <div className="filters">
-      <form method="get" action={action}>
-        <input type="hidden" name="range" value={range} />
-        <div className="field">
-          <label htmlFor="q">Search</label>
-          <input
-            id="q"
-            type="text"
-            name="q"
-            defaultValue={q}
-            placeholder="Mechanic ID or WhatsApp number…"
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </div>
-        <button type="submit">Search</button>
-        {q && (
-          <Link className="btn" prefetch={false} href={`${action}?range=${range}`}>
-            <LinkPending>Clear</LinkPending>
-          </Link>
-        )}
-      </form>
+      <SearchForm action={action} q={q} range={range} />
 
       <nav className="ranges" aria-label="Date range">
         {(Object.keys(RANGES) as RangeKey[]).map((key) => (

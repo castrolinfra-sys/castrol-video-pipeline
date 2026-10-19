@@ -484,6 +484,25 @@ and surfaces through `<Problem>` — a sentence and a Retry, instead of an
 indefinite hang. Measured healthy reads are 100–300ms, so this is a failure
 valve, not a budget.
 
+**The search box submits through the ROUTER, not as a form GET**
+([`app/search-form.tsx`](panel/app/search-form.tsx), 2026-10-19). It was a bare
+`<form method="get">`, which is a full document load: the browser discards the
+page, asks for the url, and paints nothing new until middleware's `getUser()`
+round trip, the root layout and the page have all finished - the old page
+frozen on screen the whole time. Every bit of work this panel does for that
+wait is client-side and none of it applied, because the keyed `<Suspense>` in
+`app/page.tsx` only shows its skeleton for a navigation the router performs.
+A form GET never reaches the router.
+
+**The query was never the slow part, and that is measured.** Against the live
+view with the search applied, the rows query plans and executes in **1.3ms**,
+and searching costs the same as not searching (72ms vs 72ms of wall clock from
+a desktop, almost all of it network). Do not go looking for an index or a
+trigram extension for this: at 297 rows the leading-wildcard ILIKE is a seq
+scan over 297 rows and the plan is not the problem. The native `<form>` stays
+underneath with its method, action and hidden range field, so with JavaScript
+off the submit is the old full navigation rather than a dead button.
+
 **Filter-chip `<Link>`s set `prefetch={false}`, measured rather than cautious.**
 Each chip otherwise fired its own RSC request on every page load — six requests,
 each running middleware and so each paying a `getUser()` round trip — to warm a
