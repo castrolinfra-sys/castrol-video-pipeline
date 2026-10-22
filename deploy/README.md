@@ -399,8 +399,11 @@ unit mounts this file into a container running as uid 10001, a bind mount keeps
 the host's numeric owner, and `0600` owned by anyone else reads as an empty
 config rather than as a permission error.
 
-`USE_STUB_STAGES` and `DELIVERY_ENABLED` are already `false` in the image, so
-the `.env` only decides when you want them *on*. Leave `DELIVERY_ENABLED=false`
+`USE_STUB_STAGES=false` is set in the image, and an image setting beats the
+`.env`, so a deployed worker can never be switched onto stubs.
+`DELIVERY_ENABLED` is NOT set in the image - it was, as `false`, and that
+silently overrode a `true` in `.env` until 2026-10-22 - so it is off by the
+code's default and the `.env` alone turns it on. Leave `DELIVERY_ENABLED=false`
 for the first real run — turning it on is invariant 28's deliberate act, and by
 invariant 32 the first cycle afterwards reopens every suppressed delivery at
 once.

@@ -67,11 +67,18 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Belt and braces against a run-time surprise: stub stages are the default only
-# when someone says so, and delivery — the one irreversible outward action
-# (invariant 28) — stays off unless the deploy turns it on explicitly.
-ENV USE_STUB_STAGES=false \
-    DELIVERY_ENABLED=false
+# Stub stages are off in the image and STAY off: an image ENV outranks the
+# mounted .env (pydantic-settings reads the process environment first), so
+# nothing in .env can switch a deployed worker onto fakes.
+#
+# DELIVERY_ENABLED is deliberately NOT set here, for exactly that reason. It
+# was, as `false`, and that made delivery impossible to turn on: the worker
+# mounts .env rather than passing --env-file, so the image's `false` beat the
+# .env's `true` and every delivery was suppressed. Found 2026-10-22, when the
+# first four Batch 1 videos logged deliver.suppressed with DELIVERY_ENABLED=true
+# in .env. Off by default still holds - config.py defaults it to False - so the
+# .env alone turns it on, which is what invariant 28 always said it did.
+ENV USE_STUB_STAGES=false
 
 USER castrol
 
