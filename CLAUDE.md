@@ -135,6 +135,23 @@ On EC2 it is `castrol run …` through [`deploy/castrol`](deploy/castrol), and
 uv run castrol run 9773128990
 ```
 
+**Every terminal failure at one stage, back in the queue** — the bulk form of
+`run --retry`. Lists what it found grouped by error, asks, re-enqueues, and
+returns; the next `cycle --no-fetch` renders and delivers them all. `--code`
+narrows it (repeatable). **SPENDS on the next cycle.** Added 2026-10-23, when
+a provider outage left 193 of Batch 1's renders failed and one-at-a-time
+`run --retry`, at ~4 per 15-connection pool, put them ~15 hours away.
+→ [`orchestrator.py:retry_failed_jobs`](src/castrol_pipeline/orchestrator.py)
+
+```bash
+uv run castrol retry-failed --stage video
+```
+
+A provider-side **5xx** on a video task is now `VENDOR_UNAVAILABLE`, which the
+retry policy retries (up to `STAGE_MAX_ATTEMPTS`), instead of `VENDOR_REJECTED`,
+which it does not — and which the panel read out as a rejected photo.
+→ [`stages/vendors.py:video_task_failure`](src/castrol_pipeline/stages/vendors.py)
+
 **The rehearsal** - `STAGE_MODE=mock`: real export, real free stages, only
 audio/image/video faked, failures injected by `MOCK_FAILURES`, nothing spent or
 sent. Shares the real database, so the code keeps the two apart: mock refuses

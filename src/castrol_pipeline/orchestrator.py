@@ -441,6 +441,52 @@ def downstream_of(stage: PipelineStage) -> list[PipelineStage]:
     return [s for s in DEFAULT_PLAN if s in affected and s != stage]
 
 
+def failed_at_stage(
+    stage: PipelineStage, codes: list[str] | None = None
+) -> list[dict[str, Any]]:
+    """Jobs whose LATEST run of `stage` is a terminal failure, oldest job first.
+
+    Latest, not any: a job that failed once and then succeeded on a retry is not
+    failed, and judging by any failed row would re-run a finished video.
+    """
+    return db.fetch_all(
+        """
+        SELECT job_id, error_code, error_message
+          FROM (SELECT DISTINCT ON (sr.job_id) sr.job_id, sr.status, sr.error_code,
+                       sr.error_message, j.created_at
+                  FROM stage_runs sr JOIN jobs j ON j.id = sr.job_id
+                 WHERE sr.stage = %(stage)s AND sr.status <> 'skipped'
+                 ORDER BY sr.job_id, sr.created_at DESC) latest
+         WHERE status = 'failed'
+           AND (%(codes)s::text[] IS NULL OR error_code = ANY(%(codes)s::text[]))
+         ORDER BY created_at, job_id;
+        """,
+        {"stage": str(stage), "codes": codes},
+    )
+
+
+def retry_failed_jobs(job_ids: list[str]) -> dict[str, Any]:
+    """Put terminally failed jobs back in the queue, in bulk. Runs nothing.
+
+    The same decision `castrol run <ref> --retry` makes for one job (invariant
+    34), without driving each one to a finish: it re-enqueues and returns, and
+    the next `cycle` renders and delivers them all at once. One-at-a-time
+    `run --retry` was the only way back before this, and at ~4 runs per
+    15-connection pool it put Batch 1's 193 provider failures ~15 hours away.
+
+    `retry_failed=True` lets EVERY ready failed stage of these jobs re-enqueue,
+    not only the one they were selected by - the same as `run --retry`.
+    """
+    requeued: list[str] = []
+    for job_id in job_ids:
+        if schedule_ready(job_id, retry_failed=True):
+            advance_job(job_id)
+            record_event("job.retry_failed", job_id=job_id, level="warning")
+            requeued.append(job_id)
+    return {"requested": len(job_ids), "requeued": len(requeued),
+            "not_requeued": [j for j in job_ids if j not in set(requeued)]}
+
+
 def redo_stage(job_id: str, stage: PipelineStage) -> dict[str, Any]:
     """Make `stage` runnable again for a finished job, and everything after it.
 

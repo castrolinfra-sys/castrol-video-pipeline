@@ -12,6 +12,9 @@
 const BY_CODE: Record<string, string> = {
   VENDOR_TIMEOUT: "Video generation did not finish in time.",
   VENDOR_REJECTED: "The photo was rejected by automated content checks.",
+  // A provider-side outage, retried automatically. Before this code existed
+  // such failures were VENDOR_REJECTED and read as a rejected photo.
+  VENDOR_UNAVAILABLE: "The video service had a temporary outage. It will be retried.",
   BUDGET_EXHAUSTED: "The daily processing limit was reached.",
   ASSET_MISSING: "A required file was missing.",
   FFMPEG_FAILED: "The final video could not be assembled.",

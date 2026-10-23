@@ -21,10 +21,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import httpx
 
-from ..common.errors import StageErrorCode, StageFailure, VendorRejected, VendorTimeout
+from ..common.errors import (
+    PipelineError,
+    StageErrorCode,
+    StageFailure,
+    VendorRejected,
+    VendorTimeout,
+    VendorUnavailable,
+)
 from ..common.logging import get_logger
 from ..config import get_settings
 
@@ -394,12 +402,29 @@ def video_poll(task_id: str) -> str | None:
         return str(urls[0])
 
     if state in {"fail", "FAILED", "failed", "error", "ERROR"}:
-        msg = d.get("failMsg") or d.get("errorReason") or d.get("msg")
-        # "Audio size is too large" is a BYTE limit, not a duration limit. If
-        # this appears, the mp3 transcode did not happen.
-        raise VendorRejected(f"video provider {state}: {d.get('failCode', '')} {msg}")
+        raise video_task_failure(state, d)
 
     return None
+
+
+def video_task_failure(state: str, data: dict[str, Any]) -> PipelineError:
+    """The error for a video task the provider reports as failed. Pure.
+
+    A 5xx `failCode` is the provider failing on its own side - Batch 1 saw
+    "500 internal error, please try again later" on 188 renders in three bursts
+    - so it is VendorUnavailable, which the retry policy retries. Anything else
+    is a verdict on what we sent and stays VendorRejected, which it does not.
+    "Audio size is too large" is one of those: a BYTE limit, not a duration
+    limit, and if it appears the mp3 transcode did not happen.
+    """
+    code = data.get("failCode", "")
+    msg = data.get("failMsg") or data.get("errorReason") or data.get("msg")
+    text = f"video provider {state}: {code} {msg}"
+    try:
+        server_side = int(str(code).strip()) >= 500
+    except ValueError:
+        server_side = False
+    return VendorUnavailable(text) if server_side else VendorRejected(text)
 
 
 def poll_timeout(started_at_seconds: float, limit_seconds: float, vendor: str) -> None:

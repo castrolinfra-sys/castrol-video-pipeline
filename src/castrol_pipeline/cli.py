@@ -27,6 +27,7 @@ vendor task id - and resolves it through jobref.py.
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime
 from typing import Annotated
 
@@ -495,6 +496,60 @@ def redo(
         raise typer.Abort()
 
     typer.echo(json.dumps(redo_stage(job_id, target), indent=2))
+
+
+@app.command("retry-failed")
+def retry_failed(
+    stage: Annotated[str, typer.Option("--stage", help="Stage whose failures to retry")],
+    code: Annotated[
+        list[str] | None,
+        typer.Option("--code", help="Only failures with this error code (repeatable)"),
+    ] = None,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Skip the confirmation prompt")
+    ] = False,
+) -> None:
+    """Re-queue every job whose latest run of one stage failed terminally.
+
+    The bulk form of `castrol run <ref> --retry`: it re-enqueues and returns,
+    and the next `castrol cycle --no-fetch` renders and delivers them all.
+
+    This SPENDS MONEY on the next cycle. It runs nothing itself.
+    """
+    _boot()
+    from collections import Counter
+
+    from .orchestrator import failed_at_stage, retry_failed_jobs
+
+    try:
+        target = PipelineStage(stage)
+    except ValueError:
+        raise typer.BadParameter(
+            f"Unknown stage {stage!r}. Known: {[str(s) for s in PipelineStage]}"
+        ) from None
+
+    rows = failed_at_stage(target, [c.upper() for c in code] if code else None)
+    if not rows:
+        typer.echo(f"No jobs whose latest {target} run failed - nothing to retry.")
+        raise typer.Exit(0)
+
+    typer.echo(f"{len(rows)} job(s) whose latest {target} run failed:")
+    # Task ids and minute counts vary per row; masked, the same failure groups.
+    def shape(msg: str | None) -> str:
+        return re.sub(r"\b[0-9a-f]{16,}\b|\b\d+ min\b", "*", msg or "")[:90]
+
+    for (err, msg), n in Counter(
+        (r["error_code"], shape(r["error_message"])) for r in rows
+    ).most_common():
+        typer.echo(f"  {n:>4}  {err}  {msg}")
+    typer.echo(
+        f"Each is re-queued at {target} and re-run by the next cycle. Failed "
+        "vendor calls refund, so only renders that succeed are billed."
+    )
+    if not yes and not typer.confirm("Re-queue them?"):
+        raise typer.Abort()
+
+    typer.echo(json.dumps(retry_failed_jobs([str(r["job_id"]) for r in rows]), indent=2))
 
 
 @app.command()
