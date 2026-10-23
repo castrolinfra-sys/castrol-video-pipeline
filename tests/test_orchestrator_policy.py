@@ -48,6 +48,17 @@ class TestRetryPolicy:
     def test_a_transient_error_is_retried_while_attempts_remain(self):
         assert retry_delay_for(1, StageErrorCode.VENDOR_TIMEOUT) is not None
 
+    def test_a_provider_outage_IS_retried(self):
+        """Batch 1, 2026-10-23: 188 renders failed with the provider's own
+        "500 internal error, please try again later", and every one was terminal
+        because it arrived as VENDOR_REJECTED."""
+        assert retry_delay_for(1, StageErrorCode.VENDOR_UNAVAILABLE) is not None
+
+    def test_a_provider_outage_still_stops_at_max_attempts(self):
+        # Retried, not retried forever: an outage that outlasts the attempts
+        # ends terminal, and `castrol retry-failed` brings it back later.
+        assert retry_delay_for(3, StageErrorCode.VENDOR_UNAVAILABLE) is None
+
     def test_exhausted_attempts_are_terminal(self):
         from castrol_pipeline.config import get_settings
 

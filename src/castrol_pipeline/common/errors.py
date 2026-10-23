@@ -33,6 +33,9 @@ class RejectCode(StrEnum):
 class StageErrorCode(StrEnum):
     VENDOR_TIMEOUT = "VENDOR_TIMEOUT"
     VENDOR_REJECTED = "VENDOR_REJECTED"
+    #: The provider failed on ITS side ("500 internal error, please try again
+    #: later") - not a verdict on our inputs, so a later attempt can succeed.
+    VENDOR_UNAVAILABLE = "VENDOR_UNAVAILABLE"
     BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
     ASSET_MISSING = "ASSET_MISSING"
     FFMPEG_FAILED = "FFMPEG_FAILED"
@@ -63,6 +66,14 @@ class StageErrorCode(StrEnum):
 #: it cannot read, and the retry re-POSTing an identical {phone, videoLink} is
 #: the entire point - the client stores it idempotently, and a missed delivery
 #: is a video a mechanic never gets.
+#:
+#: VENDOR_UNAVAILABLE is deliberately NOT here either. Until 2026-10-23 a
+#: provider-side 5xx on a finished task was raised as VENDOR_REJECTED, so a
+#: provider outage read as a verdict on our inputs: Batch 1 lost 188 of 297
+#: renders to "500 internal error, please try again later" in three bursts,
+#: every one terminal, and the panel told the client each PHOTO had been
+#: rejected. The provider's own message says to try again; the retry policy now
+#: does, up to STAGE_MAX_ATTEMPTS behind the usual backoff.
 TERMINAL_STAGE_ERRORS: frozenset[StageErrorCode] = frozenset(
     {StageErrorCode.BUDGET_EXHAUSTED, StageErrorCode.VENDOR_REJECTED}
 )
@@ -97,6 +108,10 @@ class VendorRejected(PipelineError):
 
 class VendorTimeout(PipelineError):
     code = StageErrorCode.VENDOR_TIMEOUT
+
+
+class VendorUnavailable(PipelineError):
+    code = StageErrorCode.VENDOR_UNAVAILABLE
 
 
 class AssetMissing(PipelineError):
