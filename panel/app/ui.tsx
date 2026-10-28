@@ -1,4 +1,4 @@
-import { durationParts } from "@/lib/format";
+import { duration, secondsParts } from "@/lib/format";
 
 // Shared page furniture. Server components, no client JS.
 
@@ -19,21 +19,34 @@ export function PageHead({ title, meta }: { title: string; meta?: React.ReactNod
 }
 
 /**
- * The headline duration, set rather than printed.
+ * The headline total, set rather than printed.
  *
- * "4h 12m" as a string is a label. Split, with the numerals carrying the weight
- * and the units condensed and in the brand green, it reads as a quantity — and
- * this is the one number the whole product exists to report, so it is the one
- * place worth spending the treatment.
+ * "7,742s" as a string is a label. Split, with the numerals carrying the
+ * weight and the unit condensed and in the brand green, it reads as a quantity
+ * - and this is the one number the whole product exists to report, so it is
+ * the one place worth spending the treatment.
+ *
+ * SECONDS, from 2026-10-28; it showed "2h 9m" before. Seconds is what the
+ * vendor bills and what reconciles against an invoice line. The readable form
+ * did not disappear, it moved into the tooltip - same rule as the stat cards,
+ * including dropping the tooltip when the two forms would read the same.
  *
  * aria-label carries the plain form, because the visual split would otherwise
- * be announced as separated digits and letters.
+ * be announced as separated digits and letters; aria-describedby adds the
+ * hr/min reading, so neither is mouse-only.
  */
 export function BigDuration({ seconds }: { seconds: number }) {
-  const parts = durationParts(seconds);
+  const parts = secondsParts(seconds);
   const spoken = parts.map(([v, u]) => `${v}${u}`).join(" ");
+  const tip = duration(seconds);
+  const showTip = tip !== spoken;
   return (
-    <div className="big-dur" aria-label={spoken}>
+    <div
+      className={showTip ? "big-dur has-tip" : "big-dur"}
+      aria-label={spoken}
+      tabIndex={showTip ? 0 : undefined}
+      aria-describedby={showTip ? "tip-total" : undefined}
+    >
       {parts.map(([value, unit]) => (
         <span key={unit} style={{ display: "contents" }}>
           <span aria-hidden="true">{value}</span>
@@ -42,6 +55,11 @@ export function BigDuration({ seconds }: { seconds: number }) {
           </span>
         </span>
       ))}
+      {showTip && (
+        <span className="tip" role="tooltip" id="tip-total">
+          {tip}
+        </span>
+      )}
     </div>
   );
 }

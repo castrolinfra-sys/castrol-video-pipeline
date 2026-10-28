@@ -72,9 +72,10 @@ export default async function Usage() {
       <div className="headline card">
         <div className="label">Total video delivered, all time</div>
         <BigDuration seconds={all.seconds} />
-        <div className="dim">
-          {num(Math.ceil(all.seconds))} seconds across {countOf(all.completed, "video")}
-        </div>
+        {/* The seconds used to be spelled out here because the headline above
+            was "2h 9m"; now that IS the headline, so repeating it would print
+            the same figure twice in two type sizes. */}
+        <div className="dim">across {countOf(all.completed, "video")}</div>
       </div>
 
       {/* Seconds, not "6h 9m" - seconds is the unit of the bill and the only
@@ -118,7 +119,7 @@ export default async function Usage() {
           <table>
             <caption className="visually-hidden">
               Usage by day, most recent first. Columns: day, submissions,
-              delivered, failed, seconds, total.
+              delivered, failed, total seconds delivered.
             </caption>
             <thead>
               <tr>
@@ -126,7 +127,9 @@ export default async function Usage() {
                 <th scope="col" className="num">Submissions</th>
                 <th scope="col" className="num">Delivered</th>
                 <th scope="col" className="num">Failed</th>
-                <th scope="col" className="num">Seconds</th>
+                {/* One column, not two. "Seconds" printed 7742 and "Total"
+                    printed 2h 9m; with Total in seconds they would have been
+                    the same figure side by side. */}
                 <th scope="col" className="num">Total</th>
               </tr>
             </thead>
@@ -143,8 +146,14 @@ export default async function Usage() {
                     {r.failed ? <span aria-hidden="true">● </span> : null}
                     {num(r.failed)}
                   </td>
-                  <td className="num">{num(Math.ceil(r.seconds))}</td>
-                  <td className="num dim">{duration(r.seconds)}</td>
+                  {/* A plain `title`, not the .has-tip tooltip the cards use.
+                      This table sits in a .scroll box, and an absolutely
+                      positioned tooltip on the topmost visible row is clipped
+                      by that box's own overflow. `title` never clips, and
+                      Submissions already uses it for the same reason. */}
+                  <td className="num" title={duration(r.seconds)}>
+                    {secondsOnly(r.seconds)}
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -404,7 +404,22 @@ reader without either; it is hidden by `opacity`, never `visibility:hidden` or
 and would leave that `aria-describedby` pointing at nothing. `<Stat>` drops the
 tooltip entirely when it would render the same string as the value - every
 total under a minute - so no card offers an affordance that repeats its own
-number. The headline card and the Daily table's Total column were NOT changed.
+number.
+
+The headline card and the Daily table followed on the same day. The headline
+is `secondsParts()` - "7,742s" with the unit set in the brand green - and the
+line under it dropped from "7,742 seconds across 297 videos" to "across 297
+videos", which was the same figure printed twice once the headline became the
+seconds. `.big-dur.has-tip` is `inline-flex` so the dotted underline hugs the
+figure instead of running the width of the card.
+
+The Daily table lost a COLUMN rather than gaining a duplicate: "Seconds"
+printed 7742 and "Total" printed 2h 9m, so putting Total in seconds would have
+put the same number in two adjacent columns. There is one "Total" column now.
+It uses a plain `title`, NOT the `.has-tip` tooltip, because the table sits in
+a `.scroll` box and an absolutely positioned tooltip on the topmost visible row
+is clipped by that box's own overflow - Submissions already uses `title` for
+the same reason.
 
 **The ceiling that MATTERS is in the view, not in `format.ts`.** Migration
 [`0014`](supabase/migrations/0014_ceil_the_billed_second.sql) moved it there,

@@ -107,6 +107,21 @@ export function duration(v: number | string | null | undefined): string {
 }
 
 /**
+ * secondsOnly(), split for the headline treatment - "7,742s" as [["7,742","s"]].
+ *
+ * Always one pair, where durationParts() gives two. The headline is the one
+ * number this product exists to report and it is now the billable one; the
+ * hr/min reading it used to show lives in its tooltip.
+ */
+export function secondsParts(
+  v: number | string | null | undefined,
+): Array<[string, string]> {
+  const n = typeof v === "string" ? Number(v) : (v ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return [["0", "s"]];
+  return [[num(Math.ceil(n)), "s"]];
+}
+
+/**
  * The same total, split so it can be SET rather than printed — "4h 12m" as
  * [[4,"h"],[12,"m"]], for the headline treatment where the numerals carry the
  * weight and the units are condensed and tinted.

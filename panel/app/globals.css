@@ -729,6 +729,11 @@ dialog h2 { margin: 0 0 var(--s1); font-size: var(--t-lg); color: var(--fg); let
   border-bottom: 1px dotted var(--line-strong);
   cursor: help;
 }
+/* .big-dur is a block-level flex row, so the dotted underline would run the
+   whole width of the card instead of sitting under the figure. inline-flex
+   shrinks it to the number; vertical margins still apply, because inline-flex
+   is an inline-LEVEL box, not an inline one. */
+.big-dur.has-tip { display: inline-flex; }
 .tip {
   position: absolute;
   left: 0;
