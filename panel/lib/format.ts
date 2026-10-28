@@ -65,6 +65,26 @@ export function secs(v: number | string | null | undefined): string {
 }
 
 /**
+ * A total as SECONDS and nothing else - "22,145s".
+ *
+ * The stat cards print this rather than duration(), from 2026-10-28. Seconds
+ * is the unit of the bill: it is the figure that reconciles against an invoice
+ * line, and "6h 9m" is not a number anyone can check against one. The human
+ * form is not gone, it is one hover away - see the `tip` on <Stat>.
+ *
+ * Grouped through num(), unlike secs(): a period total runs to five figures
+ * and "22145s" is a number you have to count the digits of.
+ *
+ * Ceiled, for the same reason every other duration here is (0014): the vendor
+ * bills per output second and rounds up.
+ */
+export function secondsOnly(v: number | string | null | undefined): string {
+  const n = typeof v === "string" ? Number(v) : (v ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return "0s";
+  return `${num(Math.ceil(n))}s`;
+}
+
+/**
  * A total, in seconds AND in a form a person can hold in their head.
  *
  * Both, not either: seconds is the number that reconciles against an invoice,

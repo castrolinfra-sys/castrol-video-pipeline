@@ -392,6 +392,20 @@ is decided - `secs()`, `duration()` and `durationParts()` all ceil, and the
 Usage page's three hand-rolled `toFixed(1)` call sites were folded back into it
 so they cannot drift again.
 
+**The Usage STAT CARDS show seconds and nothing else, with the hr/min form on
+hover.** Changed 2026-10-28. "6h 9m" is the figure a person can judge as big or
+small, but it is not a figure anyone can check against an invoice line, and
+this panel exists to be reconciled - so `secondsOnly()` ("22,145s", grouped,
+because a five-figure total is otherwise a digit-counting exercise) is the
+default and `duration()` moved into a tooltip. The tooltip is CSS only, on
+`:hover` AND `:focus-visible`, with `aria-describedby` so it reaches a screen
+reader without either; it is hidden by `opacity`, never `visibility:hidden` or
+`display:none`, both of which drop the element out of the accessibility tree
+and would leave that `aria-describedby` pointing at nothing. `<Stat>` drops the
+tooltip entirely when it would render the same string as the value - every
+total under a minute - so no card offers an affordance that repeats its own
+number. The headline card and the Daily table's Total column were NOT changed.
+
 **The ceiling that MATTERS is in the view, not in `format.ts`.** Migration
 [`0014`](supabase/migrations/0014_ceil_the_billed_second.sql) moved it there,
 because two ways of under-recovering could not be fixed in the panel at all:

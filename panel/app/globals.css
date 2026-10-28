@@ -709,6 +709,50 @@ dialog h2 { margin: 0 0 var(--s1); font-size: var(--t-lg); color: var(--fg); let
 }
 .foot b { color: var(--fg); font-weight: 700; }
 
+/* ---- tooltip ---------------------------------------------------------------
+   The stat cards print SECONDS, because seconds is the unit of the bill and
+   the only form that reconciles against an invoice line. "6h 9m" is still the
+   figure a person can judge as big or small, so it is one hover away rather
+   than gone.
+
+   :focus-visible as well as :hover, or the second reading is mouse-only; and
+   `.stat` carries aria-describedby so a screen reader is given it without
+   either. That is also why the hidden state is opacity and NOT
+   visibility:hidden or display:none - both of those drop the element out of
+   the accessibility tree, which would leave aria-describedby pointing at
+   nothing. pointer-events:none stops the invisible box swallowing clicks.
+
+   Transitions are already neutralised under prefers-reduced-motion by the
+   blanket rule at the end of this file. */
+.has-tip {
+  position: relative;
+  border-bottom: 1px dotted var(--line-strong);
+  cursor: help;
+}
+.tip {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 5;
+  padding: 4px var(--s2);
+  border-radius: var(--r);
+  background: var(--fg);
+  color: var(--bg);
+  /* NOT the uppercase signage label the other micro-type uses: this is a
+     duration, and the panel writes those "2h 9m". Uppercasing gave "2H 9M",
+     which is the same value in a shape nothing else on the page uses. */
+  font-size: var(--t-sm);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.has-tip:hover .tip,
+.has-tip:focus-visible .tip { opacity: 1; }
+
 /* ---- utilities ------------------------------------------------------------- */
 .visually-hidden {
   position: absolute;

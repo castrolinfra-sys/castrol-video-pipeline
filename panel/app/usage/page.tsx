@@ -1,7 +1,7 @@
 import { Problem } from "../problem";
 import UsageChart, { type Day } from "./chart";
 import { db, queryDeadline } from "@/lib/db";
-import { countOf, dayLabel, duration, num, pct, secs } from "@/lib/format";
+import { countOf, dayLabel, duration, num, pct, secondsOnly, secs } from "@/lib/format";
 import { istDay } from "@/lib/range";
 import { BigDuration, PageHead } from "../ui";
 
@@ -77,11 +77,14 @@ export default async function Usage() {
         </div>
       </div>
 
+      {/* Seconds, not "6h 9m" - seconds is the unit of the bill and the only
+          form that reconciles against an invoice line. The readable form is
+          still here, on hover and on keyboard focus, via `tip`. */}
       <div className="stats">
-        <Stat label="Today" value={duration(today.seconds)} sub={countOf(today.completed, "video")} />
-        <Stat label="Yesterday" value={duration(yesterday.seconds)} sub={countOf(yesterday.completed, "video")} />
-        <Stat label="Last 7 days" value={duration(week.seconds)} sub={countOf(week.completed, "video")} />
-        <Stat label="Last 30 days" value={duration(month.seconds)} sub={countOf(month.completed, "video")} />
+        <Stat label="Today" value={secondsOnly(today.seconds)} tip={duration(today.seconds)} sub={countOf(today.completed, "video")} />
+        <Stat label="Yesterday" value={secondsOnly(yesterday.seconds)} tip={duration(yesterday.seconds)} sub={countOf(yesterday.completed, "video")} />
+        <Stat label="Last 7 days" value={secondsOnly(week.seconds)} tip={duration(week.seconds)} sub={countOf(week.completed, "video")} />
+        <Stat label="Last 30 days" value={secondsOnly(month.seconds)} tip={duration(month.seconds)} sub={countOf(month.completed, "video")} />
       </div>
 
       <div className="stats">
@@ -90,11 +93,13 @@ export default async function Usage() {
         <Stat
           label="Average length"
           value={all.completed ? secs(all.seconds / all.completed) : "—"}
+          tip={all.completed ? duration(all.seconds / all.completed) : undefined}
           sub="per delivered video"
         />
         <Stat
           label="Busiest day"
-          value={rows.length ? duration(Math.max(...rows.map((r) => r.seconds))) : "—"}
+          value={rows.length ? secondsOnly(Math.max(...rows.map((r) => r.seconds))) : "—"}
+          tip={rows.length ? duration(Math.max(...rows.map((r) => r.seconds))) : undefined}
           sub={
             rows.length
               ? dayLabel(rows.reduce((a, b) => (b.seconds > a.seconds ? b : a)).day)
@@ -150,11 +155,48 @@ export default async function Usage() {
   );
 }
 
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+/**
+ * One stat card, with an optional second reading of the same figure.
+ *
+ * `tip` is dropped when it would render the SAME string as the value, which is
+ * every total under a minute - duration(45) and secondsOnly(45) are both "45s".
+ * A tooltip that repeats the number it is attached to teaches people that the
+ * dotted underline is not worth hovering, so the affordance only appears where
+ * there is something behind it.
+ *
+ * No JavaScript: CSS shows it on :hover and on :focus-visible, and
+ * aria-describedby hands it to a screen reader without either. The tabIndex is
+ * what makes the keyboard path exist at all - without it the hr/min form would
+ * be reachable with a mouse and no other way.
+ */
+function Stat({
+  label,
+  value,
+  tip,
+  sub,
+}: {
+  label: string;
+  value: string;
+  tip?: string;
+  sub?: string;
+}) {
+  const showTip = tip && tip !== value;
+  const tipId = showTip ? `tip-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}` : undefined;
   return (
     <div className="card stat">
       <div className="label">{label}</div>
-      <div className="value">{value}</div>
+      <div className="value">
+        {showTip ? (
+          <span className="has-tip" tabIndex={0} aria-describedby={tipId}>
+            {value}
+            <span className="tip" role="tooltip" id={tipId}>
+              {tip}
+            </span>
+          </span>
+        ) : (
+          value
+        )}
+      </div>
       {sub && <div className="dim sub">{sub}</div>}
     </div>
   );
