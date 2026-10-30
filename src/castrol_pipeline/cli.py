@@ -183,6 +183,14 @@ def seed_job_cmd(
     background: Annotated[
         str, typer.Option(help="background_id for the plate")
     ] = "bg2_dark_sedan",
+    language: Annotated[
+        str,
+        typer.Option(
+            help="Spoken language, code or name (hi, ta, Tamil, ...). The card "
+                 "stays English. An unapproved language fails at prep unless "
+                 "ALLOW_PLACEHOLDER_SCRIPTS=true.",
+        ),
+    ] = "hi",
 ) -> None:
     """Create one job by hand from local files. Idempotent on (photo, phone).
 
@@ -207,6 +215,7 @@ def seed_job_cmd(
         spoken_place=spoken_place,
         uniform_id=uniform,
         background_id=background,
+        language=language,
     )
     typer.echo(json.dumps(out, indent=2))
 

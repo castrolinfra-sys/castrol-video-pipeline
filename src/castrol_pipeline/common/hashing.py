@@ -67,22 +67,47 @@ def submission_hash(media_key: str, phone_e164: str) -> str:
     return sha256_hex(f"{media_key}\x00{phone_e164}".encode())
 
 
-def prep_hash(raw: Any, script_version: str, normalise_rules_version: str) -> str:
-    return _stage_hash(
-        "prep",
-        {
-            "raw": raw,
-            "script_version": script_version,
-            "normalise_rules_version": normalise_rules_version,
-        },
-    )
+def prep_hash(
+    raw: Any,
+    script_version: str,
+    normalise_rules_version: str,
+    *,
+    language: str = "hi",
+    script_approved: bool = True,
+) -> str:
+    """Language and approval enter the hash ONLY outside Hindi.
+
+    A Hindi job hashes exactly as it did before multilingual, so adding the
+    other languages re-runs nothing. Approval is in it so that a job failed
+    with SCRIPT_NOT_APPROVED reschedules by itself the day its language's copy
+    is approved (invariant 34: a failure stops holding when the hash moves).
+    """
+    payload: dict[str, Any] = {
+        "raw": raw,
+        "script_version": script_version,
+        "normalise_rules_version": normalise_rules_version,
+    }
+    if language != "hi":
+        payload["language"] = language
+        payload["script_approved"] = script_approved
+    return _stage_hash("prep", payload)
 
 
-def audio_hash(script_text: str, voice_id: str, model_id: str) -> str:
-    return _stage_hash(
-        "audio",
-        {"script_text": script_text, "voice_id": voice_id, "model_id": model_id},
-    )
+def audio_hash(
+    script_text: str, voice_id: str, model_id: str, *, tts_language: str | None = None
+) -> str:
+    """`tts_language` is the provider's `language` field, in only when SENT.
+
+    Hindi sends none, so its hash is unchanged. Toggling the field for a
+    language - the A/B the audio test runs - regenerates that language's audio
+    instead of skipping it.
+    """
+    payload: dict[str, Any] = {
+        "script_text": script_text, "voice_id": voice_id, "model_id": model_id,
+    }
+    if tts_language is not None:
+        payload["tts_language"] = tts_language
+    return _stage_hash("audio", payload)
 
 
 def image_hash(

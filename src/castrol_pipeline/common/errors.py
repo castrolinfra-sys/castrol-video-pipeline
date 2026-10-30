@@ -28,6 +28,9 @@ class RejectCode(StrEnum):
     TEST_ROW = "TEST_ROW"
     FETCH_FAILED = "FETCH_FAILED"
     MISSING_FIELD = "MISSING_FIELD"
+    #: The export named a language that is not in prep/script.py:LANGUAGES.
+    #: Never defaulted to Hindi - that would ship the wrong language silently.
+    LANGUAGE_UNSUPPORTED = "LANGUAGE_UNSUPPORTED"
 
 
 class StageErrorCode(StrEnum):
@@ -41,6 +44,10 @@ class StageErrorCode(StrEnum):
     FFMPEG_FAILED = "FFMPEG_FAILED"
     CHECK_FAILED = "CHECK_FAILED"
     DELIVERY_NOT_ACCEPTED = "DELIVERY_NOT_ACCEPTED"
+    #: The job's language still has placeholder copy. Terminal, and it stops
+    #: holding by itself: approval is in the prep hash (invariant 34), so the
+    #: day the client's script lands, these jobs reschedule.
+    SCRIPT_NOT_APPROVED = "SCRIPT_NOT_APPROVED"
     INTERNAL = "INTERNAL"
 
 
@@ -75,7 +82,11 @@ class StageErrorCode(StrEnum):
 #: rejected. The provider's own message says to try again; the retry policy now
 #: does, up to STAGE_MAX_ATTEMPTS behind the usual backoff.
 TERMINAL_STAGE_ERRORS: frozenset[StageErrorCode] = frozenset(
-    {StageErrorCode.BUDGET_EXHAUSTED, StageErrorCode.VENDOR_REJECTED}
+    {
+        StageErrorCode.BUDGET_EXHAUSTED,
+        StageErrorCode.VENDOR_REJECTED,
+        StageErrorCode.SCRIPT_NOT_APPROVED,
+    }
 )
 
 

@@ -20,6 +20,9 @@ const BY_CODE: Record<string, string> = {
   FFMPEG_FAILED: "The final video could not be assembled.",
   CHECK_FAILED: "The finished video did not pass quality checks.",
   DELIVERY_NOT_ACCEPTED: "The video was made, but delivery was not confirmed.",
+  // Held at prep, before anything is generated, and released by itself once
+  // that language's script is approved - nothing for the client to redo.
+  SCRIPT_NOT_APPROVED: "The script for this language is awaiting approval.",
   INTERNAL: "Processing failed unexpectedly.",
 };
 
@@ -49,6 +52,7 @@ const BY_REJECT: Record<string, string> = {
   TEST_ROW: "Marked as a test submission.",
   FETCH_FAILED: "The photo could not be downloaded.",
   MISSING_FIELD: "A required field was empty.",
+  LANGUAGE_UNSUPPORTED: "The chosen language is not supported yet.",
 };
 
 export function rejectText(code: string | null | undefined): string {

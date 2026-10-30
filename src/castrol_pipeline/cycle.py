@@ -172,13 +172,15 @@ def _repair_orphans() -> dict[str, int]:
     from .common.s3 import get_storage, job_key
     from .intake.media import MediaError, fetch_photo
     from .intake.runner import _resolve_plate
+    from .prep.script import current_version
 
     settings = get_settings()
     repaired = {"jobs_created": 0, "photos_restored": 0, "photos_unrecoverable": 0}
 
     for row in db.fetch_all(
         """
-        SELECT s.id, s.outfit_choice, s.background_choice, s.batch_id
+        SELECT s.id, s.outfit_choice, s.background_choice, s.batch_id,
+               COALESCE(s.language, 'hi') AS language
           FROM submissions s
           LEFT JOIN jobs j ON j.submission_id = s.id
          WHERE s.validation_status = 'valid'
@@ -187,14 +189,19 @@ def _repair_orphans() -> dict[str, int]:
     ):
         created = db.fetch_one(
             """
-            INSERT INTO jobs (submission_id, script_version, voice_id, plate_id, batch_id)
-            VALUES (%(sub)s, %(script)s, %(voice)s, %(plate)s, %(batch)s)
+            INSERT INTO jobs (submission_id, script_version, voice_id, plate_id,
+                              batch_id, language)
+            VALUES (%(sub)s, %(script)s, %(voice)s, %(plate)s, %(batch)s,
+                    %(language)s)
             ON CONFLICT (submission_id) DO NOTHING
             RETURNING id;
             """,
             {
                 "sub": str(row["id"]),
-                "script": settings.script_version,
+                # The language intake resolved, so a repaired job speaks what
+                # the mechanic asked for rather than defaulting to Hindi.
+                "language": row["language"],
+                "script": current_version(row["language"]),
                 "voice": settings.tts_voice_id or "stub-voice",
                 "plate": _resolve_plate(
                     row["outfit_choice"] or "", row["background_choice"] or ""

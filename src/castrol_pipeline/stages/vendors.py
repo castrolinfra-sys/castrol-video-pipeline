@@ -69,12 +69,35 @@ def download(url: str, dst: Path, *, expect_image: bool = False) -> Path:
 # -------------------------------------------------- [A] voice provider TTS --
 
 
-def voice_tts(text: str, *, voice_id: str, model_id: str, dst: Path) -> Path:
+def voice_tts(
+    text: str,
+    *,
+    voice_id: str,
+    model_id: str,
+    dst: Path,
+    language: str | None = None,
+) -> Path:
     """Synthesise to WAV. Synchronous — the provider returns bytes on the call.
 
     A DIRECT api, not one of the two gateways: the one deliberate exception,
     taken because that intersection has no voice-cloning Hindi lane.
+
+    `language` is sent only when given. Hindi has never sent it and works
+    (TECH_DESIGN: test before adding it), so None is the Hindi request byte for
+    byte. The same voice id speaks every language - decided 2026-10-28.
     """
+    body: dict[str, Any] = {
+        "model_id": model_id,
+        "transcript": text,
+        "voice": {"mode": "id", "id": voice_id},
+        "output_format": {
+            "container": "wav",
+            "encoding": "pcm_f32le",
+            "sample_rate": 44100,
+        },
+    }
+    if language:
+        body["language"] = language
     s = get_settings()
     base = (s.tts_base_url or "https://api.cartesia.ai").rstrip("/")
     with httpx.Client(timeout=180.0) as c:
@@ -85,16 +108,7 @@ def voice_tts(text: str, *, voice_id: str, model_id: str, dst: Path) -> Path:
                 "Cartesia-Version": s.voice_api_version,
                 "Content-Type": "application/json",
             },
-            json={
-                "model_id": model_id,
-                "transcript": text,
-                "voice": {"mode": "id", "id": voice_id},
-                "output_format": {
-                    "container": "wav",
-                    "encoding": "pcm_f32le",
-                    "sample_rate": 44100,
-                },
-            },
+            json=body,
         )
     if r.status_code >= 500 or r.status_code == 429:
         # A bad moment, not an answer about this text. Kept separate from the

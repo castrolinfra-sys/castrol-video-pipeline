@@ -1,11 +1,11 @@
 # Castrol MAGNATEC — Mechanic Promo Video Pipeline
 
-**Status:** Built and deployed. The pipeline runs end to end against real
-Supabase, S3 and CDN; nine jobs have completed for real. The worker is on EC2
-behind a twice-daily systemd timer — **not yet armed**, and `DELIVERY_ENABLED`
-is still false, so nothing has reached a mechanic. See
-[`EC2_DEPLOYMENT.md`](EC2_DEPLOYMENT.md).
-**Last updated:** 15 Sep 2026
+**Status:** In production. The worker runs `castrol cycle` on EC2 twice a day
+and Batch 1 has been rendered — including a provider outage on 2026-10-23 that
+failed 193 renders and was recovered with `castrol retry-failed`. See
+[`EC2_DEPLOYMENT.md`](EC2_DEPLOYMENT.md). The live work is §14, multilingual
+voice.
+**Last updated:** 30 Oct 2026
 **Supersedes:** WhatsApp Personalised Video Campaign plan (21 Aug 2026)
 
 ---
@@ -205,8 +205,6 @@ Geometry preservation is not optional — a fixed card position depends on it. I
 
 **Hand skin tone** is the most visible tell after the face. Explicit in the change list, and worth a dedicated check.
 
-Useful side effect of the cap: it covers the top of the head, so tightly-cropped source photos with the skull cut off do not require the model to invent hair.
-
 ---
 
 ## 5. Pipeline stages
@@ -381,7 +379,8 @@ is downloaded once at intake straight to S3, which is the system of record
 ## 8. Data model
 
 **Implemented in** [`supabase/migrations/`](../supabase/migrations/) — forward-only
-numbered SQL, applied in order, **0001–0014 applied**. The DDL is the source of
+numbered SQL, applied in order, **0001–0015 applied**; `0016` (§14) is
+written and not yet applied. The DDL is the source of
 truth and carries the reasoning as column comments; what follows is the map.
 
 | Table / view | Holds | Added by |
@@ -469,7 +468,7 @@ card prints.
 | Uniform / background mapping | Mapped in `prep/plates.py` against the client's own combination map (2026-09-09). Uniform ids are `u1_tshirt` / `u2_uniform`. |
 | Repair pass | Dropped (`0003`). Quality is solved in the main flow; if stage C output is unacceptable the fix is its inputs. |
 | TTS provider | The voice provider, direct API — the one exception to "the two gateways only". Voice created by hand in the dashboard, referenced by id; no cloning call ships. |
-| Video tier | `VIDEO_MODEL_ID` is the only resolution switch. Standard returns 720x1280, pro 1072x1920. Pro was declined 2026-09-10 and **reinstated 2026-09-12** when the client asked for 1080p; production still runs standard, which is a cost decision. |
+| Video tier | **Standard, always — decided 2026-10-06, final.** `kling/ai-avatar-standard`, 720x1280. Pro was declined 2026-09-10, reinstated 2026-09-12 and ruled out for good before Batch 1. `VIDEO_MODEL_ID` is still the only switch; not using it is a decision, not a missing capability. |
 | Run cadence | Twice daily, 00:00 and 12:00 IST, `castrol cycle` under a systemd timer on EC2. |
 | Failed vendor calls | Refunded by the vendor, always. `job_costs` counts what was billed (`0013`); the daily caps still count failed attempts. |
 
@@ -636,3 +635,252 @@ actually are.
 | Systemic overnight failure | Whole batch silently produces nothing | Batch summary row, `castrol report`, and the panel. **No alerting, by decision** |
 | Address mispronounced | Video is useless to the mechanic | Normalisation + spoken-locality rules, unit-tested |
 | A merge reaching the worker unreviewed | A render that looks wrong, shipped | The worker tracks `:latest` with `--pull always`, so this is real: prove prompt, model-id and card changes through `spikes/prototype.py` or pin a `main-<sha>` first |
+
+---
+
+## 14. Multilingual voice — planned 2026-10-29
+
+**Status: planned, partly built, NOT shippable.** Nothing is committed, nothing
+has been spent, and migration `0016` is written but not applied. Do not merge
+the work in progress on its own: `orchestrator.load_context` already reads
+`jobs.language`, a column that exists only after `0016`, and the worker deploys
+`:latest` from `main` — a merge before the migration breaks every cycle.
+
+### What is changing, and what is not
+
+The video gains a **spoken language**. This version adds five to Hindi:
+**Tamil (`ta`), Telugu (`te`), Kannada (`kn`), Bengali (`bn`) and Malayalam
+(`ml`)**. The language arrives as a new field in the client export and is stored
+per job.
+
+Decided 2026-10-28/29:
+
+| Item | Decision |
+|---|---|
+| What changes language | **The voice only.** The script is per language; nothing else is. |
+| Card | **Unchanged and English** in every language. Name, workshop and address arrive in English. No font, shaping or `card_template_version` work. |
+| Voice | **The same voice id for every language.** Accent is not a concern. |
+| Audio model | Unchanged, `sonic-3.6` — it lists all six languages natively. What varies is its `language` field. |
+| Video model | Unchanged, `kling/ai-avatar-standard`. Lipsync is audio-driven and has no language parameter; quality in these languages is untested and is what the test renders check. |
+| Order of work | Script and **audio first**; video only after the audio is approved. |
+| Duration and cost | Deferred until the audio test gives real lengths. |
+| Scripts | **Placeholders now**, ours, replaced by the client's copy when it arrives. |
+| Extensibility | Adding a language must be one entry in one file — no migration, no config change. |
+
+### Design rules
+
+1. **One registry entry per language**, in `prep/script.py:LANGUAGES`.
+2. **Hindi is byte-identical** — same text, same `prep` and `audio` hashes.
+   Language enters a hash only outside Hindi, so introducing the others
+   re-renders no open Hindi job.
+3. **The database never lists languages.** Its CHECK is on the shape of a code.
+4. **Placeholder copy never reaches a mechanic.** An unapproved language fails
+   at prep, before any paid stage, and the failure lifts by itself on approval.
+5. **Unknown is rejected, never defaulted.** Blank or absent means Hindi;
+   present and unrecognised is `LANGUAGE_UNSUPPORTED`.
+
+### The scripts
+
+All five are drafts written 2026-10-28, **not yet read by a native speaker**,
+held as `v1` with `approved=False`. Native script, so the voice reads each
+language as itself. They carry v2's meaning, shaped by three rules:
+
+- **The slots stay English** because the export is English and the card prints
+  it — so names, workshops and places are Latin inside native text, and whether
+  the voice reads that cleanly is the main thing the audio test answers. The
+  brand is Latin for the same reason, written `Magnatec`, never all caps.
+- **Every slot stands alone as a word.** Tamil, Telugu, Kannada and Malayalam
+  fuse case endings onto the noun, and no template can glue one onto an
+  arbitrary English place name. So where Hindi says "come to {locality}", these
+  say "where we are is {locality}", and the workshop gets its own sentence ("my
+  garage, {workshop}"). Bengali's "theke" is a separate word like Hindi's "se",
+  so its workshop stays inline; its place line is "our address is {locality}".
+- **Punctuation is the pause control**, carried from v2: commas at the same
+  clause boundaries, em-dashes around the brand. Bengali ends sentences with
+  the danda (।).
+
+When the client's copy arrives it goes in as `v2` beside the placeholder, with
+`current="v2"` and `approved=True`. The placeholder stays on record as what any
+test render was made from.
+
+### Build phases
+
+State as of 2026-10-30. **Rollout step 1 is done**: every phase is on disk,
+`pytest` (420) and `ruff` are green, nothing is committed, applied or spent.
+
+| # | Phase | State |
+|---|---|---|
+| 1 | Language registry | On disk |
+| 2 | Speech normalisation | On disk |
+| 3 | Migration `0016` | Written, **not applied** |
+| 4 | Config and error codes | On disk |
+| 5 | Intake | On disk |
+| 6 | Job context, hashes, voice call | On disk |
+| 7 | Prep and audio stages | On disk (real, stubs; mocks inherit) |
+| 8 | `seed-job`, CLI, inspection | On disk. `find --language` not built |
+| 9 | Prototype on the registry | On disk |
+| 10 | Panel reason text | On disk, not deployed |
+| 11 | Tests | On disk — `tests/test_language.py` |
+| 12 | Docs | On disk |
+
+**1. Language registry — `prep/script.py`.** A `Language` dataclass per entry:
+
+| Field | Purpose |
+|---|---|
+| `code` | `hi` / `ta` / `te` / `kn` / `bn` / `ml`. Stored on the job; also the voice provider's code. |
+| `name`, `aliases` | Every spelling the export may send — `Tamil`, `tamil`, `தமிழ்`, `Bangla` — matched case-insensitively. |
+| `templates` | `{version: text}`. Hindi's entry points at the existing `SCRIPT_TEMPLATES`. |
+| `current` | Version a new job gets. `None` for Hindi means `SCRIPT_VERSION`, as today. |
+| `approved` | `False` for all five vernaculars until the client's copy lands. |
+| `tts_language` | The voice provider's `language` field. `None` for Hindi sends no field — today's request unchanged. |
+
+Functions: `resolve_language(raw)` (blank → `hi`, unknown → `UnknownLanguage`),
+`get_language(code)`, `current_version(code)`, `templates_for(code)`.
+
+**2. Speech normalisation — `prep/normalise.py`.** `expand_for_speech(text,
+language=)`. Hindi is unchanged. Elsewhere a run of 4+ digits becomes single
+Latin digits (`2 4 0 4`) for the voice to read in its own language, instead of
+the Hindi number words `NUMERAL_WORDS` holds. Abbreviations still expand to
+English, because the text they act on is English in every language.
+
+**3. Migration `0016_spoken_language.sql`.**
+
+- `jobs.language text NOT NULL DEFAULT 'hi'` — metadata-only on Postgres, no
+  rewrite under a running worker.
+- `submissions.language text`, nullable — a row rejected for an unknown
+  language has no code to store. The client's exact string stays in `raw`.
+- Existing valid submissions backfilled to `'hi'`.
+- Both CHECK `^[a-z]{2,3}$` — the shape of a code, never a list, which is what
+  keeps a new language from needing a migration.
+- No view changes.
+
+**4. Config and error codes.**
+
+- `EXPORT_LANGUAGE_COLUMN=language` — a setting, because the client has not
+  named the column yet.
+- `ALLOW_PLACEHOLDER_SCRIPTS=false` — true only locally, for hand-made test
+  renders. **Never on the worker**: it would send draft copy to real mechanics.
+  Not in any hash; it decides whether a job may run, never what it says.
+- `RejectCode.LANGUAGE_UNSUPPORTED` — intake.
+- `StageErrorCode.SCRIPT_NOT_APPROVED` — prep, and in `TERMINAL_STAGE_ERRORS`.
+
+**5. Intake.** `validate_row(row, language_column=)` resolves the language
+after the plate combination. `ValidRow.language` is written to
+`submissions.language`, and `_create_job` writes `jobs.language` with
+`script_version = current_version(language)`. `cycle._repair_orphans`
+(invariant 33) carries `COALESCE(s.language, 'hi')`, so a repaired job speaks
+what the mechanic asked for.
+
+**6. Job context, hashes, voice call.**
+
+- `JobContext.language`, loaded in `orchestrator.load_context`.
+- `hashing.prep_hash(..., language=, script_approved=)` — both added only
+  outside Hindi.
+- `hashing.audio_hash(..., tts_language=)` — added only when the field is sent,
+  so toggling it for a language (the audio test's A/B) regenerates that audio.
+- `vendors.voice_tts(..., language=None)` — sends the field only when given.
+
+**7. Stages — `stages/real.py`, `stages/stubs.py`.**
+
+- `PrepStage.input_hash` uses `current_version(ctx.language)` plus language and
+  approval. Identical to today for Hindi.
+- `PrepStage.run` raises `SCRIPT_NOT_APPROVED` for an unapproved language
+  unless `ALLOW_PLACEHOLDER_SCRIPTS`, then fills with
+  `fill_script(version=current_version(lang), language=lang, ...)`. The
+  `prep.script_filled` event and the stage meta record language and approval.
+- **The failure lifts by itself.** Approval is in the prep hash, so when
+  `approved=True` ships, those jobs' hash moves, the failure stops holding
+  (invariant 34), and they reschedule with nothing done by hand.
+- `AudioStage` passes `tts_language` into both its hash and `voice_tts`.
+- `StubPrep` gets the same, so stub runs exercise the language path. Check
+  `stages/mocks.py` for a fake-audio hash of its own.
+
+**8. `seed-job`, CLI, inspection.**
+
+- `seed_job(language="hi")` — validated with `resolve_language`; writes
+  `submissions.language`, `raw.language`, `jobs.language` and `script_version`.
+  Its `ON CONFLICT` also updates `language` and `script_version`, so reseeding
+  a mechanic in another language switches the job.
+- `castrol seed-job --language ta` — code or name.
+- `castrol show` prints the language and whether its script is approved.
+- Optional: `castrol find --language ta`.
+
+**9. Prototype — `spikes/prototype.py`.** Already has `--language`,
+`--script-version` and `--omit-language-field`. To change: pick the version via
+`current_version()` and the field via the registry's `tts_language`, rather than
+computing its own "latest". `--language` choices come from the registry, so
+Malayalam is already in.
+
+**10. Panel — client-facing.** A sentence for `SCRIPT_NOT_APPROVED` in
+`lib/reasons.ts` ("The script for this language is awaiting approval."); without
+it the generic fallback shows, which is safe but uninformative. Same for
+`LANGUAGE_UNSUPPORTED` if Submissions shows reject reasons. A language column
+or filter on Jobs needs a view migration — **deferred** unless asked for.
+
+**11. Tests.**
+
+- Registry: every entry has all three placeholders and nothing left over;
+  aliases resolve including native spellings; blank → `hi`; unknown raises;
+  Malayalam is present.
+- **Hindi is pinned:** `prep_hash` and `audio_hash` for a Hindi job equal the
+  pre-change values, as literal hashes.
+- A Tamil `prep_hash` moves when `approved` flips; `audio_hash` moves when
+  `tts_language` toggles.
+- Intake: the column resolves; absent column → `hi`; `Odia` →
+  `LANGUAGE_UNSUPPORTED`; a custom `language_column` works.
+- `PrepStage`: unapproved raises terminal `SCRIPT_NOT_APPROVED`;
+  `ALLOW_PLACEHOLDER_SCRIPTS` lets it through.
+- `voice_tts` sends no `language` key for `None` and `"ta"` for `"ta"`.
+- `uv run pytest` and `uv run ruff check .` green.
+
+**12. Docs.** `CLAUDE.md`: language in the Inputs table, `seed-job
+--language`, a "how to add a language" note, and an invariant — an unapproved
+language never renders and clears itself on approval; language enters a hash
+only outside Hindi. `TECH_DESIGN.md`: stage A's `language` field and the
+per-language script registry.
+
+### Rollout
+
+Each step that writes to production or spends needs an explicit go-ahead.
+
+1. Finish phases 7-12. `pytest` and `ruff` green.
+2. **Apply `0016`** with `scripts/apply_migration.py` — a production write, and
+   it **must land before the merge**.
+3. Merge to `main`. CI builds; the worker pulls on its next run.
+4. **Prove Hindi did not move**: for a sample of open Hindi jobs, prep and
+   audio hashes identical before and after, so nothing re-renders.
+5. **Audio test** — 5 languages x 4 mechanics with the field, plus 5 takes
+   without it: 25 takes, **~$0.60**, through `spikes/prototype.py --only audio
+   --language <code>`. Listen for English names inside native text, the brand,
+   "8", the place line, pacing, and whether the field changes anything.
+6. Native-speaker review → client copy → each language goes in as `v2`,
+   `approved=True`.
+7. **Test videos** — 4 per language, 20 videos, **~$25**, via `seed-job
+   --language` run locally, with `ALLOW_PLACEHOLDER_SCRIPTS=true` if the copy is
+   not approved yet and `DELIVERY_ENABLED=false`.
+8. When the client adds the export column, set `EXPORT_LANGUAGE_COLUMN` to its
+   name.
+
+### Adding a language later
+
+1. Add `Language(code="mr", name="Marathi", aliases=("marathi", "मराठी"),
+   current="v1", approved=False, tts_language="mr", templates={"v1": "..."})` to
+   `prep/script.py:LANGUAGES`.
+2. `uv run pytest` — the registry tests cover the new entry without being edited.
+3. Merge. No migration, no config.
+
+The voice provider must support the code. `sonic-3.6` also covers `mr`, `gu`,
+`pa`, `or` and `ur`.
+
+### Open questions
+
+- **The export column's name and values.** Configurable, so not blocking.
+- **Rejecting an unknown language is terminal** (invariant 8): a row in a
+  language not yet added never gets a video. The alternative is to accept it
+  and hold it at prep like a placeholder, so it renders once the language is
+  added.
+- **Placeholder failures are visible in the panel** as failed jobs until
+  approval. Honest, but the client will see them.
+- **Send the `language` field or not** — settled per language by the audio
+  test's A/B; one value per registry entry.
+- **Length and cost** — after the audio test.

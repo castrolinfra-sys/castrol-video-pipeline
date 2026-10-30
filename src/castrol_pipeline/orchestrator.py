@@ -143,7 +143,7 @@ def load_context(job_id: str) -> JobContext:
     row = db.fetch_one(
         """
         SELECT j.id AS job_id, j.submission_id, j.script_version, j.voice_id,
-               j.plate_id,
+               j.plate_id, j.language,
                s.raw, s.phone_e164, s.user_name, s.workshop_name,
                s.address_normalized, s.image_url_raw,
                s.background_choice, s.outfit_choice
@@ -162,6 +162,7 @@ def load_context(job_id: str) -> JobContext:
         script_version=row["script_version"],
         voice_id=row["voice_id"],
         plate_id=str(row["plate_id"]) if row["plate_id"] else None,
+        language=row["language"],
         user_name=row["user_name"] or "",
         workshop_name=row["workshop_name"] or "",
         # address_normalized IS the spoken form. It used to be split on ", "

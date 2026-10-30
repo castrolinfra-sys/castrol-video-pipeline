@@ -27,6 +27,13 @@ from .common.s3 import get_storage, job_key, plate_key, uniform_ref_key
 from .config import get_settings
 from .prep.normalise import normalise_phone, spoken_place_from
 from .prep.plates import plate_code
+from .prep.script import (
+    DEFAULT_LANGUAGE,
+    UnknownLanguage,
+    current_version,
+    get_language,
+    resolve_language,
+)
 from .stages import media
 
 log = get_logger(__name__)
@@ -182,9 +189,22 @@ def seed_job(
     uniform_id: str = "u1_tshirt",
     background_id: str = "bg1_white_suv",
     approved_by: str = "seed-job",
+    language: str = DEFAULT_LANGUAGE,
 ) -> dict[str, str]:
-    """Create (or return) one job. Returns {job_id, submission_id, plate_id}."""
+    """Create (or return) one job. Returns {job_id, submission_id, plate_id}.
+
+    `language` is a code or a name, resolved exactly as intake resolves the
+    export's column. Reseeding the same mechanic in another language SWITCHES
+    the job - its language and script version - rather than refusing, because
+    that is what a test render in five languages from one photo needs.
+    """
     s = get_settings()
+
+    try:
+        lang = resolve_language(language)
+    except UnknownLanguage as exc:
+        raise SeedError(str(exc)) from None
+    version = current_version(lang)
 
     if not photo.exists():
         raise SeedError(f"Photo not found: {photo}")
@@ -220,6 +240,7 @@ def seed_job(
         "outfit": uniform_id,
         "background": background_id,
         "photo_sha256": photo_sha,
+        "language": lang,
     }
 
     submission = db.fetch_one(
@@ -227,15 +248,16 @@ def seed_job(
         INSERT INTO submissions (submission_hash, media_key, raw, phone_e164,
                                  user_name, workshop_name, address_raw,
                                  address_normalized, background_choice,
-                                 outfit_choice, validation_status)
+                                 outfit_choice, validation_status, language)
         VALUES (%(hash)s, %(media)s, %(raw)s, %(phone)s, %(name)s, %(shop)s,
-                %(addr)s, %(said)s, %(bg)s, %(outfit)s, 'valid')
+                %(addr)s, %(said)s, %(bg)s, %(outfit)s, 'valid', %(lang)s)
         ON CONFLICT (submission_hash) DO UPDATE
            SET user_name = EXCLUDED.user_name,
                workshop_name = EXCLUDED.workshop_name,
                address_raw = EXCLUDED.address_raw,
                address_normalized = EXCLUDED.address_normalized,
-               raw = EXCLUDED.raw
+               raw = EXCLUDED.raw,
+               language = EXCLUDED.language
         RETURNING id;
         """,
         {
@@ -249,23 +271,28 @@ def seed_job(
             "said": said,
             "bg": background_id,
             "outfit": uniform_id,
+            "lang": lang,
         },
     )
     submission_id = str(submission["id"])  # type: ignore[index]
 
     job = db.fetch_one(
         """
-        INSERT INTO jobs (submission_id, plate_id, script_version, voice_id)
-        VALUES (%(sub)s, %(plate)s, %(script)s, %(voice)s)
+        INSERT INTO jobs (submission_id, plate_id, script_version, voice_id,
+                          language)
+        VALUES (%(sub)s, %(plate)s, %(script)s, %(voice)s, %(lang)s)
         ON CONFLICT (submission_id) DO UPDATE
-           SET plate_id = EXCLUDED.plate_id
+           SET plate_id = EXCLUDED.plate_id,
+               language = EXCLUDED.language,
+               script_version = EXCLUDED.script_version
         RETURNING id;
         """,
         {
             "sub": submission_id,
             "plate": plate_id,
-            "script": s.script_version,
+            "script": version,
             "voice": s.require("tts_voice_id"),
+            "lang": lang,
         },
     )
     job_id = str(job["id"])  # type: ignore[index]
@@ -307,6 +334,8 @@ def seed_job(
         spoken_place=said,
         plate_id=plate_id,
         photo_key=stored.key,
+        language=lang,
+        script_version=version,
     )
     log.info(
         "seed.done",
@@ -321,6 +350,8 @@ def seed_job(
         "photo_key": stored.key,
         "spoken_place": said,
         "card_address": address,
+        "language": lang,
+        "script_version": version,
     }
 
 
@@ -329,8 +360,8 @@ def describe(job_id: str) -> str:
     job = db.fetch_one(
         """
         SELECT j.id, j.status, j.current_stage, j.failure_reason, j.created_at,
-               j.completed_at, s.user_name, s.workshop_name, s.address_raw,
-               s.address_normalized, s.phone_e164
+               j.completed_at, j.language, j.script_version, s.user_name,
+               s.workshop_name, s.address_raw, s.address_normalized, s.phone_e164
           FROM jobs j JOIN submissions s ON s.id = j.submission_id
          WHERE j.id = %(id)s;
         """,
@@ -338,6 +369,13 @@ def describe(job_id: str) -> str:
     )
     if job is None:
         raise SeedError(f"No job {job_id}")
+    job = dict(job)
+    try:
+        # Whether this job CAN render, which the stored row alone cannot say:
+        # approval lives in the registry, not the database.
+        job["script_approved"] = get_language(job["language"]).approved
+    except UnknownLanguage:
+        job["script_approved"] = None
 
     runs = db.fetch_all(
         """
@@ -363,7 +401,7 @@ def describe(job_id: str) -> str:
 
     return json.dumps(
         {
-            "job": dict(job),
+            "job": job,
             "cost": dict(cost) if cost else None,
             "stage_runs": [dict(r) for r in runs],
             "assets": [dict(a) for a in assets],

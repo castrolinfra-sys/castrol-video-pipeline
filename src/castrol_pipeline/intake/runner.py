@@ -18,6 +18,7 @@ from ..common.errors import RejectCode
 from ..common.logging import get_logger
 from ..common.s3 import get_storage, job_key
 from ..config import Settings, get_settings
+from ..prep.script import current_version
 from .dedupe import compute_submission_hash, media_key_from_url
 from .export_client import ExportClient, ExportResult, ExportWindow
 from .media import MediaError, fetch_photo
@@ -206,7 +207,7 @@ def _insert_submission(
             image_rekognition_status, image_face_count,
             client_status, created_at_ist_raw, updated_at_ist_raw,
             created_at_ist, updated_at_ist,
-            validation_status, reject_reason, reject_details
+            validation_status, reject_reason, reject_details, language
         ) VALUES (
             %(hash)s, %(media_key)s, %(batch_id)s, %(raw)s,
             %(phone)s, %(name)s, %(workshop)s, %(address_raw)s, %(address_norm)s,
@@ -217,7 +218,7 @@ def _insert_submission(
             %(rek)s, %(faces)s,
             %(client_status)s, %(created_raw)s, %(updated_raw)s,
             %(created)s, %(updated)s,
-            %(verdict)s, %(reject)s, %(reject_details)s
+            %(verdict)s, %(reject)s, %(reject_details)s, %(language)s
         )
         RETURNING id;
         """,
@@ -265,6 +266,8 @@ def _insert_submission(
             "verdict": "valid" if valid else "rejected",
             "reject": str(rejection.code) if rejection else None,
             "reject_details": Jsonb({"detail": rejection.detail}) if rejection else None,
+            # The resolved code. The client's exact string is in `raw`.
+            "language": valid.language if valid else None,
         },
     )
     assert inserted is not None
@@ -312,14 +315,16 @@ def _create_job(submission_id: str, valid: ValidRow, batch_id: str, settings: Se
         )
     row = db.fetch_one(
         """
-        INSERT INTO jobs (submission_id, script_version, voice_id, plate_id, batch_id)
-        VALUES (%(sub)s, %(script)s, %(voice)s, %(plate)s, %(batch)s)
+        INSERT INTO jobs (submission_id, script_version, voice_id, plate_id,
+                          batch_id, language)
+        VALUES (%(sub)s, %(script)s, %(voice)s, %(plate)s, %(batch)s, %(language)s)
         ON CONFLICT (submission_id) DO NOTHING
         RETURNING id;
         """,
         {
             "sub": submission_id,
-            "script": settings.script_version,
+            "script": current_version(valid.language),
+            "language": valid.language,
             "voice": settings.tts_voice_id or "stub-voice",
             "plate": plate_id,
             "batch": batch_id,
@@ -368,7 +373,7 @@ def run_intake(
                 counters.duplicate += 1
                 continue
 
-            verdict = validate_row(row)
+            verdict = validate_row(row, language_column=settings.export_language_column)
             rejection = verdict if isinstance(verdict, Rejection) else None
             valid = verdict if isinstance(verdict, ValidRow) else None
 

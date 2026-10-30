@@ -8,7 +8,7 @@ by hand is what the pipeline will later do properly.
             |
       [1] image   gpt-image-2           person replacement on the plate
             |
-      [2] audio   sonic-3.6             Hindi script -> mp3 + probed duration
+      [2] audio   sonic-3.6             script (Hindi, or --language) -> mp3 + probed duration
             |
       [3] video   kling-avatar-v2       avatar lipsync   (8-20 MINUTES)
             |
@@ -40,6 +40,14 @@ import httpx
 # The card geometry and the ffmpeg settings were tuned against real client
 # review, so they live in the package and this spike borrows them. Two copies
 # would drift on the first revision, and the spike is what the client sees.
+from castrol_pipeline.prep.normalise import spoken_place_from
+from castrol_pipeline.prep.script import (
+    SUPPORTED_LANGUAGES,
+    current_version,
+    fill_script,
+    get_language,
+    templates_for,
+)
 from castrol_pipeline.stages.media import (
     composite as _composite,
 )
@@ -340,12 +348,33 @@ def normalise_for_tts(text: str) -> str:
     return text
 
 
-def step_audio(script_text: str, out_dir: pathlib.Path) -> tuple[pathlib.Path, float]:
+def step_audio(
+    script_text: str, out_dir: pathlib.Path, language: str | None = None
+) -> tuple[pathlib.Path, float]:
+    """`language` is sent as the provider's field only when given.
+
+    Hindi has never sent one (TECH_DESIGN: test before adding it), so None is
+    the Hindi request byte for byte. With it set, the same voice id is asked
+    to speak that language.
+    """
     base = ENV.get("TTS_BASE_URL") or "https://api.cartesia.ai"
     spoken = normalise_for_tts(script_text)
     if spoken != script_text:
         say("audio", "normalised all-caps tokens so they are read as words")
     raw = out_dir / "audio_raw.wav"
+    body = {
+        "model_id": ENV.get("TTS_MODEL_ID", "sonic-3.6"),
+        "transcript": spoken,
+        "voice": {"mode": "id", "id": need("TTS_VOICE_ID")},
+        "output_format": {
+            "container": "wav",
+            "encoding": "pcm_f32le",
+            "sample_rate": 44100,
+        },
+    }
+    if language:
+        body["language"] = language
+    say("audio", f"language field: {language or '(omitted)'}")
     with httpx.Client(timeout=180.0) as c:
         r = c.post(
             f"{base}/tts/bytes",
@@ -354,16 +383,7 @@ def step_audio(script_text: str, out_dir: pathlib.Path) -> tuple[pathlib.Path, f
                 "Cartesia-Version": ENV.get("CARTESIA_VERSION", "2026-05-11"),
                 "Content-Type": "application/json",
             },
-            json={
-                "model_id": ENV.get("TTS_MODEL_ID", "sonic-3.6"),
-                "transcript": spoken,
-                "voice": {"mode": "id", "id": need("TTS_VOICE_ID")},
-                "output_format": {
-                    "container": "wav",
-                    "encoding": "pcm_f32le",
-                    "sample_rate": 44100,
-                },
-            },
+            json=body,
         )
         if r.status_code != 200:
             die(f"voice provider {r.status_code}: {r.text[:400]}")
@@ -443,7 +463,16 @@ def main() -> int:
                          "reference so its fabric and printed marks are copied "
                          "rather than reconstructed")
     ap.add_argument("--out", default="spikes/out/run1")
-    ap.add_argument("--script", help="file holding the Hindi script text")
+    ap.add_argument("--script", help="file holding the filled script text; "
+                    "without it, --language fills the package template")
+    ap.add_argument("--language", choices=SUPPORTED_LANGUAGES,
+                    help="fill this language's template from --name/--workshop/"
+                    "--address, and send it as the voice provider's language field")
+    ap.add_argument("--script-version",
+                    help="template version; default is that language's latest")
+    ap.add_argument("--omit-language-field", action="store_true",
+                    help="fill the --language template but send no language "
+                    "field, as Hindi does - the A/B for the field itself")
     ap.add_argument("--name", default="Raju Shetty")
     ap.add_argument("--workshop", default="Shetty Motors")
     ap.add_argument("--address", default="Andheri, Mumbai")
@@ -497,10 +526,36 @@ def main() -> int:
 
     # [2] audio
     if only in (None, "audio") and not st.get("audio_seconds"):
-        if not args.script:
-            die("--script <file> is required for the audio step")
-        text = pathlib.Path(args.script).read_text(encoding="utf-8").strip()
-        mp3, dur = step_audio(text, out)
+        if args.script:
+            text = pathlib.Path(args.script).read_text(encoding="utf-8").strip()
+        elif args.language:
+            # The same fill the pipeline runs, so the take under review is the
+            # take a real job would get. The card stays English, so --address
+            # is what the card prints and its last segment is what is said.
+            version = args.script_version or current_version(args.language)
+            if version not in templates_for(args.language):
+                die(f"{args.language} has no script {version!r}; "
+                    f"known: {sorted(templates_for(args.language))}")
+            lang = get_language(args.language)
+            if not lang.approved:
+                say("audio", f"{lang.name} {version} is a PLACEHOLDER - "
+                    "for review, not for a mechanic")
+            filled = fill_script(
+                version=version, language=args.language, name=args.name,
+                workshop=args.workshop, locality=spoken_place_from(args.address),
+            )
+            text = filled.spoken_text
+            (out / "script_spoken.txt").write_text(text + "\n", encoding="utf-8")
+            say("audio", f"filled {args.language} {version} -> {out / 'script_spoken.txt'}")
+        else:
+            die("--script <file> or --language is required for the audio step")
+        # The registry decides the field, as AudioStage does - Hindi's entry
+        # sends none - so a prototype take matches a pipeline take.
+        send = (
+            None if args.omit_language_field or not args.language
+            else get_language(args.language).tts_language
+        )
+        mp3, dur = step_audio(text, out, language=send)
         st.set("audio_seconds", dur)
         st.set("audio_path", str(mp3))
     if only == "audio":
