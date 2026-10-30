@@ -112,11 +112,19 @@ class Language:
     tts_language: str | None
 
 
-#: Every language except Hindi is a PLACEHOLDER: drafts written 2026-10-28 for
-#: the audio test and NOT YET READ BY A NATIVE SPEAKER. They are replaced, not
-#: edited, when the client's copy arrives - as "v2" with `current` and
-#: `approved` moved with it, so the draft stays on record as what any test
-#: render was made from.
+#: Every language except Hindi has TWO scripts. "v1" is our draft of
+#: 2026-10-28, kept on record. "v2" is the CLIENT's copy of 2026-10-30,
+#: verbatim but for the slot markers, and is what a new job gets. All five
+#: stay `approved=False` until the audio test has been heard: the export
+#: column defaults to `language`, so approving one means the first row the
+#: client sends in it renders for a real mechanic.
+#:
+#: The client's copy glues case endings onto the slots ("{workshop}-லிருந்து",
+#: "{locality}ನಲ್ಲಿ"), which the drafts below were written to avoid. That is
+#: their call and is kept as sent; how the voice reads an English name with a
+#: native ending is the first thing to listen for in the audio test.
+#:
+#: What follows describes the v1 DRAFTS:
 #:
 #: Each is v2's meaning, not a word-for-word copy, and written the way v2 was:
 #:
@@ -146,7 +154,7 @@ LANGUAGES: tuple[Language, ...] = (
     ),
     Language(
         code="ta", name="Tamil", aliases=("tamil", "தமிழ்"),
-        current="v1", approved=False, tts_language="ta",
+        current="v2", approved=False, tts_language="ta",
         templates={
             "v1": (
                 "நான் {name}. என் கேரேஜ், {workshop}. சர்வீஸ் ஆகட்டும், ரிப்பேர் "
@@ -160,11 +168,22 @@ LANGUAGES: tuple[Language, ...] = (
                 "நாங்க இருக்கறது {locality}. நேர்ல வாங்க, இல்லன்னா ஸ்க்ரீன்ல "
                 "இருக்கற நம்பருக்கு கால் பண்ணுங்க."
             ),
+            # The client's copy, 2026-10-30, verbatim but for the slot
+            # markers.
+            "v2": (
+                "நான் {name}, {workshop}-லிருந்து. சர்வீஸ் ஆனாலும் ரிப்பேர் "
+                "ஆனாலும், ஒவ்வொரு வண்டியையும் கவனமா பார்த்துப்பேன். வண்டி "
+                "ஸ்டார்ட் ஆன முதல் 8 விநாடிகளில்தான் எஞ்சின் தேய்மானம் அதிகம். "
+                "இதிலிருந்து பாதுகாக்க, நான் பரிந்துரைப்பது Castrol MAGNATEC "
+                "Full Synthetic Premium Oil.\n"
+                "சர்வீஸுக்கு {locality}-ல வாங்க, இல்லனா ஸ்கிரீன்ல இருக்கிற "
+                "நம்பருக்கு கால் பண்ணுங்க."
+            ),
         },
     ),
     Language(
         code="te", name="Telugu", aliases=("telugu", "తెలుగు"),
-        current="v1", approved=False, tts_language="te",
+        current="v2", approved=False, tts_language="te",
         templates={
             "v1": (
                 "నేను {name}. నా గ్యారేజ్, {workshop}. సర్వీస్ అయినా, రిపేర్ "
@@ -178,11 +197,22 @@ LANGUAGES: tuple[Language, ...] = (
                 "మేము ఉండేది {locality}. నేరుగా రండి, లేదా స్క్రీన్ మీద ఉన్న "
                 "నంబర్‌కి కాల్ చేయండి."
             ),
+            # The client's copy, 2026-10-30, verbatim but for the slot
+            # markers.
+            "v2": (
+                "నేను {name}, {workshop} నుంచి. సర్వీస్ అయినా, రిపేర్ అయినా "
+                "ప్రతి వాహనాన్ని జాగ్రత్తగా చూసుకుంటాను. వాహనం స్టార్ట్ అయిన "
+                "మొదటి 8 సెకన్లలోనే ఇంజిన్ వేర్ ఎక్కువగా ఉంటుంది. దీని నుంచి "
+                "రక్షణ కోసం నేను సిఫార్సు చేసేది Castrol MAGNATEC Full "
+                "Synthetic Premium Oil.\n"
+                "సర్వీస్ కోసం {locality}లో సంప్రదించండి లేదా స్క్రీన్‌పై ఉన్న "
+                "నంబర్‌కు కాల్ చేయండి."
+            ),
         },
     ),
     Language(
         code="kn", name="Kannada", aliases=("kannada", "ಕನ್ನಡ"),
-        current="v1", approved=False, tts_language="kn",
+        current="v2", approved=False, tts_language="kn",
         templates={
             "v1": (
                 "ನಾನು {name}. ನನ್ನ ಗ್ಯಾರೇಜ್, {workshop}. ಸರ್ವೀಸ್ ಆಗಲಿ, ರಿಪೇರಿ "
@@ -196,11 +226,21 @@ LANGUAGES: tuple[Language, ...] = (
                 "ನಾವು ಇರುವುದು {locality}. ನೇರವಾಗಿ ಬನ್ನಿ, ಅಥವಾ ಸ್ಕ್ರೀನ್ ಮೇಲೆ "
                 "ಇರುವ ನಂಬರ್‌ಗೆ ಕಾಲ್ ಮಾಡಿ."
             ),
+            # The client's copy, 2026-10-30, verbatim but for the slot
+            # markers.
+            "v2": (
+                "ನಾನು {name}, {workshop}ನಿಂದ. ಸರ್ವಿಸ್ ಆಗಲಿ, ರಿಪೇರಿ ಆಗಲಿ, ಪ್ರತಿ "
+                "ವಾಹನದ ಕಾಳಜಿ ವಹಿಸುತ್ತೇನೆ. ವಾಹನ ಸ್ಟಾರ್ಟ್ ಆದ ಮೊದಲ 8 ಸೆಕೆಂಡುಗಳಲ್ಲೇ "
+                "ಎಂಜಿನ್ ವೇರ್ ಹೆಚ್ಚಾಗುತ್ತದೆ. ಇದರಿಂದ ರಕ್ಷಣೆಗಾಗಿ ನಾನು ಶಿಫಾರಸು "
+                "ಮಾಡುವುದು Castrol MAGNATEC Full Synthetic Premium Oil.\n"
+                "ಸರ್ವಿಸ್‌ಗಾಗಿ {locality}ನಲ್ಲಿ ಸಂಪರ್ಕಿಸಿ ಅಥವಾ ಸ್ಕ್ರೀನ್ ಮೇಲಿರುವ "
+                "ನಂಬರ್‌ಗೆ ಕರೆ ಮಾಡಿ."
+            ),
         },
     ),
     Language(
         code="bn", name="Bengali", aliases=("bengali", "bangla", "বাংলা"),
-        current="v1", approved=False, tts_language="bn",
+        current="v2", approved=False, tts_language="bn",
         templates={
             "v1": (
                 "আমি {name}, {workshop} থেকে। সার্ভিস হোক, রিপেয়ার হোক বা "
@@ -212,11 +252,21 @@ LANGUAGES: tuple[Language, ...] = (
                 "আমাদের ঠিকানা {locality}। চলে আসুন, অথবা স্ক্রিনে দেওয়া নম্বরে "
                 "কল করুন।"
             ),
+            # The client's copy, 2026-10-30, verbatim but for the slot
+            # markers.
+            "v2": (
+                "আমি {name},{workshop} থেকে। সার্ভিস হোক বা রিপেয়ার, প্রতিটি "
+                "গাড়ির যত্ন নিই। গাড়ি স্টার্ট হওয়ার প্রথম ৮ সেকেন্ডেই "
+                "ইঞ্জিনের ক্ষয় সবচেয়ে বেশি হয়। এই ক্ষয় থেকে সুরক্ষার জন্য "
+                "আমি পরামর্শ দিই Castrol MAGNATEC Full Synthetic Premium Oil।\n"
+                "সার্ভিসের জন্য {locality}-এ যোগাযোগ করুন অথবা স্ক্রিনে দেওয়া "
+                "নম্বরে ফোন করুন।"
+            ),
         },
     ),
     Language(
         code="ml", name="Malayalam", aliases=("malayalam", "മലയാളം"),
-        current="v1", approved=False, tts_language="ml",
+        current="v2", approved=False, tts_language="ml",
         templates={
             "v1": (
                 "ഞാൻ {name}. എന്റെ ഗാരേജ്, {workshop}. സർവീസ് ആകട്ടെ, റിപ്പയർ "
@@ -228,6 +278,18 @@ LANGUAGES: tuple[Language, ...] = (
                 "Castrol Magnatec Full Synthetic Premium Oil — ഇത് എഞ്ചിൻ "
                 "സ്റ്റാർട്ട് ആകുന്നതിന് മുമ്പേ, സംരക്ഷണം നൽകി തുടങ്ങുന്നു.\n"
                 "ഞങ്ങൾ ഉള്ളത് {locality}. നേരിട്ട് വരൂ, അല്ലെങ്കിൽ സ്ക്രീനിൽ "
+                "കാണുന്ന നമ്പറിൽ വിളിക്കൂ."
+            ),
+            # The client's copy, 2026-10-30, verbatim but for the slot
+            # markers.
+            "v2": (
+                "ഞാൻ {name}, {workshop}-ൽ നിന്നാണ്. സർവീസായാലും റിപ്പയറായാലും, "
+                "ഓരോ വണ്ടിയും ഞാൻ ശ്രദ്ധയോടെ നോക്കാറുണ്ട്. വണ്ടി സ്റ്റാർട്ട് "
+                "ചെയ്യുന്ന ആദ്യത്തെ 8 സെക്കൻഡിലാണ് എൻജിനിൽ ഏറ്റവും കൂടുതൽ "
+                "തേയ്മാനം സംഭവിക്കുന്നത്. ഇതിൽ നിന്ന് എൻജിനെ സംരക്ഷിക്കാൻ ഞാൻ "
+                "ശുപാർശ ചെയ്യുന്നത് Castrol MAGNATEC Full Synthetic Premium Oil "
+                "ആണ്.\n"
+                "സർവീസിനായി {locality}-ൽ ബന്ധപ്പെടുക. അല്ലെങ്കിൽ സ്ക്രീനിൽ "
                 "കാണുന്ന നമ്പറിൽ വിളിക്കൂ."
             ),
         },

@@ -87,8 +87,13 @@ class TestRegistry:
         assert 2 <= len(lang.code) <= 3 and lang.code.isascii()
         assert lang.code.isalpha() and lang.code.islower()
 
-    def test_only_hindi_is_approved_until_the_clients_copy_lands(self):
+    def test_only_hindi_is_approved_until_the_audio_test_passes(self):
         assert [lang.code for lang in LANGUAGES if lang.approved] == ["hi"]
+
+    @pytest.mark.parametrize("code", ["ta", "te", "kn", "bn", "ml"])
+    def test_new_jobs_get_the_clients_copy_not_our_draft(self, code):
+        assert current_version(code) == "v2"
+        assert "v1" in get_language(code).templates  # the draft stays on record
 
     def test_hindi_sends_no_language_field(self):
         assert get_language("hi").tts_language is None

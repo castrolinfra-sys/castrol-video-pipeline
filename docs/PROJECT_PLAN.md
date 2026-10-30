@@ -681,9 +681,21 @@ Decided 2026-10-28/29:
 
 ### The scripts
 
-All five are drafts written 2026-10-28, **not yet read by a native speaker**,
-held as `v1` with `approved=False`. Native script, so the voice reads each
-language as itself. They carry v2's meaning, shaped by three rules:
+**The client's copy arrived 2026-10-30 and is `v2`, the current version for
+all five**, verbatim but for the slot markers (`[Mechanic Name]` →
+`{name}` and so on). Our drafts stay as `v1`, on record. All five remain
+`approved=False` until the audio test is heard. Two things to listen for that
+the client's copy introduces:
+
+- **Case endings glued to the slots** — `{workshop}-லிருந்து`, `{locality}లో`,
+  `{workshop}ನಿಂದ`, `{locality}-এ`, `{workshop}-ൽ`. The drafts avoided this;
+  the client's copy keeps it. Whether the voice reads "Shetty Motorsನಿಂದ"
+  cleanly is now the main question.
+- Bengali writes `{name},{workshop}` with no space and the digit as `৮`;
+  `MAGNATEC` in caps is spoken as `Magnatec` by the existing override.
+
+The v1 drafts were native script, carrying Hindi v2's meaning, shaped by
+three rules:
 
 - **The slots stay English** because the export is English and the card prints
   it — so names, workshops and places are Latin inside native text, and whether
