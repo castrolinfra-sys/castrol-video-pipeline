@@ -115,14 +115,15 @@ class Language:
 #: Every language except Hindi has TWO scripts. "v1" is our draft of
 #: 2026-10-28, kept on record. "v2" is the CLIENT's copy of 2026-10-30,
 #: verbatim but for the slot markers, and is what a new job gets. All five
-#: stay `approved=False` until the audio test has been heard: the export
-#: column defaults to `language`, so approving one means the first row the
-#: client sends in it renders for a real mechanic.
+#: were APPROVED on 2026-10-30, after one audio take per language was heard
+#: and accepted. That makes them live: the export column defaults to
+#: `language`, so the first row the client sends in one renders for a real
+#: mechanic.
 #:
 #: The client's copy glues case endings onto the slots ("{workshop}-லிருந்து",
 #: "{locality}ನಲ್ಲಿ"), which the drafts below were written to avoid. That is
-#: their call and is kept as sent; how the voice reads an English name with a
-#: native ending is the first thing to listen for in the audio test.
+#: their call and is kept as sent, and the voice read those endings acceptably
+#: in the audio test.
 #:
 #: What follows describes the v1 DRAFTS:
 #:
@@ -154,7 +155,7 @@ LANGUAGES: tuple[Language, ...] = (
     ),
     Language(
         code="ta", name="Tamil", aliases=("tamil", "தமிழ்"),
-        current="v2", approved=False, tts_language="ta",
+        current="v2", approved=True, tts_language="ta",
         templates={
             "v1": (
                 "நான் {name}. என் கேரேஜ், {workshop}. சர்வீஸ் ஆகட்டும், ரிப்பேர் "
@@ -183,7 +184,7 @@ LANGUAGES: tuple[Language, ...] = (
     ),
     Language(
         code="te", name="Telugu", aliases=("telugu", "తెలుగు"),
-        current="v2", approved=False, tts_language="te",
+        current="v2", approved=True, tts_language="te",
         templates={
             "v1": (
                 "నేను {name}. నా గ్యారేజ్, {workshop}. సర్వీస్ అయినా, రిపేర్ "
@@ -212,7 +213,7 @@ LANGUAGES: tuple[Language, ...] = (
     ),
     Language(
         code="kn", name="Kannada", aliases=("kannada", "ಕನ್ನಡ"),
-        current="v2", approved=False, tts_language="kn",
+        current="v2", approved=True, tts_language="kn",
         templates={
             "v1": (
                 "ನಾನು {name}. ನನ್ನ ಗ್ಯಾರೇಜ್, {workshop}. ಸರ್ವೀಸ್ ಆಗಲಿ, ರಿಪೇರಿ "
@@ -240,7 +241,7 @@ LANGUAGES: tuple[Language, ...] = (
     ),
     Language(
         code="bn", name="Bengali", aliases=("bengali", "bangla", "বাংলা"),
-        current="v2", approved=False, tts_language="bn",
+        current="v2", approved=True, tts_language="bn",
         templates={
             "v1": (
                 "আমি {name}, {workshop} থেকে। সার্ভিস হোক, রিপেয়ার হোক বা "
@@ -266,7 +267,7 @@ LANGUAGES: tuple[Language, ...] = (
     ),
     Language(
         code="ml", name="Malayalam", aliases=("malayalam", "മലയാളം"),
-        current="v2", approved=False, tts_language="ml",
+        current="v2", approved=True, tts_language="ml",
         templates={
             "v1": (
                 "ഞാൻ {name}. എന്റെ ഗാരേജ്, {workshop}. സർവീസ് ആകട്ടെ, റിപ്പയർ "

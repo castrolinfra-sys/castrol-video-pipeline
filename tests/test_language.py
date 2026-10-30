@@ -44,6 +44,18 @@ from .test_intake import good_row
 RAW = {"user_name": "Raju Shetty", "address": "Andheri, Mumbai"}
 
 
+@pytest.fixture
+def unapproved_tamil(monkeypatch):
+    """Tamil as a not-yet-approved language, the state any new entry starts in.
+
+    Every real language is approved now, but the gate is what protects the
+    NEXT one added, so it is exercised against a stand-in.
+    """
+    held = dataclasses.replace(get_language("ta"), approved=False)
+    monkeypatch.setitem(script._BY_CODE, "ta", held)
+    return monkeypatch
+
+
 def _ctx(**over) -> JobContext:
     base = {
         "job_id": "j1",
@@ -87,8 +99,12 @@ class TestRegistry:
         assert 2 <= len(lang.code) <= 3 and lang.code.isascii()
         assert lang.code.isalpha() and lang.code.islower()
 
-    def test_only_hindi_is_approved_until_the_audio_test_passes(self):
-        assert [lang.code for lang in LANGUAGES if lang.approved] == ["hi"]
+    def test_all_six_are_approved(self):
+        # Approved 2026-10-30 after the audio test. A language added later
+        # starts False and does not belong in this list until it is heard.
+        assert {lang.code for lang in LANGUAGES if lang.approved} == {
+            "hi", "ta", "te", "kn", "bn", "ml",
+        }
 
     @pytest.mark.parametrize("code", ["ta", "te", "kn", "bn", "ml"])
     def test_new_jobs_get_the_clients_copy_not_our_draft(self, code):
@@ -172,12 +188,11 @@ class TestVernacularHashes:
         with_ = hashing.audio_hash("text", "voice-1", "m", tts_language="ta")
         assert without != with_
 
-    def test_approving_a_language_moves_the_stage_hash(self, monkeypatch):
+    def test_approving_a_language_moves_the_stage_hash(self, unapproved_tamil):
         # The real mechanism behind "the failure lifts by itself".
-        ctx = _ctx(language="ta", script_version="v1")
+        ctx = _ctx(language="ta", script_version="v2")
         before = real.PrepStage().input_hash(ctx)
-        approved = dataclasses.replace(get_language("ta"), approved=True)
-        monkeypatch.setitem(script._BY_CODE, "ta", approved)
+        unapproved_tamil.undo()
         assert real.PrepStage().input_hash(ctx) != before
 
 
@@ -203,21 +218,34 @@ class TestPrepStage:
 
     @pytest.mark.parametrize("stage", [real.PrepStage(), stubs.StubPrep()])
     def test_an_unapproved_language_fails_before_anything_is_spent(
-        self, stage, monkeypatch, quiet
+        self, stage, monkeypatch, quiet, unapproved_tamil
     ):
         _settings(monkeypatch, allow_placeholder_scripts=False)
         with pytest.raises(StageFailure) as exc:
-            stage.run(_ctx(language="ta", script_version="v1"))
+            stage.run(_ctx(language="ta", script_version="v2"))
         assert exc.value.code == StageErrorCode.SCRIPT_NOT_APPROVED
 
     @pytest.mark.parametrize("stage", [real.PrepStage(), stubs.StubPrep()])
-    def test_the_flag_lets_a_test_render_through(self, stage, monkeypatch, quiet):
+    def test_the_flag_lets_a_test_render_through(
+        self, stage, monkeypatch, quiet, unapproved_tamil
+    ):
         _settings(monkeypatch, allow_placeholder_scripts=True)
-        out = stage.run(_ctx(language="ta", script_version="v1"))
+        out = stage.run(_ctx(language="ta", script_version="v2"))
         assert out.meta["language"] == "ta"
         assert out.meta["script_approved"] is False
         assert "Raju Shetty" in out.meta["spoken_text"]
         assert "நான்" in out.meta["spoken_text"]
+
+    @pytest.mark.parametrize("code", ["ta", "te", "kn", "bn", "ml"])
+    def test_an_approved_language_runs_without_the_flag(
+        self, code, monkeypatch, quiet
+    ):
+        _settings(monkeypatch, allow_placeholder_scripts=False)
+        out = real.PrepStage().run(_ctx(language=code, script_version="v2"))
+        assert out.meta["language"] == code
+        assert out.meta["script_version"] == "v2"
+        assert out.meta["script_approved"] is True
+        assert "Raju Shetty" in out.meta["spoken_text"]
 
     def test_hindi_runs_without_the_flag(self, monkeypatch, quiet):
         _settings(monkeypatch, allow_placeholder_scripts=False)

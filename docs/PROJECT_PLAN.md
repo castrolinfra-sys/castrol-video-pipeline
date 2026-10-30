@@ -683,9 +683,12 @@ Decided 2026-10-28/29:
 
 **The client's copy arrived 2026-10-30 and is `v2`, the current version for
 all five**, verbatim but for the slot markers (`[Mechanic Name]` →
-`{name}` and so on). Our drafts stay as `v1`, on record. All five remain
-`approved=False` until the audio test is heard. Two things to listen for that
-the client's copy introduces:
+`{name}` and so on). Our drafts stay as `v1`, on record. **All five were
+approved on 2026-10-30** after one audio take per language (Raju Shetty, Shetty
+Motors, Andheri; 21–26s each, under $0.10 in total) was heard and accepted.
+They are live: the first export row in one of them renders for a real
+mechanic. Two things the takes were checked for, both introduced by the
+client's copy:
 
 - **Case endings glued to the slots** — `{workshop}-லிருந்து`, `{locality}లో`,
   `{workshop}ನಿಂದ`, `{locality}-এ`, `{workshop}-ൽ`. The drafts avoided this;
@@ -717,8 +720,8 @@ test render was made from.
 
 ### Build phases
 
-State as of 2026-10-30. **Rollout step 1 is done**: every phase is on disk,
-`pytest` (420) and `ruff` are green, nothing is committed, applied or spent.
+State as of 2026-10-30. Every phase is built and merged (PR #8), `0016` is
+applied, and the five languages are approved — see Rollout for what is left.
 
 | # | Phase | State |
 |---|---|---|
@@ -855,23 +858,21 @@ per-language script registry.
 
 Each step that writes to production or spends needs an explicit go-ahead.
 
-1. Finish phases 7-12. `pytest` and `ruff` green.
-2. **Apply `0016`** with `scripts/apply_migration.py` — a production write, and
-   it **must land before the merge**.
-3. Merge to `main`. CI builds; the worker pulls on its next run.
-4. **Prove Hindi did not move**: for a sample of open Hindi jobs, prep and
-   audio hashes identical before and after, so nothing re-renders.
-5. **Audio test** — 5 languages x 4 mechanics with the field, plus 5 takes
-   without it: 25 takes, **~$0.60**, through `spikes/prototype.py --only audio
-   --language <code>`. Listen for English names inside native text, the brand,
-   "8", the place line, pacing, and whether the field changes anything.
-6. Native-speaker review → client copy → each language goes in as `v2`,
-   `approved=True`.
-7. **Test videos** — 4 per language, 20 videos, **~$25**, via `seed-job
-   --language` run locally, with `ALLOW_PLACEHOLDER_SCRIPTS=true` if the copy is
-   not approved yet and `DELIVERY_ENABLED=false`.
+1. ~~Finish phases 7-12.~~ Done 2026-10-30.
+2. ~~**Apply `0016`**.~~ Applied and verified 2026-10-30, before the merge.
+3. ~~Merge to `main`.~~ PR #8, merged 2026-10-30.
+4. ~~**Prove Hindi did not move**.~~ Checked read-only against all 297 jobs
+   before the merge: prep and audio hashes, spoken text and the voice request
+   (no `language` field) all identical to main's.
+5. ~~**Audio test**~~ — cut to ONE take per language with the field (Raju
+   Shetty / Shetty Motors / Andheri), under $0.10, heard and accepted
+   2026-10-30. The 4-mechanic spread and the no-field A/B were not run.
+6. ~~Client copy~~ — arrived 2026-10-30, in as `v2`, **approved** the same day.
+7. **Test videos** — not run. 4 per language would be 20 videos, **~$25**, via
+   `seed-job --language` locally with `DELIVERY_ENABLED=false`. Lipsync in these
+   languages is still untested on the video model.
 8. When the client adds the export column, set `EXPORT_LANGUAGE_COLUMN` to its
-   name.
+   name. Until then the default, `language`, is what is read.
 
 ### Adding a language later
 
@@ -891,8 +892,6 @@ The voice provider must support the code. `sonic-3.6` also covers `mr`, `gu`,
   language not yet added never gets a video. The alternative is to accept it
   and hold it at prep like a placeholder, so it renders once the language is
   added.
-- **Placeholder failures are visible in the panel** as failed jobs until
-  approval. Honest, but the client will see them.
 - **Send the `language` field or not** — settled per language by the audio
   test's A/B; one value per registry entry.
 - **Length and cost** — after the audio test.
