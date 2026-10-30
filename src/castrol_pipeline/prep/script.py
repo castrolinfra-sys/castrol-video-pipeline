@@ -1,8 +1,9 @@
 """Script template fill. Pure functions, zero I/O.
 
-The script is fixed, one version, Hindi/Hinglish, with three inserted
-variables. Only the TTS text gets speech expansion; the card is rendered from
-the unexpanded values.
+The script is fixed per language, with three inserted variables. Hindi/Hinglish
+is the default and the only language in production; the vernaculars are drafts
+for the audio test. Only the TTS text gets speech expansion; the card is
+rendered from the unexpanded values, and it is English in every language.
 """
 
 from __future__ import annotations
@@ -70,6 +71,181 @@ SCRIPT_TEMPLATES: dict[str, str] = {
     ),
 }
 
+#: The language a job speaks when nothing says otherwise - including every row
+#: from before the export carried a language at all. Hindi keeps its templates
+#: in SCRIPT_TEMPLATES, untouched, so nothing about a Hindi job's text or hash
+#: moves now that the others exist.
+DEFAULT_LANGUAGE = "hi"
+
+
+@dataclass(frozen=True)
+class Language:
+    """One spoken language, and everything the pipeline needs to speak it.
+
+    ADDING A LANGUAGE IS ONE `Language(...)` ENTRY IN `LANGUAGES` BELOW, and
+    nothing else: intake resolves it from the export, the job stores its code,
+    prep fills its template and the voice is told its code. No migration - the
+    database checks the SHAPE of a code, never a list of them.
+    """
+
+    #: Stored on `jobs.language` and `submissions.language`. ISO 639-1, which
+    #: is also what the voice provider calls it.
+    code: str
+    name: str
+    #: What the export may send, matched case-insensitively alongside `code`
+    #: and `name`. The client's own words and the language's own name for
+    #: itself, so neither a "Tamil" nor a "தமிழ்" is rejected.
+    aliases: tuple[str, ...]
+    #: Every version of this language's script, by version id.
+    templates: dict[str, str]
+    #: The version a new job gets. None means SCRIPT_VERSION from settings,
+    #: which is Hindi's, and stays the env override it has always been.
+    current: str | None
+    #: False while the copy is ours, not the client's. A job in an unapproved
+    #: language fails at prep (`SCRIPT_NOT_APPROVED`) instead of rendering a
+    #: draft to a real mechanic - see PrepStage. Approval is in the prep hash,
+    #: so flipping this to True reopens exactly those jobs, with nothing to do
+    #: by hand.
+    approved: bool
+    #: Sent as the voice provider's `language` field. None sends no field,
+    #: which is what Hindi has always done (TECH_DESIGN: test before adding it).
+    tts_language: str | None
+
+
+#: Every language except Hindi is a PLACEHOLDER: drafts written 2026-10-28 for
+#: the audio test and NOT YET READ BY A NATIVE SPEAKER. They are replaced, not
+#: edited, when the client's copy arrives - as "v2" with `current` and
+#: `approved` moved with it, so the draft stays on record as what any test
+#: render was made from.
+#:
+#: Each is v2's meaning, not a word-for-word copy, and written the way v2 was:
+#:
+#:   * Native script, so the voice reads each language as itself rather than
+#:     guessing at a romanisation. The three slots stay ENGLISH, because the
+#:     export is English and the card prints it - so every name, workshop and
+#:     place is Latin inside native text, and whether the voice reads that
+#:     cleanly is the thing the audio test exists to answer. The brand is
+#:     Latin for the same reason, and as "Magnatec", never all caps.
+#:   * Every slot stands alone as a word. Tamil, Telugu, Kannada and Malayalam
+#:     fuse their case endings onto the noun, and no template can glue an
+#:     ending onto an arbitrary English place name correctly - so where Hindi
+#:     says "come to {locality}", these say "where we are is {locality}". The
+#:     workshop gets its own sentence ("my garage is {workshop}") for the same
+#:     reason. Bengali's "theke" is a separate word like Hindi's "se", so its
+#:     workshop stays inline.
+#:   * "8" stays a digit, as in v2. Whether each language reads it correctly
+#:     is a test item, not an assumption.
+#:   * Punctuation is the pause control, carried from v2: commas at the same
+#:     clause boundaries, em-dashes around the brand. Bengali ends sentences
+#:     with the danda (।), its own full stop.
+LANGUAGES: tuple[Language, ...] = (
+    Language(
+        code="hi", name="Hindi", aliases=("hinglish", "हिंदी", "हिन्दी"),
+        current=None, approved=True, tts_language=None,
+        templates=SCRIPT_TEMPLATES,
+    ),
+    Language(
+        code="ta", name="Tamil", aliases=("tamil", "தமிழ்"),
+        current="v1", approved=False, tts_language="ta",
+        templates={
+            "v1": (
+                "நான் {name}. என் கேரேஜ், {workshop}. சர்வீஸ் ஆகட்டும், ரிப்பேர் "
+                "ஆகட்டும், இல்ல எஞ்சின் பிரச்சனை ஆகட்டும், ஒவ்வொரு காரையும் நான் "
+                "நல்லா கவனிச்சுக்குவேன்.\n"
+                "கார் ஸ்டார்ட் ஆனதும், முதல் 8 செகண்ட்ஸ்ல, எஞ்சின் பார்ட்ஸ்க்கு "
+                "தான் அதிக தேய்மானம் ஏற்படுது. இந்த தேய்மானத்துல இருந்து "
+                "பாதுகாக்க, நான் ரெகமெண்ட் பண்றது — Castrol Magnatec Full "
+                "Synthetic Premium Oil — இது எஞ்சின் ஸ்டார்ட் ஆகறதுக்கு "
+                "முன்னாடியே, பாதுகாப்பு கொடுக்க ஆரம்பிச்சுடும்.\n"
+                "நாங்க இருக்கறது {locality}. நேர்ல வாங்க, இல்லன்னா ஸ்க்ரீன்ல "
+                "இருக்கற நம்பருக்கு கால் பண்ணுங்க."
+            ),
+        },
+    ),
+    Language(
+        code="te", name="Telugu", aliases=("telugu", "తెలుగు"),
+        current="v1", approved=False, tts_language="te",
+        templates={
+            "v1": (
+                "నేను {name}. నా గ్యారేజ్, {workshop}. సర్వీస్ అయినా, రిపేర్ "
+                "అయినా, లేదా ఇంజిన్ ప్రాబ్లమ్ అయినా, ప్రతి కారునీ నేను "
+                "జాగ్రత్తగా చూసుకుంటాను.\n"
+                "కార్ స్టార్ట్ అవ్వగానే, మొదటి 8 సెకండ్స్‌లో, ఇంజిన్ పార్ట్స్‌కి "
+                "ఎక్కువగా అరుగుదల జరుగుతుంది. ఈ అరుగుదల నుంచి కాపాడటానికి, నేను "
+                "రికమెండ్ చేసేది — Castrol Magnatec Full Synthetic Premium Oil — "
+                "ఇది ఇంజిన్ స్టార్ట్ అవ్వకముందే, ప్రొటెక్షన్ ఇవ్వడం "
+                "మొదలుపెడుతుంది.\n"
+                "మేము ఉండేది {locality}. నేరుగా రండి, లేదా స్క్రీన్ మీద ఉన్న "
+                "నంబర్‌కి కాల్ చేయండి."
+            ),
+        },
+    ),
+    Language(
+        code="kn", name="Kannada", aliases=("kannada", "ಕನ್ನಡ"),
+        current="v1", approved=False, tts_language="kn",
+        templates={
+            "v1": (
+                "ನಾನು {name}. ನನ್ನ ಗ್ಯಾರೇಜ್, {workshop}. ಸರ್ವೀಸ್ ಆಗಲಿ, ರಿಪೇರಿ "
+                "ಆಗಲಿ, ಅಥವಾ ಇಂಜಿನ್ ಸಮಸ್ಯೆ ಆಗಲಿ, ಪ್ರತಿಯೊಂದು ಕಾರನ್ನೂ ನಾನು "
+                "ಜೋಪಾನವಾಗಿ ನೋಡಿಕೊಳ್ಳುತ್ತೇನೆ.\n"
+                "ಕಾರ್ ಸ್ಟಾರ್ಟ್ ಆದ ತಕ್ಷಣ, ಮೊದಲ 8 ಸೆಕೆಂಡ್‌ಗಳಲ್ಲಿ, ಇಂಜಿನ್ "
+                "ಪಾರ್ಟ್ಸ್‌ಗೆ ಅತಿ ಹೆಚ್ಚು ಸವೆತ ಆಗುತ್ತದೆ. ಈ ಸವೆತದಿಂದ ರಕ್ಷಿಸಲು, "
+                "ನಾನು ರೆಕಮೆಂಡ್ ಮಾಡುವುದು — Castrol Magnatec Full Synthetic "
+                "Premium Oil — ಇದು ಇಂಜಿನ್ ಸ್ಟಾರ್ಟ್ ಆಗುವ ಮುನ್ನವೇ, ರಕ್ಷಣೆ ನೀಡಲು "
+                "ಶುರು ಮಾಡುತ್ತದೆ.\n"
+                "ನಾವು ಇರುವುದು {locality}. ನೇರವಾಗಿ ಬನ್ನಿ, ಅಥವಾ ಸ್ಕ್ರೀನ್ ಮೇಲೆ "
+                "ಇರುವ ನಂಬರ್‌ಗೆ ಕಾಲ್ ಮಾಡಿ."
+            ),
+        },
+    ),
+    Language(
+        code="bn", name="Bengali", aliases=("bengali", "bangla", "বাংলা"),
+        current="v1", approved=False, tts_language="bn",
+        templates={
+            "v1": (
+                "আমি {name}, {workshop} থেকে। সার্ভিস হোক, রিপেয়ার হোক বা "
+                "ইঞ্জিনের সমস্যা, আমি প্রতিটা গাড়ির যত্ন নিই।\n"
+                "গাড়ি স্টার্ট হওয়ার সঙ্গে সঙ্গেই, প্রথম 8 সেকেন্ডে, ইঞ্জিনের "
+                "পার্টসে সবচেয়ে বেশি ক্ষয় হয়। এই ক্ষয় থেকে বাঁচাতে, আমি রেকমেন্ড "
+                "করি — Castrol Magnatec Full Synthetic Premium Oil — যা ইঞ্জিন "
+                "স্টার্ট হওয়ার আগে থেকেই, প্রোটেকশন দেওয়া শুরু করে।\n"
+                "আমাদের ঠিকানা {locality}। চলে আসুন, অথবা স্ক্রিনে দেওয়া নম্বরে "
+                "কল করুন।"
+            ),
+        },
+    ),
+    Language(
+        code="ml", name="Malayalam", aliases=("malayalam", "മലയാളം"),
+        current="v1", approved=False, tts_language="ml",
+        templates={
+            "v1": (
+                "ഞാൻ {name}. എന്റെ ഗാരേജ്, {workshop}. സർവീസ് ആകട്ടെ, റിപ്പയർ "
+                "ആകട്ടെ, അല്ലെങ്കിൽ എഞ്ചിൻ പ്രശ്നം ആകട്ടെ, ഓരോ വണ്ടിയും ഞാൻ "
+                "ശ്രദ്ധയോടെ നോക്കും.\n"
+                "കാർ സ്റ്റാർട്ട് ആകുമ്പോൾ തന്നെ, ആദ്യത്തെ 8 സെക്കൻഡിൽ, എഞ്ചിൻ "
+                "പാർട്സിനാണ് ഏറ്റവും കൂടുതൽ തേയ്മാനം ഉണ്ടാകുന്നത്. ഈ "
+                "തേയ്മാനത്തിൽ നിന്ന് സംരക്ഷിക്കാൻ, ഞാൻ റെക്കമെൻഡ് ചെയ്യുന്നത് — "
+                "Castrol Magnatec Full Synthetic Premium Oil — ഇത് എഞ്ചിൻ "
+                "സ്റ്റാർട്ട് ആകുന്നതിന് മുമ്പേ, സംരക്ഷണം നൽകി തുടങ്ങുന്നു.\n"
+                "ഞങ്ങൾ ഉള്ളത് {locality}. നേരിട്ട് വരൂ, അല്ലെങ്കിൽ സ്ക്രീനിൽ "
+                "കാണുന്ന നമ്പറിൽ വിളിക്കൂ."
+            ),
+        },
+    ),
+)
+
+_BY_CODE: dict[str, Language] = {lang.code: lang for lang in LANGUAGES}
+
+SUPPORTED_LANGUAGES: tuple[str, ...] = tuple(_BY_CODE)
+
+#: Every spelling the export may send -> code. Built, not written, so a new
+#: entry above is resolvable the moment it exists.
+_ALIASES: dict[str, str] = {
+    spelling.casefold(): lang.code
+    for lang in LANGUAGES
+    for spelling in (lang.code, lang.name, *lang.aliases)
+}
+
 #: Applied to the SPOKEN text only, after the fill. The card still renders the
 #: brand exactly as supplied, so nothing the viewer sees changes.
 #:
@@ -102,21 +278,79 @@ class FilledScript:
     spoken_text: str
     #: The same fill without speech expansion, for logging and diffing.
     display_text: str
+    language: str = DEFAULT_LANGUAGE
 
 
-def get_template(version: str) -> str:
+class UnknownLanguage(ScriptError):
+    pass
+
+
+def get_language(code: str) -> Language:
+    """The registry entry for a stored code. Unknown is an error, not Hindi."""
     try:
-        return SCRIPT_TEMPLATES[version]
+        return _BY_CODE[code]
+    except KeyError:
+        raise UnknownLanguage(
+            f"Unknown script language {code!r}. Known: {list(SUPPORTED_LANGUAGES)}"
+        ) from None
+
+
+def resolve_language(raw: str | None) -> str:
+    """What the export sent -> a language code.
+
+    Blank means Hindi, because every row from before the export carried a
+    language is Hindi and a blank on a new row is the same fact. A value that
+    is present but unknown RAISES rather than defaulting, for the same reason
+    an unknown outfit does: a silent default would put a Tamil mechanic's video
+    in Hindi, and nothing downstream would notice.
+    """
+    text = " ".join(str(raw or "").split())
+    if not text:
+        return DEFAULT_LANGUAGE
+    try:
+        return _ALIASES[text.casefold()]
+    except KeyError:
+        raise UnknownLanguage(
+            f"language={raw!r} is not one of {list(SUPPORTED_LANGUAGES)} "
+            "(or their names)"
+        ) from None
+
+
+def current_version(code: str) -> str:
+    """The script version a new job in this language gets."""
+    lang = get_language(code)
+    if lang.current is not None:
+        return lang.current
+    from ..config import get_settings
+
+    return get_settings().script_version
+
+
+def templates_for(language: str) -> dict[str, str]:
+    """Every version of one language's script."""
+    return get_language(language).templates
+
+
+def get_template(version: str, language: str = DEFAULT_LANGUAGE) -> str:
+    templates = templates_for(language)
+    try:
+        return templates[version]
     except KeyError:
         raise ScriptError(
-            f"Unknown SCRIPT_VERSION {version!r}. Known: {sorted(SCRIPT_TEMPLATES)}"
+            f"Unknown SCRIPT_VERSION {version!r} for {language!r}. "
+            f"Known: {sorted(templates)}"
         ) from None
 
 
 def fill_script(
-    *, version: str, name: str, workshop: str, locality: str
+    *,
+    version: str,
+    name: str,
+    workshop: str,
+    locality: str,
+    language: str = DEFAULT_LANGUAGE,
 ) -> FilledScript:
-    template = get_template(version)
+    template = get_template(version, language)
     values = {"name": name, "workshop": workshop, "locality": locality}
 
     missing = [k for k, v in values.items() if not v or not v.strip()]
@@ -125,9 +359,13 @@ def fill_script(
 
     display = template.format(**values)
     spoken = apply_spoken_overrides(
-        template.format(**{k: expand_for_speech(v) for k, v in values.items()})
+        template.format(
+            **{k: expand_for_speech(v, language=language) for k, v in values.items()}
+        )
     )
-    return FilledScript(version=version, spoken_text=spoken, display_text=display)
+    return FilledScript(
+        version=version, spoken_text=spoken, display_text=display, language=language
+    )
 
 
 def word_count(text: str) -> int:

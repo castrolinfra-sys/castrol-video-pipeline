@@ -99,9 +99,20 @@ uv run castrol cycle --no-fetch
 One video by hand — creates the rows and lands the photo in S3, runs nothing.
 Idempotent on (photo, phone). `--address` is what the CARD prints; what the
 voice SAYS defaults to the last segment of it, override with `--spoken-place`.
+`--language` (code or name, default `hi`) picks the spoken language; reseeding
+the same photo and phone in another language switches the job. A language whose
+script is still a placeholder fails at prep unless `ALLOW_PLACEHOLDER_SCRIPTS=true`
+is set locally — never on the worker.
 
 ```bash
 uv run castrol seed-job --photo spikes/in/mechanic2.jpg --plate spikes/in/plate_bg2.png --uniform-ref uniform/u1_tshirt.png --name "Amit Kumar" --workshop "Ganesh Car Service" --address "Beturkar Pada, Opposite New National Hospital, Andheri" --phone 9773128990 --uniform u1_tshirt --background bg2_dark_sedan
+```
+
+Audio only, in one language, through the same template fill the pipeline runs
+(~$0.02 a take). `--omit-language-field` is the A/B for the provider's field:
+
+```bash
+uv run python spikes/prototype.py --out spikes/out/ta1 --only audio --language ta --name "Raju Shetty" --workshop "Shetty Motors" --address "Andheri, Mumbai"
 ```
 
 Register plate artwork for one combination, and the uniform reference the image
@@ -738,6 +749,7 @@ rules, not application code.
 | structlog to stdout | [`common/logging.py`](src/castrol_pipeline/common/logging.py) |
 | Reject codes + stage error taxonomy | [`common/errors.py`](src/castrol_pipeline/common/errors.py) |
 | **The script text** and spoken overrides | [`prep/script.py`](src/castrol_pipeline/prep/script.py) |
+| **The language registry** — one entry per spoken language | [`prep/script.py:LANGUAGES`](src/castrol_pipeline/prep/script.py) |
 | Phone, address, numerals for speech | [`prep/normalise.py`](src/castrol_pipeline/prep/normalise.py) |
 | `outfit` + `background` → plate | [`prep/plates.py`](src/castrol_pipeline/prep/plates.py) |
 | Plate + uniform reference registration | [`seed.py:register_plate`](src/castrol_pipeline/seed.py) |
@@ -771,8 +783,17 @@ and [`docs/TECH_DESIGN.md` §3](docs/TECH_DESIGN.md).
 | Location | export `address` | **spoken** + card |
 | Delivery phone | export `whatsapp_number` | **delivery key only**, never spoken, never printed |
 | Card phone | export `mechanic_phone_number` | **card only**, never spoken |
+| Language | export column named by `EXPORT_LANGUAGE_COLUMN` (default `language`) | **voice only** — picks the script and the provider's `language` field; the card stays English. Blank is Hindi, unknown is `LANGUAGE_UNSUPPORTED` |
 
-Only name, workshop and location vary inside the script. The two phone fields
+Only name, workshop and location vary inside the script.
+
+**Adding a language is one `Language(...)` entry in
+[`prep/script.py:LANGUAGES`](src/castrol_pipeline/prep/script.py)** — code,
+aliases, `{version: template}`, `current`, `approved=False`, `tts_language` —
+then `uv run pytest`, whose registry tests cover a new entry without being
+edited. No migration (0016 checks the SHAPE of a code, never a list) and no
+config. When the client's copy arrives it goes in as a new version beside the
+placeholder, with `current` and `approved=True` moved to it. The two phone fields
 are two different numbers doing two different jobs, confirmed by the client
 2026-09-08: `whatsapp_number` is what we POST back as `phone` and is the join
 key the client relays on; `mechanic_phone_number` is the contact number printed
@@ -1264,6 +1285,20 @@ changed, or it was `BUDGET_EXHAUSTED` on an earlier **IST** day (the cap day).
 Anything else is a person's decision — `castrol run <ref> --retry`.
 `advance_job` judges by the LATEST run per stage for the same reason, so a job
 being retried reads `running`, not `failed`.
+
+**35. An unapproved language never renders, and clears itself on approval —
+and language enters a hash only outside Hindi.**
+*`stages/real.py:PrepStage`, `common/hashing.py:prep_hash` / `audio_hash`, pinned by [`tests/test_language.py`](tests/test_language.py)*
+A placeholder script fails at prep with `SCRIPT_NOT_APPROVED`, which is
+terminal and comes before any paid stage. `ALLOW_PLACEHOLDER_SCRIPTS=true`
+lets a hand-made test render through and must never be set on the worker: it
+would send draft copy to real mechanics. Approval is IN the prep hash, so the
+release that flips `approved` moves it and invariant 34 releases those jobs
+with nothing done by hand. Language, approval and `tts_language` are added to
+the hash payload only for a non-Hindi job, so a Hindi job hashes exactly as it
+did before multilingual — the tests pin those values as literals, and a
+"tidy-up" that always includes the language re-runs paid audio on every open
+Hindi job.
 
 ---
 

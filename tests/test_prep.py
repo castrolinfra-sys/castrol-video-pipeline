@@ -311,3 +311,53 @@ class TestScriptV2:
         from castrol_pipeline.config import Settings
 
         assert Settings().script_version == "v2"
+
+
+class TestVernaculars:
+    """The five drafts for the audio test. Hindi must not move while they land."""
+
+    LANGS = ("ta", "te", "kn", "bn", "ml")
+
+    def test_hindi_is_still_the_default_and_unchanged(self):
+        from castrol_pipeline.prep.script import SCRIPT_TEMPLATES
+
+        default = fill_script(version="v2", name="A", workshop="B", locality="C")
+        explicit = fill_script(
+            version="v2", name="A", workshop="B", locality="C", language="hi"
+        )
+        assert default == explicit
+        assert default.language == "hi"
+        assert default.display_text == SCRIPT_TEMPLATES["v2"].format(
+            name="A", workshop="B", locality="C"
+        )
+
+    @pytest.mark.parametrize("lang", LANGS)
+    def test_every_slot_is_filled_and_none_left_over(self, lang):
+        filled = fill_script(
+            version="v1", language=lang,
+            name="Raju Shetty", workshop="Shetty Motors", locality="Andheri",
+        )
+        for value in ("Raju Shetty", "Shetty Motors", "Andheri"):
+            assert filled.spoken_text.count(value) == 1
+        assert "{" not in filled.spoken_text
+
+    @pytest.mark.parametrize("lang", LANGS)
+    def test_the_brand_is_written_as_a_word(self, lang):
+        # All caps is read letter by letter (SPOKEN_OVERRIDES).
+        text = fill_script(
+            version="v1", language=lang, name="A", workshop="B", locality="C"
+        ).spoken_text
+        assert "Castrol Magnatec Full Synthetic Premium Oil" in text
+
+    def test_unknown_language_is_an_error_not_hindi(self):
+        with pytest.raises(ScriptError):
+            fill_script(version="v1", language="or", name="A", workshop="B", locality="C")
+
+    @pytest.mark.parametrize("lang", LANGS)
+    def test_long_digit_runs_never_get_hindi_words(self, lang):
+        said = expand_for_speech("Shop 240424", language=lang)
+        assert said == "Shop 2 4 0 4 2 4"
+        assert "chaar" not in said
+
+    def test_short_runs_are_unchanged_outside_hindi_too(self):
+        assert expand_for_speech("K 68", language="ta") == "K 68"

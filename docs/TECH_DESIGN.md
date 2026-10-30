@@ -543,6 +543,22 @@ Cartesia-Version: 2026-05-11
 → raw audio bytes. Synchronous. No task id, no polling, no duration.
 ```
 
+**Language** (multilingual, 2026-10-29). The request gains a top-level
+`"language": "<code>"` field ONLY for a job whose language's registry entry
+sets `tts_language`. Hindi's is `None`, so a Hindi request is the request above
+byte for byte. The same voice id speaks every language. The field is in the
+audio `input_hash` only when sent, so the audio test's A/B (field vs no field)
+regenerates rather than skipping.
+
+What the voice SAYS comes from `prep/script.py:LANGUAGES` — one `Language`
+entry per language: code, aliases, `{version: template}`, `current`,
+`approved`, `tts_language`. `jobs.language` names the entry. An entry with
+`approved=False` fails at prep with the terminal `SCRIPT_NOT_APPROVED` before
+any paid stage, unless `ALLOW_PLACEHOLDER_SCRIPTS=true` (a local, by-hand
+setting — never on the worker). Approval is in the prep hash outside Hindi,
+so approving a language reschedules exactly those jobs. The card is English
+in every language and is not touched by any of this.
+
 Two things this stage owns beyond the call, both mandatory:
 
 1. **Emit MP3.** The avatar model's `"Audio size is too large"` is a byte

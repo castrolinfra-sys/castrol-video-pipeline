@@ -86,6 +86,9 @@ class JobContext:
     script_version: str
     voice_id: str
     plate_id: str | None = None
+    #: The language the voice speaks (`jobs.language`). The card is English
+    #: whatever this is.
+    language: str = "hi"
 
     # Submission fields the stages need. Populated by the orchestrator.
     user_name: str = ""

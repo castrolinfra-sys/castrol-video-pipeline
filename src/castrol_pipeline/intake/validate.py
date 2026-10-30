@@ -23,6 +23,7 @@ from ..prep.normalise import (
     spoken_place_from,
 )
 from ..prep.plates import UnknownBackground, UnknownOutfit, resolve_combo
+from ..prep.script import DEFAULT_LANGUAGE, UnknownLanguage, resolve_language
 
 #: Card width limits. These bound what the card renderer will ever be asked to
 #: fit; the renderer scales content down as a block within them.
@@ -87,6 +88,9 @@ class ValidRow:
     uniform_id: str
     background_id: str
     image_url_raw: str
+    #: The language the VOICE speaks, as a resolved code. The card is English
+    #: whatever this says.
+    language: str = DEFAULT_LANGUAGE
     #: Carried through opaque, never trusted, never joined on.
     mechanic_id: str | None = None
     mechanic_id_verified: str | None = None
@@ -133,8 +137,14 @@ def looks_like_test_row(name: str | None, phone_e164: str | None) -> bool:
     return False
 
 
-def validate_row(row: dict[str, Any]) -> ValidRow | Rejection:
-    """Apply the row-level rules. Returns a ValidRow or the first Rejection."""
+def validate_row(
+    row: dict[str, Any], *, language_column: str = "language"
+) -> ValidRow | Rejection:
+    """Apply the row-level rules. Returns a ValidRow or the first Rejection.
+
+    `language_column` is EXPORT_LANGUAGE_COLUMN - the client has not named the
+    column yet, so its name is configuration.
+    """
 
     # ---------------------------------------------------- upstream verdicts --
     status = (row.get("image_validation_status") or "").strip().upper()
@@ -201,6 +211,14 @@ def validate_row(row: dict[str, Any]) -> ValidRow | Rejection:
     except UnknownBackground as exc:
         return Rejection(RejectCode.UNKNOWN_BACKGROUND, str(exc))
 
+    # ------------------------------------------------------------- language --
+    # Absent or blank is Hindi. Present and unknown is a rejection, not Hindi:
+    # a default here would voice a Tamil mechanic's video in the wrong language.
+    try:
+        language = resolve_language(row.get(language_column))
+    except UnknownLanguage as exc:
+        return Rejection(RejectCode.LANGUAGE_UNSUPPORTED, str(exc))
+
     # ---------------------------------------------------------------- media --
     image_url_raw = row.get("image_url")
     if not image_url_raw:
@@ -224,6 +242,7 @@ def validate_row(row: dict[str, Any]) -> ValidRow | Rejection:
         spoken_place=spoken_place_from(address),
         uniform_id=uniform_id,
         background_id=background_id,
+        language=language,
         # Stored byte-exact. Never rebuilt from parts. See intake/media.py.
         image_url_raw=str(image_url_raw),
         mechanic_id=(str(row.get("mechanic_id")).strip() or None)

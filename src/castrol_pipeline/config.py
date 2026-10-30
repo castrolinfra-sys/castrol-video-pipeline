@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     export_timestamp_format: str = "iso8601"
     # Only applies to a naive format. ISO values carry their own offset.
     export_timezone: str = "Asia/Kolkata"
+    # The export column naming the language the voice speaks. The client has
+    # not named it yet, so it is a setting rather than a guess baked into code.
+    # Absent or blank is Hindi - every row before multilingual was.
+    export_language_column: str = "language"
 
     # ----------------------------------------------------------- ai provider --
     # Stage B (image) goes through the image provider, stage C (video) through
@@ -177,6 +181,12 @@ class Settings(BaseSettings):
     # would have sent until the client confirms the contract — an accidental
     # POST during prototyping reaches mechanics over WhatsApp.
     delivery_enabled: bool = False
+
+    # Lets prep fill a language whose script is still a placeholder
+    # (`Language.approved` is False). For test renders by hand ONLY - set on
+    # the worker, it sends draft copy to real mechanics. Not in the prep hash:
+    # it decides whether a job may run, never what the job says.
+    allow_placeholder_scripts: bool = False
 
     #: Seconds an in-flight vendor task may run before the poller fails it.
     #: The video provider has been seen at 20 minutes; 2h is a ceiling, not an

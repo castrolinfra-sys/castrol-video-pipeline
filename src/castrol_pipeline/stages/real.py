@@ -41,7 +41,7 @@ from ..common.events import record_event
 from ..common.logging import get_logger
 from ..common.s3 import cdn_url, delivery_key, get_storage, job_key
 from ..config import get_settings
-from ..prep.script import fill_script
+from ..prep.script import current_version, fill_script, get_language
 from . import media, vendors
 from .base import (
     AssetKind,
@@ -155,18 +155,37 @@ class PrepStage:
 
     def input_hash(self, ctx: JobContext) -> str:
         s = get_settings()
-        return hashing.prep_hash(ctx.raw, s.script_version, s.normalise_rules_version)
+        lang = get_language(ctx.language)
+        return hashing.prep_hash(
+            ctx.raw,
+            current_version(lang.code),
+            s.normalise_rules_version,
+            language=lang.code,
+            script_approved=lang.approved,
+        )
 
     def run(self, ctx: JobContext) -> StageResult:
+        lang = get_language(ctx.language)
+        # Placeholder copy never reaches a mechanic. Terminal, and it lifts by
+        # itself: approval is in the hash above, so the release that flips
+        # `approved` moves it and the failure stops holding (invariant 34).
+        if not lang.approved and not get_settings().allow_placeholder_scripts:
+            raise StageFailure(
+                f"The {lang.name} script is a placeholder awaiting the client's "
+                "copy. Set ALLOW_PLACEHOLDER_SCRIPTS=true only for a test render "
+                "by hand, never on the worker.",
+                code=StageErrorCode.SCRIPT_NOT_APPROVED,
+            )
         # The voice says the area, not the whole postal address. Resolved at
         # intake or seed time and carried on the context - deriving it again
         # here would be a second implementation, free to drift from the first.
         spoken_place = ctx.spoken_place
         filled = fill_script(
-            version=get_settings().script_version,
+            version=current_version(lang.code),
             name=ctx.user_name,
             workshop=ctx.workshop_name,
             locality=spoken_place,
+            language=lang.code,
         )
         record_event(
             "prep.script_filled",
@@ -174,6 +193,8 @@ class PrepStage:
             stage=str(self.name),
             chars=len(filled.spoken_text),
             script_version=filled.version,
+            language=lang.code,
+            script_approved=lang.approved,
         )
         return StageResult(
             meta={
@@ -181,6 +202,8 @@ class PrepStage:
                 "display_text": filled.display_text,
                 "script_version": filled.version,
                 "spoken_place": spoken_place,
+                "language": lang.code,
+                "script_approved": lang.approved,
             }
         )
 
@@ -203,11 +226,17 @@ class AudioStage:
 
     def input_hash(self, ctx: JobContext) -> str:
         s = get_settings()
-        return hashing.audio_hash(_spoken_text(ctx), ctx.voice_id, s.tts_model_id)
+        return hashing.audio_hash(
+            _spoken_text(ctx),
+            ctx.voice_id,
+            s.tts_model_id,
+            tts_language=get_language(ctx.language).tts_language,
+        )
 
     def run(self, ctx: JobContext) -> StageResult:
         s = get_settings()
         text = _spoken_text(ctx)
+        tts_language = get_language(ctx.language).tts_language
         cost = budget.tts_cost_usd(len(text))
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -218,6 +247,7 @@ class AudioStage:
                     voice_id=ctx.voice_id,
                     model_id=s.tts_model_id,
                     dst=work / "audio_raw.wav",
+                    language=tts_language,
                 )
 
             # MP3 is mandatory before the avatar step. "Audio size is too large"

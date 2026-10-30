@@ -195,7 +195,7 @@ MAX_QUANTITY_DIGITS = 3
 _DIGIT_RUN = re.compile(r"\d+")
 
 
-def expand_for_speech(text: str) -> str:
+def expand_for_speech(text: str, *, language: str = "hi") -> str:
     """Expand abbreviations, and decide how each run of digits is read.
 
     A run of 1-3 digits is LEFT ALONE for the TTS to read as a quantity. `K 68`
@@ -223,6 +223,13 @@ def expand_for_speech(text: str) -> str:
     Abbreviations expand first, and the number-dependent ones before the plain
     ones: `sec` is in both tables in spirit, and "Sector 3" is only right when a
     number follows.
+
+    NUMERAL_WORDS is HINDI, so outside Hindi a long run is not spelled through
+    it - a Tamil take would say "ek do teen" mid-sentence. It is split into
+    single Latin digits instead, for the voice to read one at a time in its
+    own language. That the voice does so is unverified; it is an audio-test
+    item. The English abbreviation expansions apply in every language, because
+    the text they act on is English in every language.
     """
     out = text.replace(_AMPERSAND, " and ")
     out = _ABBR_NUM.sub(lambda m: ABBREVIATIONS_BEFORE_NUMBER[m.group(1).lower()], out)
@@ -233,6 +240,8 @@ def expand_for_speech(text: str) -> str:
         run = match.group()
         if len(run) <= MAX_QUANTITY_DIGITS:
             return run
+        if language != "hi":
+            return " " + " ".join(run) + " "
         return " " + " ".join(NUMERAL_WORDS[ch] for ch in run) + " "
 
     return collapse_whitespace(_DIGIT_RUN.sub(read, out))

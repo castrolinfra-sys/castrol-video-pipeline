@@ -21,9 +21,11 @@ from pathlib import Path
 from typing import Any
 
 from ..common import hashing
+from ..common.errors import StageErrorCode, StageFailure
 from ..common.logging import get_logger
 from ..common.s3 import get_storage, job_key
 from ..config import get_settings
+from ..prep.script import current_version, get_language
 from .base import (
     AssetKind,
     AsyncSubmission,
@@ -103,22 +105,40 @@ class StubPrep:
 
     def input_hash(self, ctx: JobContext) -> str:
         s = get_settings()
-        return hashing.prep_hash(ctx.raw, s.script_version, s.normalise_rules_version)
+        lang = get_language(ctx.language)
+        return hashing.prep_hash(
+            ctx.raw,
+            current_version(lang.code),
+            s.normalise_rules_version,
+            language=lang.code,
+            script_approved=lang.approved,
+        )
 
     def run(self, ctx: JobContext) -> StageResult:
         from ..prep.script import fill_script
 
+        # The same gate as the real PrepStage, so a stub run exercises the
+        # language path - including the failure - rather than skipping it.
+        lang = get_language(ctx.language)
+        if not lang.approved and not get_settings().allow_placeholder_scripts:
+            raise StageFailure(
+                f"The {lang.name} script is a placeholder.",
+                code=StageErrorCode.SCRIPT_NOT_APPROVED,
+            )
         filled = fill_script(
-            version=ctx.script_version,
+            version=current_version(lang.code),
             name=ctx.user_name,
             workshop=ctx.workshop_name,
             locality=ctx.spoken_place,
+            language=lang.code,
         )
         return StageResult(
             meta={
                 "spoken_text": filled.spoken_text,
                 "display_text": filled.display_text,
                 "script_version": filled.version,
+                "language": lang.code,
+                "script_approved": lang.approved,
             }
         )
 
@@ -131,7 +151,10 @@ class StubAudio:
         s = get_settings()
         text = ctx.upstream.get("prep", {}).get("meta", {}).get("spoken_text", "")
         return hashing.audio_hash(
-            text, s.tts_voice_id or "stub-voice", s.tts_model_id or "stub-tts"
+            text,
+            s.tts_voice_id or "stub-voice",
+            s.tts_model_id or "stub-tts",
+            tts_language=get_language(ctx.language).tts_language,
         )
 
     def run(self, ctx: JobContext) -> StageResult:
